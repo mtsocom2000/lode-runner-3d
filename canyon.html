@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Lode Runner 3D — 峡谷版 v2（高地台+梯+稀疏障碍+鼠标拖镜头）</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0f1317;font-family:"PingFang SC","Microsoft YaHei",sans-serif}
+  canvas{display:block}
+  #hud{position:fixed;top:12px;left:14px;color:#2a3138;font-size:13px;line-height:1.95;z-index:2;user-select:none;
+    background:rgba(255,255,255,.78);padding:10px 14px;border-radius:8px;backdrop-filter:blur(6px)}
+  #hud b{color:#000}
+  .k{display:inline-block;background:#e6ebef;border:1px solid #b8c2cc;border-radius:4px;padding:0 6px;font-family:monospace;color:#1a56c4;margin-right:2px}
+  #msg{position:fixed;bottom:44px;left:50%;transform:translateX(-50%);color:#12181e;font-size:16px;font-weight:600;
+    z-index:3;display:none;background:rgba(255,255,255,.88);padding:9px 20px;border-radius:999px;border:1px solid #b8c2cc;
+    box-shadow:0 4px 14px rgba(20,30,40,.18);max-width:80%;text-align:center}
+  #foot{position:fixed;bottom:10px;left:14px;color:#4c5a66;font-size:12px;z-index:2;background:rgba(255,255,255,.7);padding:4px 10px;border-radius:6px}
+</style>
+</head>
+<body>
+<div id="hud">
+  <b>LR3D · 峡谷 v2</b><br>
+  金 <b id="gold">0/0</b> ｜ 命 <b id="lives">3</b> ｜ 埋敌 <b id="kills">0</b><br>
+  <span class="k">W</span><span class="k">A</span><span class="k">S</span><span class="k">D</span> 走（同高才能走，<b>不可翻越</b>）
+  <span class="k">空格</span> 从高台跳下（不死）<br>
+  <span class="k">J</span> 挖左 <span class="k">K</span> 挖右（塌顶成坑→踩坑者被埋，4s 回填）
+  <span class="k">R</span> 重来<br>
+  <b>鼠标的拖拽</b> 转镜头/俯仰 ｜ 滚轮缩放 ｜ <span class="k">Q</span><span class="k">E</span> 也可转
+</div>
+<div id="msg"></div>
+<div id="foot">高台只能靠白梯上下；金子大部分在高台上。把梯子顶格挖掉 = 断守卫的梯，也断自己的退路。</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+"use strict";
+/* ================= canyon v2: floor sea + sparse h=5 mesas + ladder-only verticality ============ */
+const W=25, D=17, MESAH=5, REFILL=4.0, GTICK=.30;
+let H,ladders,golds,enemies,player,exitC,holes,lives,kills,gameOver;
+
+function mulberry(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+function genMap(){
+ for(let seed=7;seed<400;seed++){
+  const R=mulberry(1000+seed);
+  H=[...Array(D)].map(()=>Array(W).fill(0));
+  ladders=[];holes=[];gameOver=false;lives=3;kills=0;
+  // sparse blobs: 7-9 mesas of 1/3/5 cells, >=3 apart
+  const used=new Set(),centers=[];
+  for(let tries=0;tries<200&&centers.length<6;tries++){
+    const cx=3+Math.floor(R()*(W-6)),cy=2+Math.floor(R()*(D-4));
+    if(centers.some(cs=>{const [mx,my]=cs[0];return Math.abs(mx-cx)+Math.abs(my-cy)<7;}))continue;
+    const kinds=[ [[0,0],[1,0],[0,1]],            // L3
+                  [[0,0],[1,0],[0,1],[1,1]],      // square4
+                  [[0,0],[1,0],[2,0],[1,1]],      // T4
+                  [[0,0],[1,0],[1,1],[1,2],[2,2]],// snake5
+                  [[0,0],[1,0],[2,0],[0,1],[1,1]],// P5
+                  [[0,0],[1,0],[2,0],[3,0]],      // bar4
+                ];
+    let shape=kinds[Math.floor(R()*kinds.length)];
+    const rot=Math.floor(R()*4);
+    for(let q=0;q<rot;q++)shape=shape.map(([a,b])=>[b,-a]);
+    const mins=Math.min(...shape.map(s=>s[0])),maxs=Math.max(...shape.map(s=>s[0])),miny=Math.min(...shape.map(s=>s[1])),maxy=Math.max(...shape.map(s=>s[1]));
+    const cells=shape.map(([dx,dy])=>[cx+dx-mins,cy+dy-miny]);
+    if(cells.some(([x,y])=>x<2||y<2||x>W-3||y>D-3))continue;
+    if(cells.some(c=>used.has(c.join(','))))continue;
+    cells.forEach(c=>{used.add(c.join(','));H[c[1]][c[0]]=MESAH;});
+    centers.push(cells);
+  }
+  // ladders: one per mesa (12% mesas get two), on an edge cell with open floor neighbour
+  for(const cells of centers){
+    const opts=[];
+    for(const [tx,ty] of cells)for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const bx=tx+dx,by=ty+dy;
+      if(bx<0||by<0||bx>=W||by>=D)continue;
+      if(H[by][bx]===0&&!cells.some(c=>c[0]===bx&&c[1]===by))opts.push({tx,ty,bx,by});}
+    if(!opts.length)continue;
+    const l=opts[Math.floor(R()*opts.length)];ladders.push(l);
+    if(R()<.12&&opts.length>1){const l2=opts.find(o=>o!==l);if(l2)ladders.push(l2);}
+  }
+  // actors & exit & gold on floor/spots; validate graph then commit
+  exitC=[12,0]; while(H[exitC[1]]&&(H[exitC[1]][exitC[0]]>0))exitC[0]=(exitC[0]+3)%W;
+  const free=(x,y)=>x>0&&y>0&&x<W-1&&y<D-1&&H[y][x]===0;
+  let py=D-2,px=12; while(!free(px,py))px++; player={x:px,y:py,vx:px,vy:py,fx:px,fy:py,spawn:[px,py],invuln:0};
+  enemies=[[3,2],[W-4,2]].map(([gx,gy])=>{while(!free(gx,gy))gy++;return{x:gx,y:gy,vx:gx,vy:gy,cool:R()*.2,buried:0,path:null,replan:0};});
+  golds=[];
+  const topCells=[];for(let y=0;y<D;y++)for(let x=0;x<W;x++)if(H[y][x]>0)topCells.push([x,y]);
+  const floorCells=[];for(let y=1;y<D-1;y++)for(let x=1;x<W-1;x++)if(H[y][x]===0)floorCells.push([x,y]);
+  const shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(R()*(i+1));[a[i],a[j]]=[a[j],a[i]];}};
+  shuf(topCells);shuf(floorCells);
+  for(const [x,y] of topCells.slice(0,4))golds.push({x,y,taken:false});
+  for(const [x,y] of floorCells.slice(0,3))golds.push({x,y,taken:false});
+  if(validateGraph()){return;}   // connected & all golds reachable → commit this seed
+ }
+}
+const hAt=(x,y)=>{ if(x<0||y<0||x>=W||y>=D)return -1; let h=H[y][x];
+  for(const o of holes)if(o.x===x&&o.y===y){h=Math.max(1,h-1);break;} return h; };
+const hasHole=(x,y)=>holes.some(o=>o.x===x&&o.y===y);
+const ladTop=(x,y)=>ladders.find(l=>l.tx===x&&l.ty===y);
+const ladBase=(x,y)=>ladders.find(l=>l.bx===x&&l.by===y);
+function graphEdges(x,y){ // walkable relations for BFS/AI (player-equivalent minus jump: down-step allowed)
+  const out=[];const cur=hAt(x,y);
+  const srcHole=hasHole(x,y);
+  for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy;const nh=hAt(nx,ny);
+    if(nh<0)continue;
+    if(nh===cur||hasHole(nx,ny)||nh<cur)out.push([nx,ny]);          // same / trap-step / drop
+    else if(srcHole&&nh<=H[y][x]+ (nh-cur))out.push([nx,ny]);       // exits from pit treated as normal (AI is "blind" to pits; classic dumb guards)
+  }
+  const lb=ladBase(x,y);if(lb)out.push([lb.tx,lb.ty]);               // climb up via ladder
+  const lt=ladTop(x,y);if(lt)out.push([lt.bx,lt.by]);                // descend via ladder
+  return out;}
+function validateGraph(){
+  const seen=new Set([player.x+','+player.y]);const q=[[player.x,player.y]];
+  while(q.length){const[x,y]=q.shift();
+    for(const[nx,ny]of graphEdges(x,y)){const k=nx+','+ny;if(!seen.has(k)){seen.add(k);q.push([nx,ny]);}}}
+  const need=golds.map(g=>g.x+','+g.y).concat([[exitC[0],exitC[1]].join(','),ladders.map(l=>l.tx+','+l.ty)]);
+  const flat=seen.size; let ok=true;
+  for(const g of golds)if(!seen.has(g.x+','+g.y))ok=false;
+  if(!seen.has(exitC.join(',')))ok=false;
+  return ok&&flat>30;   // sanity: connected component of meaningful size
+}
+function dig(x,y){ if(x<0||y<0||x>=W||y>=D)return false;
+  if(holes.some(o=>o.x===x&&o.y===y))return false;
+  if(H[y][x]<1)return false;                     // floor has nothing to dig
+  if(ladTop(x,y))return false;                   // ladder top protected
+  holes.push({x,y,t:0});rebuildWorld();return true;}
+function updateHoles(dt){let dirty=false;
+  for(const o of holes){o.t+=dt;
+    if(player.x===o.x&&player.y===o.y)o.t+=dt*3;
+    for(const e of enemies){if(e.x===o.x&&e.y===o.y)e.t+=dt*3;}
+    if(o.t>=REFILL){holes.splice(holes.indexOf(o),1);dirty=true;
+      if(player.x===o.x&&player.y===o.y)buriedPlayer();
+      for(const e of enemies){if(e.x===o.x&&e.y===o.y)buriedEnemy(e);}
+      break;}}
+  if(dirty)rebuildWorld();}
+/* ================= three toon kit (unchanged look) ================= */
+const scene=new THREE.Scene();scene.background=new THREE.Color(0xf3eee2);
+const cam=new THREE.PerspectiveCamera(42,innerWidth/innerHeight,.1,300);
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0xb0bec8,.9));
+const sun=new THREE.DirectionalLight(0xfff4dc,1.35);sun.position.set(-14,30,10);sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-30,right:30,top:30,bottom:-30,far:110});sun.shadow.bias=-.0012;scene.add(sun);
+const g3=new Uint8Array([100,100,100,255,190,190,190,255,255,255,255,255]);
+const grad=new THREE.DataTexture(g3,3,1,THREE.RGBAFormat);grad.needsUpdate=true;grad.minFilter=grad.magFilter=THREE.NearestFilter;
+const toon=c=>new THREE.MeshToonMaterial({color:c,gradientMap:grad});
+const PALETTE=[0x9ec87f,0xf0cf6b,0xe8956a,0xbdd7e6,0x8fb8c9].map(toon);
+const MAT={roof:toon(0xf7f4ee),pit:new THREE.MeshBasicMaterial({color:0x3a4650}),
+ gold:toon(0xffc93c),goldX:new THREE.MeshBasicMaterial({color:0xffc93c,transparent:true,opacity:.3,depthWrite:false}),
+ xray:new THREE.MeshBasicMaterial({color:0xcfd6dd,transparent:true,opacity:.14,depthWrite:false}),
+ road:new THREE.MeshLambertMaterial({color:0x8d7f6a}),
+ p:toon(0x3f7fd8),e:toon(0xd04a34),E:toon(0x3fae58),
+ hole:new THREE.MeshLambertMaterial({color:0x1e2a33}),rim:toon(0xc03fd0),
+ lad:toon(0xffffff)};
+const INK=new THREE.LineBasicMaterial({color:0x2b3036}),INKD=new THREE.LineBasicMaterial({color:0x2b3036,transparent:true,opacity:.2});
+const cx=x=>x-(W-1)/2, cz=y=>y-(D-1)/2;
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(W+12,D+12),new THREE.MeshLambertMaterial({color:0xefe8d6}));
+ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+const world=new THREE.Group();scene.add(world);
+const boxG=new THREE.BoxGeometry(1,1,1);
+function edge(m,s){const eg=new THREE.LineSegments(new THREE.EdgesGeometry(boxG,30),INK);eg.scale.setScalar(s||1.004);eg.raycast=()=>{};m.add(eg);}
+let cells=[];
+function rebuildWorld(){
+ const kill=o=>{[...(o.children||[])].forEach(kill);o.parent&&o.parent.remove(o);};
+ [...world.children].forEach(kill);world.children.length=0;cells=[];
+ // road slabs under floor (h0 walkable sea)
+ for(let y=0;y<D;y++)for(let x=0;x<W;x++){ if(hAt(x,y)<=0){
+   const rd=new THREE.Mesh(boxG,MAT.road);rd.scale.set(1,.1,1);rd.position.set(cx(x),.05,cz(y));rd.receiveShadow=true;world.add(rd);} }
+ for(let y=0;y<D;y++)for(let x=0;x<W;x++){
+   const hh=hAt(x,y),dug=hasHole(x,y);
+   if(hh>0){
+    const wallMat=PALETTE[(x*7+y*13)%PALETTE.length];
+    const m=new THREE.Mesh(boxG,wallMat);m.scale.y=hh-.12;m.position.set(cx(x),(hh-.12)/2,cz(y));
+    m.castShadow=m.receiveShadow=true;edge(m);world.add(m);
+    const r=new THREE.Mesh(boxG,dug?MAT.pit:MAT.roof);r.scale.set(1.03,.12,1.03);r.position.set(0,hh-.06+.12,0);edge(r,1.01);m.add(r);
+    if(dug){const rg=new THREE.Mesh(new THREE.BoxGeometry(1.07,.14,1.07),MAT.rim);rg.position.set(cx(x),hh+.12,cz(y));world.add(rg);
+      const core=new THREE.Mesh(new THREE.BoxGeometry(.8,.05,.8),MAT.hole);core.position.set(cx(x),hh+.2,cz(y));world.add(core);}
+    cells.push({mesh:m,x,y,h:hh});
+   }
+ }
+ // ladders: white strips + rungs on the cliff between base(floor) and top(mesa)
+ for(const l of ladders){
+   const tx=cx(l.tx),tz=cz(l.ty),bx=cx(l.bx),bz=cz(l.by);
+   const mx=(tx+bx)/2,mz=(tz+bz)/2;
+   const across=(l.tx!==l.bx);
+   for(let r=0;r<5;r++){const rung=new THREE.Mesh(new THREE.BoxGeometry(.66,.14,.14),MAT.lad);
+     rung.position.set(mx,0.8+r*1.05,mz);
+     if(across)rung.rotation.y=Math.PI/2;
+     rung.castShadow=true;world.add(rung);}
+   for(const s of[-.3,.3]){const rail=new THREE.Mesh(new THREE.BoxGeometry(.12,MESAH+.3,.12),MAT.lad);
+     rail.position.set(mx+(across?0:s),MESAH/2+.1,mz+(across?s:0));rail.castShadow=true;world.add(rail);}
+   // ladder base sign: glowing disc on floor so it's findable from above
+   const disc=new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,.06,16),MAT.rim);
+   disc.position.set((tx+bx)/2,.14,(tz+bz)/2);world.add(disc);
+   const hl=new THREE.Mesh(new THREE.BoxGeometry(.3,.3,.3),MAT.rim);hl.position.set(bx,.4,bz);hl.visible=false;world.add(hl);
+ }
+ for(const g of golds){if(!g.taken){
+   const gm=new THREE.Mesh(boxG,MAT.gold);gm.scale.setScalar(.4);
+   gm.position.set(cx(g.x),hAt(g.x,g.y)+.35,cz(g.y));gm.rotation.y=.7;edge(gm,1.02);gm.castShadow=true;
+   gm.userData.bob=gm.position.y;world.add(gm);cells.push({mesh:gm,x:g.x,y:g.y,gold:true});}}
+ const em=new THREE.Mesh(boxG,MAT.E);em.scale.set(.8,1.15,.8);em.position.set(cx(exitC[0]),.6,cz(exitC[1]));edge(em);world.add(em);
+ cells.push({mesh:em,x:exitC[0],y:exitC[1],exit:true});
+}
+const pVis=new THREE.Mesh(boxG,MAT.p);pVis.scale.set(.55,.8,.55);pVis.castShadow=true;edge(pVis);scene.add(pVis);
+const pRing=new THREE.Mesh(new THREE.RingGeometry(.42,.6,26),new THREE.MeshBasicMaterial({color:0xffd23f,transparent:true,opacity:.85,side:THREE.DoubleSide}));
+pRing.rotation.x=-Math.PI/2;scene.add(pRing);
+let eMeshes=[];
+function buildE(){for(const m of eMeshes)scene.remove(m);
+ eMeshes=enemies.map(()=>{const g=new THREE.Group();
+  const m=new THREE.Mesh(boxG,MAT.e);m.scale.set(.5,.68,.5);m.castShadow=true;edge(m);g.add(m);
+  const tri=new THREE.Mesh(new THREE.ConeGeometry(.15,.3,4),new THREE.MeshBasicMaterial({color:0xd04a34}));
+  tri.rotation.x=Math.PI;tri.position.y=1.05;g.add(tri);scene.add(g);return g;});}
+function syncActors(){
+ pVis.position.set(cx(player.x),hAt(player.x,player.y)+.4,cz(player.y));
+ pRing.position.set(cx(player.x),hAt(player.x,player.y)+.03,cz(player.y));
+ enemies.forEach((e,i)=>{const m=eMeshes[i];m.visible=e.buried<=0;m.children[1].rotation.y+=.08;
+   m.position.set(cx(e.x),hAt(e.x,e.y)+.34,cz(e.y));});}
+/* ================= movement ================= */
+let cool=0;
+function tryMove(dx,dy){
+ const nx=player.x+dx,ny=player.y+dy;const cur=hAt(player.x,player.y),nh=hAt(nx,ny);
+ if(nh<0)return false;
+ // ladder down: standing on a ladder top, step outward → descend
+ const lt=ladTop(player.x,player.y);
+ if(lt&&nx===lt.bx&&ny===lt.by){player.x=nx;player.y=ny;return true;}
+ // ladder up: standing on a base, step toward top → climb
+ const lb=ladBase(player.x,player.y);
+ if(lb&&nx===lb.tx&&ny===lb.ty){player.x=nx;player.y=ny;return true;}
+ if(hasHole(nx,ny)){player.x=nx;player.y=ny;buriedPlayer();return true;}   // trap
+ if(nh===cur){player.x=nx;player.y=ny;return true;}                        // same height only
+ return false;}                                                            // NO free climb/drop
+function jumpDown(){
+ for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){const nx=player.x+dx,ny=player.y+dy;
+  const nh=hAt(nx,ny);
+  if(nh>=0&&nh<hAt(player.x,player.y)){player.x=nx;player.y=ny;
+    if(hasHole(nx,ny))buriedPlayer();
+    return true;}}
+ return false;}
+function buriedPlayer(){ if(gameOver||player.invuln>0||player.buried>0)return;
+ lives--;updateHud();flash('被活埋！');
+ if(lives<=0){gameOver=true;showMsg('GAME OVER · 按 R 重来',9e9);return;}
+ respawnPlayer();}
+function respawnPlayer(){const[rx,ry]=player.spawn;player.x=rx;player.y=ry;player.invuln=1.6;
+ for(const e of enemies){if(Math.abs(e.x-rx)<2&&Math.abs(e.y-ry)<2)e.buried=1.5;}}
+function buriedEnemy(e){ if(e.buried>0)return;e.buried=2.2;kills++;updateHud();flash('守卫被埋！');e.path=null;}
+/* ================= guard AI on the same graph ================= */
+function nearestCell(e,tx,ty){const key=(x,y)=>x+','+y;const seen=new Set([key(e.x,e.y)]);const prev={};const q=[[e.x,e.y]];
+ while(q.length){const[x,y]=q.shift();
+  if(x===tx&&y===ty){const p=[];let k=key(x,y);while(k){const[a,b]=k.split(',').map(Number);p.unshift([a,b]);k=prev[k];}return p;}
+  for(const[nx,ny]of graphEdges(x,y)){const k=key(nx,ny);if(seen.has(k))continue;seen.add(k);prev[k]=key(x,y);q.push([nx,ny]);}}
+ return null;}
+function tickEnemies(dt){for(const e of enemies){
+ if(e.buried>0){e.buried-=dt;if(e.buried<=0){e.buried=0;e.path=null;}continue;}
+ e.replan-=dt;if(!e.path||e.replan<=0){e.replan=.5;e.path=nearestCell(e,player.x,player.y);}
+ e.cool-=dt;if(e.cool>0)continue;
+ if(e.path&&e.path.length>1){const[nx,ny]=e.path[1];
+  if(hasHole(nx,ny)){e.x=nx;e.y=ny;buriedEnemy(e);continue;}
+  e.x=nx;e.y=ny;e.cool=GTICK;e.path.shift();}
+ if(Math.abs(e.x-player.x)<1&&Math.abs(e.y-player.y)<1){killTouch();}
+}}
+function killTouch(){ if(gameOver||player.invuln>0||player.buried>0)return;
+ lives--;updateHud();flash('碰到守卫！');
+ if(lives<=0){gameOver=true;showMsg('GAME OVER · 按 R 重来',9e9);return;}
+ respawnPlayer();}
+function tickGold(){ if(gameOver)return;
+ for(const g of golds){if(!g.taken&&g.x===player.x&&g.y===player.y){g.taken=true;flash('金 +1');rebuildWorld();updateHud();
+  if(golds.every(z=>z.taken))showMsg('全金收齐！去北侧绿色出口 E 过关',3);}}}
+/* ================= X-ray ================= */
+function segAABB(px,py,pz,dx,dy,dz,hx,hy,hz,r){let tmin=0,tmax=1;
+ for(const[p,d,Hc]of[[px,dx,hx],[py,dy,hy],[pz,dz,hz]]){let t1,t2;
+  if(Math.abs(d)<1e-9){if(Math.abs(p-Hc)>r)return false;else continue;}
+  t1=(Hc-r-p)/d;t2=(Hc+r-p)/d;if(t1>t2){const s=t1;t1=t2;t2=s;}
+  tmin=Math.max(tmin,t1);tmax=Math.min(tmax,t2);if(tmin>tmax)return false;}}
+function xray(){const from=cam.position,to=pVis.position;
+ const dx=to.x-from.x,dy=to.y-from.y,dz=to.z-from.z;
+ for(const c of cells){if(!c.mesh||c.exit)continue;const P=c.mesh.position;
+  const want=segAABB(from.x,from.y,from.z,dx,dy,dz,P.x,P.y+(c.gold?.3:0),P.z,c.gold?.35:c.mesh?Math.max(.7,c.mesh.scale.y/2+.1):.7);
+  if(c.gold){c.mesh.material=want?MAT.goldX:MAT.gold;continue;}
+  const base=PALETTE[(c.x*7+c.y*13)%PALETTE.length];
+  c.mesh.material=want?MAT.xray:base;
+  if(c.mesh.children[0]&&c.mesh.children[0].isLineSegments)c.mesh.children[0].material=want?INKD:INK;}}
+/* ================= camera: orbit + MOUSE DRAG ================= */
+let camYaw=0,camPitch=.72,camDist=40,dragging=false,px0=0,py0=0;
+renderer.domElement.addEventListener('pointerdown',e=>{dragging=true;px0=e.clientX;py0=e.clientY;});
+addEventListener('pointerup',()=>dragging=false);
+addEventListener('pointermove',e=>{if(!dragging)return;
+ camYaw=Math.max(-2.2,Math.min(2.2,camYaw+(e.clientX-px0)*.005));
+ camPitch=Math.max(.12,Math.min(1.5,camPitch+(e.clientY-py0)*.005));   // vertical drag = elevation now
+ px0=e.clientX;py0=e.clientY;});
+addEventListener('wheel',e=>{camDist=Math.max(14,Math.min(70,camDist+e.deltaY*.03));});
+const keys={};
+addEventListener('keydown',ev=>{const k=ev.key.toLowerCase();keys[k]=true;if(ev.key===' ')ev.preventDefault();
+ if(k==='r'){document.getElementById('msg').style.display='none';msgT=0;reset();}});
+addEventListener('keyup',ev=>{keys[ev.key.toLowerCase()]=false;});
+function tickCam(dt){if(keys['q'])camYaw-=1.4*dt;if(keys['e'])camYaw+=1.4*dt;
+ const t=pVis.position;
+ cam.position.set(t.x+Math.sin(camYaw)*camDist*Math.cos(camPitch),t.y+camDist*Math.sin(camPitch),t.z+Math.cos(camYaw)*camDist*Math.cos(camPitch));
+ cam.lookAt(t);}
+/* ================= input ================= */
+function tickInput(dt){if(cool>0){cool-=dt;return;}
+ const yaw4=camYaw;   // continuous mapping: forward = away from camera
+ const fx=-Math.sin(yaw4),fz=-Math.cos(yaw4);      // screen-up = away from camera
+ const rx=-fz,ry=fx;                               // screen-right = forward rotated -90°
+ let ix=0,iz=0;if(keys['a'])ix-=1;if(keys['d'])ix+=1;if(keys['w'])iz+=1;if(keys['s'])iz-=1;
+ const wx=ix*rx+iz*fx, wz=ix*ry+iz*fz;
+ let mv=false;
+ if(ix||iz){
+  if(Math.abs(wx)>=Math.abs(wz)&&wx!==0)mv=tryMove(wx>0?1:-1,0);
+  else if(wz!==0)mv=tryMove(0,wz>0?1:-1);}
+ if(!mv&&keys[' '])mv=jumpDown();
+ if(keys['j'])mv=dig(player.x-1,player.y)||mv;
+ if(keys['k'])mv=dig(player.x+1,player.y)||mv;
+ if(mv)cool=.15;}
+/* ================= hud ================= */
+function updateHud(){document.getElementById('gold').textContent=golds.filter(g=>g.taken).length+'/'+golds.length;
+ document.getElementById('lives').textContent=lives;document.getElementById('kills').textContent=kills;}
+let msgT=0;function showMsg(s,t){const m=document.getElementById('msg');m.textContent=s;m.style.display='block';msgT=t;}
+function flash(s){if(msgT>2.5)return;showMsg(s,1.1);}
+function reset(){genMap();player.vx=player.x;player.vy=player.y;player.fx=player.x;player.fy=player.y;
+ for(const e of enemies){e.vx=e.x;e.vy=e.y;}rebuildWorld();buildE();updateHud();}
+/* ================= loop ================= */
+let bobT=0,prev=performance.now();
+function loop(t){const dt=Math.min(.05,(t-prev)/1000);prev=t;
+ bobT+=dt;
+ for(const c of cells){if(c.gold){c.mesh.position.y+=Math.sin(bobT*3+c.x)*.0012;c.mesh.rotation.y+=dt*1.5;}}
+ if(player.invuln>0)player.invuln-=dt;
+ tickInput(dt);tickCam(dt);syncActors();xray();
+ if(!gameOver){updateHoles(dt);tickEnemies(dt);tickGold();}
+ if(msgT>0){msgT-=dt;if(msgT<=0)document.getElementById('msg').style.display='none';}
+ renderer.render(scene,cam);requestAnimationFrame(loop);}
+reset();
+showMsg('高台只能走白梯上下；在梯顶或守卫来路挖坑埋它。拖动鼠标转视角',3.4);
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
