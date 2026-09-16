@@ -1,0 +1,573 @@
+import * as THREE from 'three';
+import { faceOf, halfExtent } from '../core/world/fold';
+import type { Level, TileKind } from '../core/world/tiles';
+import { BRICK_N, CUBE, HEADROOM, ISLAND_HALF, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { PALETTE } from './palette';
+import type { Vec3 } from './tween';
+
+/**
+ * 折面关卡的渲染（T5）。
+ *
+ * 一句话：**两面竖直墙承载同一张摊平关卡** —— 这是概念本身（架构文档 §1.1）。
+ *
+ * ## 坐标只认 core
+ *
+ * 每个格子的世界坐标都由 `core/world/fold.ts` 的 `toWorld(toFold(cell))` 给出，
+ * 渲染层只负责再加"砖块自身的厚度"（沿墙面法线推出 `INK + CUBE/2`）。
+ * 这样"格子在哪"只有一处定义 —— 一旦这里手写一套坐标，core 与像素就会各说各话，
+ * 而本仓库历次 bug 全是"两套数据不一致"（架构文档 §5.1 的反面清单）。
+ *
+ * 顺带验证：这份映射与 `mocks/cube-fold-mock-v10.html` 的 `place()` 逐项等价 ——
+ * A 面 `z = u - 6.5`、B 面 `x = u - 6.5`，砖心同样再外移 0.49。所以"
+ * 截图与 v10 构图一致"这条验收是可对照的，不是凭感觉。
+ *
+ * ## 为什么用 InstancedMesh
+ *
+ * 墙砖 / 岛砖 / 小道砖是**同一个规格的立方体**（只是颜色不同）。逐块 `Mesh` 会得到
+ * 数百次 draw call；`InstancedMesh` + `setColorAt` 用一个几何体、一次 draw call 就够，
+ * 颜色靠逐实例色。这也是它能保持"统一规格"这件事在代码里**看得见**的原因 ——
+ * 想要给某块砖换个尺寸，就得先改这里的结构，而不可能偷偷塞一个特例进去。
+ *
+ * ## 归属划分
+ *
+ * 这里只画"state 说有什么"，并给出**差分入口** `setGrid` —— 挖开一格、回填一格，
+ * 代价都只有那一格本身。逐实体的补间（角色怎么从 A 滑到 B）归 `meshSync.ts`；
+ * 岛台/小道的**数据**归 T10 —— 这里现在只有"画出来的"几何（见 `islandAndJetties`），
+ * 它们现在**已经**进了 `core` 的通行图（见 `CONCEPT_MINIMAL.deck` / `joints`，T10）——
+ * 所以这里画的几何必须与那份**声明**对齐：改这儿的 x / z 就要改那边，否则图里通、画面上不重合。
+ */
+
+/**
+ * 几何常量（`CUBE` / `WATER_Y` / `HEADROOM` / …）与"格子 → 世界坐标"的换算都搬去了
+ * `render/metrics.ts` —— 因为 `meshSync`（角色）与测试也要用同一套数字，
+ * 三处各写一遍必然会漂。
+ */
+
+interface Piece {
+  readonly p: Vec3;
+  readonly s: Vec3;
+}
+
+/** 砖块 / 硬砖的颜色；不是砖一律 null。 */
+function brickColor(kind: TileKind | undefined): number | null {
+  if (kind === 'dig') return PALETTE.brick;
+  if (kind === 'hard') return PALETTE.hard;
+  return null;
+}
+
+/** 这一格是不是"非砖道具"。写成显式判断是为了让后面的 switch 能被 TS 收窄。 */
+function isProp(kind: TileKind | undefined): kind is 'ladder' | 'bar' | 'treasure' | 'exit' {
+  return kind === 'ladder' || kind === 'bar' || kind === 'treasure' || kind === 'exit';
+}
+
+/**
+ * 摊平坐标 (col,row) → 该格在墙上的锚点。换算在 `metrics.cellAnchor`（唯一出口），
+ * 这里只负责把"列"补成完整的 `Cell`。
+ */
+function place(level: Level, col: number, row: number): Anchor {
+  return cellAnchor(level, { face: faceOf(col, level.fold), col, row });
+}
+
+/**
+ * 某格的砖块实例。`kind` 由**调用方给出**（而不是从 level 读）—— 这样差分时写的是
+ * "改过之后"的瓦片，而不是关卡文件里的原始值。非砖格给零缩放：槽位仍在，只是看不见。
+ */
+function brickSlot(
+  level: Level,
+  col: number,
+  row: number,
+  kind: TileKind | undefined,
+): Piece & { readonly color: number } {
+  const { p } = place(level, col, row);
+  const color = brickColor(kind);
+  return { p, s: color === null ? [0, 0, 0] : [CUBE, CUBE, CUBE], color: color ?? PALETTE.brick };
+}
+
+/** 梯：两根立柱 + 三根横档（朝向随所在面而转 —— A 面的列沿 z 排）。 */
+function ladderParts(p: Vec3, alongZ: boolean): readonly Piece[] {
+  const [x, y, z] = p;
+  const rail: Vec3 = [0.07, CUBE, 0.07];
+  const rung: Vec3 = alongZ ? [0.07, 0.06, 0.6] : [0.6, 0.06, 0.07];
+  const out: Piece[] = [];
+  for (const q of [-0.24, 0.24]) {
+    out.push({ p: alongZ ? [x, y, z + q] : [x + q, y, z], s: rail });
+  }
+  for (let k = 0; k < 3; k++) {
+    out.push({ p: [x, y - 0.3 + k * 0.3, z], s: rung });
+  }
+  return out;
+}
+
+/** 把一关里**除砖以外**的瓦片摊成立体件。砖走 `createBrickLayer` —— 它要能被差分更新。 */
+function collectProps(level: Level): {
+  readonly ladders: readonly Piece[];
+  readonly bars: readonly Piece[];
+  readonly chips: readonly Piece[];
+  readonly exits: readonly Piece[];
+} {
+  const ladders: Piece[] = [];
+  const bars: Piece[] = [];
+  const chips: Piece[] = [];
+  const exits: Piece[] = [];
+
+  for (let row = 0; row < level.rows; row++) {
+    for (let col = 0; col < level.cols; col++) {
+      const kind = level.at(col, row);
+      if (!isProp(kind)) continue;
+
+      const { p, alongZ } = place(level, col, row);
+      switch (kind) {
+        case 'ladder':
+          ladders.push(...ladderParts(p, alongZ));
+          break;
+        case 'bar':
+          bars.push({ p, s: alongZ ? [0.1, 0.1, CUBE] : [CUBE, 0.1, 0.1] });
+          break;
+        case 'treasure':
+          chips.push({ p, s: [0.38, 0.38, 0.38] }); // 八面体半径 0.19 → 直径 0.38
+          break;
+        case 'exit':
+          exits.push({ p, s: [CUBE, CUBE, CUBE] });
+          break;
+      }
+    }
+  }
+
+  return { ladders, bars, chips, exits };
+}
+
+/**
+ * 水面中央的岛台 + 两条通向墙面的小道。
+ *
+ * ## 这一段的数全是**算出来的**，不是抄来的
+ *
+ * 上一版这里写着 `mocks/cube-fold-mock-v10.html` 的一组手抄数字（岛台中心 (0,0)、层心 1.71…），
+ * 留着它只为"截图与 v10 mock 构图一致"那条验收。现在关卡换了尺寸（`fold = 9`），
+ * 手抄数字会当场失效 —— 而"两套数字各说各话"正是本仓库历次 bug 的病因。
+ * 所以整段改成从 `halfExtent(fold)` / `BRICK_N` / `ISLAND_HALF` 推出来。
+ *
+ * ## 高度必须正好对齐（这是"能不能走过去"的全部）
+ *
+ * 墙面上"行 1"的行走面 = 行 0 那层砖的**顶面** = y = 1.0（砖心 0.5 + 半个立方体 0.5）。
+ * 岛台与小道只有一层砖厚，于是砖心落在 y = 0.5、顶面正好 1.0，与墙上最底那层砖齐平。
+ * 差半格就会变成"上不去"，或者"要先下沉一格才能攀" —— 用户之前抓到过同类的坑。
+ *
+ * ## 岛台**不摆在内区的几何正中**（这是量出来的第二条修正）
+ *
+ * 第一版把岛台摆在两片墙围出区域的几何中心（`fold = 9` → -4.5）。用户看完说
+ * "左右各有一条小道通向最底层的砖块"**读不出来** —— 那块内区只有 8×8，4×4 的岛
+ * 占掉四分之一，岛缘离墙面砖只剩 **0.94 格**：一块砖的小道被岛吸进去了，
+ * 水面也只剩一圈薄边。画面读起来是"水面上浮着一块大方台"，而不是
+ * "水面中间有一块地台，两侧各有一条道接过去"。
+ *
+ * 所以岛心往**开口那侧**（远离折痕，`+x / +z`）挪：取 `JETTY_U = 5` → 岛心 -3.5，
+ * 到墙面的空隙从 **0.94 格变成 1.94 格** —— `Math.round(1.94 / CUBE)` = **2 块砖**的小道，
+ * 一眼能数出来（这个数是探针 `brick` 计数反查出来的：46 面墙 + 16 岛 + 2×2 道 = 66）。
+ * 岛的另一侧（到墙口）还留着 2 格水。代价是岛不再严格居中，
+ * 但"两道能被读出来"是用户明确的要求，优先级高于对称。
+ *
+ * ## 小道接在哪一列也是算出来的
+ *
+ * 小道必须**接在一列砖的正中**，否则会顶在两块砖的缝上（看着像"卡在缝里"）。
+ * 墙面列心是 `-half + u`（`u` 来自 `toFold`），所以取整数 `JETTY_U`，
+ * 岛心 = `-half + JETTY_U`。本关卡 `JETTY_U = 5` → 岛心 -3.5，
+ * 对应面 A 的 col 3、面 B 的 col 14（都由 `fold` 反算，不写死）。
+ *
+ * ## 这些砖**不参与规则**（重要）
+ *
+ * `core` 的通行图只认识摊平后的关卡网格（`buildGraph` 只遍历 `level.rows × level.cols`），
+ * 所以玩家**现在走不上岛台** —— 这一段是纯视觉。把岛台接进数据模型是 T10 的活
+ * （`core/world/island.ts`）。**别在这里伪造可达性**：能在岛上走，必须先在 core 里成立。
+ */
+function islandAndJetties(level: Level): {
+  readonly bricks: readonly (Piece & { readonly color: number })[];
+  readonly prize: Vec3;
+  /** 岛心横向坐标（x 与 z 同值）。水面也读这个数 —— 两处各算一次必然漂。 */
+  readonly centre: number;
+} {
+  const half = halfExtent(level.fold);
+  /** 一层砖厚 → 砖心 0.5、顶面 1.0，与墙面最底那层砖的顶面齐平。 */
+  const layerY = CUBE / 2;
+  /** 墙砖朝内的那一面（A 面在 x 上、B 面在 z 上，数值一样）。 */
+  const wallFace = -half + BRICK_N + CUBE / 2;
+  /** 小道接在离折痕 `jettyU` 格的那一列上。取 5 → 面 A col 3、面 B col 14。 */
+  const jettyU = 5;
+  /** 岛心：与小道列心重合，于是天然偏向开口那侧（见上面那段"不摆在正中"）。 */
+  const centre = -half + jettyU;
+  /** 岛台靠近某一面墙的那条边。 */
+  const islandEdge = centre - ISLAND_HALF;
+
+  const bricks: (Piece & { color: number })[] = [];
+  const brick = (x: number, z: number): void => {
+    bricks.push({ p: [x, layerY, z], s: [CUBE, CUBE, CUBE], color: PALETTE.brick });
+  };
+
+  // 岛台 4×4：以 centre 为中心 → 四个位置偏移 -1.5 / -0.5 / +0.5 / +1.5
+  for (let i = 0; i < 4; i++) {
+    for (let j = 0; j < 4; j++) brick(centre - 1.5 + i, centre - 1.5 + j);
+  }
+
+  // 两条小道：从墙面砖块的外表面一路铺到岛台边缘，缝有多长就铺几块（至少一块）。
+  //
+  // **必须落在甲板晶格上**（T10）：小道是甲板的一部分，core 会把它们当成可行走格
+  // （见 `core/world/deck.ts`）。所以两个轴都吸附到整数格中心 ——
+  // 原来按 `(k+0.5)/count` 均匀铺满，得到的是任意分数坐标，那种位置在 core 里
+  // 表达不出来（`DeckCell` 的键要能往返 `parseCell`，而它只认整数）。
+  // 代价：小道不再"精确填满缝隙"，改为每一格一块砖。
+  const span = islandEdge - wallFace;
+  const count = Math.max(1, Math.round(span / CUBE));
+  // 小道所在的那一排岛台行。取两个中间行里靠外的那一排（`centre = -3.5` 是岛台几何中心，
+  // 而 4 宽是偶数，砖心只能落在整数格上，所以中心必然落在两排之间，必须选一边）。
+  const jettyRow = centre - 0.5;
+  for (let k = 0; k < count; k++) {
+    const along = Math.round(wallFace + ((k + 0.5) / count) * span);
+    brick(along, jettyRow); // 通向面 A（沿 x 走）
+    brick(jettyRow, along); // 通向面 B（沿 z 走）
+  }
+
+  // 宝物所在的甲板格。取 4 个中间格里 x/z 都靠 `+` 的那一格（`centre + 0.5` → `(-3, -3)`），
+  // 与 `conceptMinimal` 的 `treasures` 声明一致（那边写了为什么取这一格）。
+  //
+  // **必须落在格心，不能落在 `centre`**：core 的采集判定是"玩家所在格 == 宝物格"，而玩家只能
+  // 站在格心。原来画在 `centre`（= 四块中间砖的**接缝**上）会让宝物看起来在岛中央，实际
+  // 却捡不到 —— 那是"看得见摸不着"。顺带也让宝物从"浮在砖缝里"变成"摆在砖上"。
+  const prizeCell = centre + 0.5;
+
+  return { bricks, prize: [prizeCell, 1 + 0.3, prizeCell], centre };
+}
+
+interface BrickLayer {
+  readonly mesh: THREE.InstancedMesh;
+  /** 应用新的瓦片表，**只写变了的格**，返回改动格数。 */
+  apply(grid: readonly TileKind[]): number;
+}
+
+/**
+ * 砖块层：逐实例着色（材质给白色，颜色全靠实例色乘上去）+ 每格一个槽位。
+ *
+ * **为什么要给空格也留槽位**：挖（T11）把砖变空 —— 有槽位可隐藏；回填把空变砖 ——
+ * 也要有槽位才画得出来。若只按"初始有几块砖"分配，回填就无处可放。
+ * 代价是几十个零缩放的不可见实例，在这个规模下等于零。
+ *
+ * 岛台/小道的砖接在关卡格子之后，**不参与差分**（它们不归关卡数据管）。
+ */
+function createBrickLayer(
+  scene: THREE.Scene,
+  level: Level,
+  geo: THREE.BufferGeometry,
+  mat: THREE.Material,
+  extra: readonly (Piece & { readonly color: number })[],
+): BrickLayer {
+  const slots = level.cols * level.rows;
+  const mesh = new THREE.InstancedMesh(geo, mat, slots + extra.length);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  const col = new THREE.Color();
+  const write = (index: number, piece: Piece & { readonly color: number }): void => {
+    pos.set(piece.p[0], piece.p[1], piece.p[2]);
+    scl.set(piece.s[0], piece.s[1], piece.s[2]);
+    mesh.setMatrixAt(index, m.compose(pos, q, scl));
+    mesh.setColorAt(index, col.setHex(piece.color));
+  };
+
+  extra.forEach((piece, i) => write(slots + i, piece));
+
+  /** 上一次应用过的瓦片表 —— 差分的全部内容就是拿它跟新表比。初值 undefined，故首次 apply 会写满。 */
+  const applied: (TileKind | undefined)[] = new Array<TileKind | undefined>(slots).fill(undefined);
+
+  scene.add(mesh);
+
+  return {
+    mesh,
+    apply(grid: readonly TileKind[]): number {
+      let changed = 0;
+      for (let row = 0; row < level.rows; row++) {
+        for (let c = 0; c < level.cols; c++) {
+          const index = row * level.cols + c;
+          const kind = grid[index];
+          if (kind === applied[index]) continue;
+          applied[index] = kind;
+          write(index, brickSlot(level, c, row, kind));
+          changed += 1;
+        }
+      }
+      if (changed > 0) {
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      }
+      return changed;
+    },
+  };
+}
+
+/** 建一个单色 InstancedMesh。 */
+function instanced(
+  scene: THREE.Scene,
+  geo: THREE.BufferGeometry,
+  mat: THREE.Material,
+  pieces: readonly Piece[],
+  shadows: boolean,
+): THREE.InstancedMesh | null {
+  if (pieces.length === 0) return null;
+  const mesh = new THREE.InstancedMesh(geo, mat, pieces.length);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+
+  pieces.forEach((piece, i) => {
+    pos.set(piece.p[0], piece.p[1], piece.p[2]);
+    scl.set(piece.s[0], piece.s[1], piece.s[2]);
+    mesh.setMatrixAt(i, m.compose(pos, q, scl));
+  });
+
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.castShadow = shadows;
+  mesh.receiveShadow = shadows;
+  scene.add(mesh);
+  return mesh;
+}
+
+export interface Stage {
+  readonly scene: THREE.Scene;
+  /** 各类立体件的数量 —— 给探针与日志一份"到底摆了些什么"的凭据。 */
+  readonly counts: Readonly<Record<string, number>>;
+  /**
+   * 把新的瓦片表贴上墙，返回**改动格数**。这是 state→mesh 的差分入口：
+   * 挖开一格、回填一格，代价都只有那一格 —— 而不是重建整面墙。
+   */
+  setGrid(grid: readonly TileKind[]): number;
+  /** 每帧调用。逐实体的补间归 `meshSync.ts`（它有自己的 mesh，不在这里）。 */
+  update(elapsed: number): void;
+  dispose(): void;
+}
+
+export function createStage(level: Level): Stage {
+  const half = halfExtent(level.fold);
+  const wallTop = level.rows + HEADROOM;
+  const span = level.cols + 2;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(PALETTE.bg);
+
+  // 灯光按**浅色**场景重新配过：上一版是给深蓝夜色调的（冷色天光 + 强蓝补光），
+  // 打在浅底上会把整个画面洗白。这一版要的是参照图 3 那种"平涂 + 柔和阴影"：
+  // 天光偏中性白、主光从斜上打、补光只压一点点。
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xb9b4a6, 0.85));
+  const sun = new THREE.DirectionalLight(0xfff4e0, 1.5);
+  sun.position.set(16, 34, 20);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -40, right: 40, top: 40, bottom: -40, far: 220 });
+  sun.shadow.bias = -0.0015;
+  scene.add(sun);
+  const rim = new THREE.DirectionalLight(0xd8e6f2, 0.3);
+  rim.position.set(-20, 9, -18);
+  scene.add(rim);
+
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  const chipGeo = new THREE.OctahedronGeometry(0.19);
+  const mat = {
+    // 砖块材质给**白色**：真正的颜色由逐实例色乘上去（见 createBrickLayer）。
+    white: new THREE.MeshLambertMaterial({ color: 0xffffff }),
+    shell: new THREE.MeshLambertMaterial({ color: PALETTE.shell }),
+    edge: new THREE.MeshBasicMaterial({ color: PALETTE.edge }),
+    seam: new THREE.MeshBasicMaterial({ color: PALETTE.seam }),
+    lad: new THREE.MeshLambertMaterial({ color: PALETTE.lad }),
+    bar: new THREE.MeshBasicMaterial({ color: PALETTE.bar }),
+    chip: new THREE.MeshBasicMaterial({ color: PALETTE.chip }),
+    prize: new THREE.MeshLambertMaterial({ color: PALETTE.prize }),
+    exit: new THREE.MeshBasicMaterial({ color: PALETTE.exit }),
+    // 水面用 Lambert 而不是 Phong：不要镜面高光。这一版的风格是平涂（参照图 3），
+    // 一层高光就会把画面拉回"科技夜"。"不可进入"由规则表达，不靠刺眼的水色。
+    water: new THREE.MeshLambertMaterial({
+      color: PALETTE.water,
+      transparent: true,
+      opacity: 0.85,
+    }),
+    bed: new THREE.MeshLambertMaterial({ color: PALETTE.bed }),
+    waterRim: new THREE.MeshBasicMaterial({
+      color: PALETTE.rim,
+      transparent: true,
+      opacity: 0.4,
+    }),
+    glint: new THREE.MeshBasicMaterial({
+      color: PALETTE.glint,
+      transparent: true,
+      opacity: 0.1,
+    }),
+  };
+
+  const singles: THREE.Mesh[] = [];
+  function put(
+    m: THREE.Material,
+    p: Vec3,
+    s: Vec3,
+    shadows = true,
+    geo: THREE.BufferGeometry = box,
+  ): THREE.Mesh {
+    const o = new THREE.Mesh(geo, m);
+    o.position.set(p[0], p[1], p[2]);
+    o.scale.set(s[0], s[1], s[2]);
+    o.castShadow = shadows;
+    o.receiveShadow = shadows;
+    scene.add(o);
+    singles.push(o);
+    return o;
+  }
+
+  // ── 两片墙（背板）+ 折痕线 ──
+  put(mat.shell, [-half - 0.5, wallTop / 2, 0], [1, wallTop, span]);
+  put(mat.shell, [0, wallTop / 2, -half - 0.5], [span, wallTop, 1]);
+  put(mat.seam, [-half, wallTop / 2 - 0.5, -half], [0.09, wallTop - 0.8, 0.09]);
+
+  // ── 墙面轮廓线：没有这一圈，两片墙会整片隐进背景，"折面贴在墙角"就读不出来了 ──
+  {
+    const e = -half + 0.06;
+    const w = 0.05;
+    const z = span / 2;
+    const t = wallTop;
+    put(mat.edge, [e, t / 2, -z], [w, t, w], false);
+    put(mat.edge, [e, t / 2, z], [w, t, w], false);
+    put(mat.edge, [e, 0.05, 0], [w, w, z * 2], false);
+    put(mat.edge, [e, t - 0.05, 0], [w, w, z * 2], false);
+    put(mat.edge, [-z, t / 2, e], [w, t, w], false);
+    put(mat.edge, [z, t / 2, e], [w, t, w], false);
+    put(mat.edge, [0, 0.05, e], [z * 2, w, w], false);
+    put(mat.edge, [0, t - 0.05, e], [z * 2, w, w], false);
+  }
+
+  // ── 水面：铺满"两片墙围起来的这一块"，岛台只是水里的一座台 ──
+  // 远边**收进墙面砖块里面**（`-half + BRICK_N` 正好是砖心），把水的接缝藏在砖背后；
+  // 近边往开口那侧**铺出去**，让水延伸到手边甚至出画 —— 而不是在岛外一圈就断掉
+  // （第一版就是断在岛外，于是"水面"读成了一块岛的边框）。
+  //
+  // ## `WATER_SPILL` 为什么从 0.5 放到 2.2（观感返工③）
+  //
+  // 用户审图后指出"岛相对水面偏大"。查下来的真实数字：`halfExtent(9) = 8.5`，
+  // 水面跨度 8.44、岛台跨度 4 → **岛占跨度 47%**。而水面其实**已经铺满了几何允许的
+  // 最大范围**（从折痕砖线铺到墙口），所以"把水改大"在**网格内部**没有空间了。
+  //
+  // 但水面是**纯装饰** —— 水是"掉出墙体"的**结果**，不是一张瓦片（见 `core/world/water.ts`），
+  // 所以它可以往墙脚**外面**铺而不动任何规则。用户给的硬约束是"岛 4×4"，那么在
+  // "放大水体 / 缩小岛"这两条里只有前者与之相容，于是取前者。
+  //
+  // 0.5 → 2.2 的调整：跨度 8.44 → 10.14，岛占跨度 47% → **39%**。
+  //
+  // ## 试过 4.0，**失败了**（别再重复这条路）
+  //
+  // 2.2 之后**看图**发现：水面虽然成片，但**收边仍落在取景框里**（底部能看到矩形边界
+  // 和一圈 `waterRim`），画面读成"一个大水池"而不是"延伸出去的水"。
+  // 于是试着放大到 4.0（跨度 12.44，岛占比 32%）想把它顶出框 —— **没成功，而且更糟**：
+  // 四条边同时进入视野，矩形读起来反而**更完整**了。
+  //
+  // 根因：**水面是一个正方形平面，正方形永远有边**。放大只是把四条边往外推，
+  // 边依然是边。"靠放大水面让它读成无边的水"这个思路**本身不成立**。
+  //
+  // 真要消掉"水池感"，可试的方向是**去掉 `waterRim` 那四根亮线**（让水在自己的边缘
+  // 没有描边、直接融进背景色），而不是继续放大。这一版没做，留给下一轮定。
+  // 所以这里回到 2.2：4.0 的**理由已被推翻**，没有理由留着它。
+  //
+  // 往**开口那侧**铺（不是往折痕那侧）是因为折痕那边的接缝要靠砖块挡住。
+  // 这个值是**外观参数**，改它不牵连任何逻辑。
+  const island = islandAndJetties(level);
+  const islandCentre = island.centre;
+  const waterFar = -half + BRICK_N;
+  /** 墙口：最外一片砖（col 0）的格心在 -0.5，再加半个立方体就是它的外表面。 */
+  const wallOuter = -0.5 + CUBE / 2;
+  /** 水从墙口外沿再往开口侧铺出去多少格（观感参数，不参与任何规则）。 */
+  const WATER_SPILL = 2.2;
+  const waterNear = wallOuter + WATER_SPILL;
+  const waterC = (waterFar + waterNear) / 2;
+  const waterH = (waterNear - waterFar) / 2;
+  put(mat.bed, [waterC, 0.01, waterC], [waterH * 2, 0.03, waterH * 2], false);
+  put(mat.water, [waterC, WATER_Y / 2, waterC], [waterH * 2, WATER_Y, waterH * 2], false);
+  // ── 水面边线：**这一版故意不画**（观感实验③-b） ──
+  //
+  // 原先这里沿水面四条边各画一根亮线（`mat.waterRim`）。加上去是因为"水面没有边就
+  // 看不出来是一层水" —— 但**看图之后**发现它同时在替水面**描出一个矩形轮廓**，
+  // 那正是"读成一个大水池而不是延伸出去的水"的直接来源。
+  //
+  // 试过先放大水面（`WATER_SPILL` 0.5 → 2.2 → 4.0）想把边顶出画外，**失败了**：
+  // 正方形平面永远有边，放大只是把四条边往外推，边依然是边。
+  // 所以换个方向：**不给水描边**，让它自己的边缘直接融进背景色。
+  //
+  // 要还原就把下面四行放回来（水面尺寸不用动）：
+  //
+  //   const y = WATER_Y + 0.012;
+  //   const len = waterH * 2 + 0.1;
+  //   put(mat.waterRim, [waterC, y, waterC - waterH], [len, 0.035, 0.1], false);
+  //   put(mat.waterRim, [waterC, y, waterC + waterH], [len, 0.035, 0.1], false);
+  //   put(mat.waterRim, [waterC - waterH, y, waterC], [0.1, 0.035, len], false);
+  //   put(mat.waterRim, [waterC + waterH, y, waterC], [0.1, 0.035, len], false);
+  //
+  // `mat.waterRim` 与 `PALETTE.rim` 都**留着不删** —— 这样还原是"粘回四行"，
+  // 而不是"还要把材质和色板条目重新加回来"。多留一个未被引用的材质，比删了又加便宜。
+  // 高光条：沿海面铺 5 条，长度与位置都跟着水面尺寸走（不再是写死的 2.4 / 1.9）。
+  // 位置相对**岛心**取（那是画面中心），而不是相对水面中心 —— 水面偏向开口那侧之后，
+  // 两者不再重合，用水面中心会把高光推到画面外。
+  for (let i = 0; i < 5; i++) {
+    const t = (i - 2) / 2; // -1 .. +1
+    put(
+      mat.glint,
+      [islandCentre + t * waterH * 0.6, WATER_Y + 0.02, islandCentre],
+      [waterH * 0.5, 0.02, 0.16],
+      false,
+    );
+  }
+
+  // ── 折面关卡本体 + 岛台/小道 ──
+  // 砖走 `createBrickLayer`（每格一个槽位，供 T11 的挖/回填差分）；其余道具建一次就不动。
+  // `island` 在上面画水面时就已经取好了（水要用岛心）。
+  const props = collectProps(level);
+  // 岛台与小道这一版全是砖，没有连杆 —— 所以杆只来自关卡数据本身。
+  const bars = props.bars;
+  const brickLayer = createBrickLayer(scene, level, box, mat.white, island.bricks);
+  brickLayer.apply(level.grid);
+
+  const meshes = [
+    instanced(scene, box, mat.lad, props.ladders, true),
+    instanced(scene, box, mat.bar, bars, true),
+    instanced(scene, chipGeo, mat.chip, props.chips, false),
+    instanced(scene, box, mat.exit, props.exits, false),
+  ].filter((m): m is THREE.InstancedMesh => m !== null);
+
+  put(mat.prize, island.prize, [0.6, 0.6, 0.6], false);
+
+  return {
+    scene,
+    counts: {
+      // `brick` 是**画出来的**砖（关卡里的 + 岛台/小道的）；`brickSlots` 是分配出的槽位数。
+      // 两者不相等是正常的（空格也占槽）—— 分开报，才看得出"差分容器有没有给够"。
+      brick: level.grid.filter((kind) => brickColor(kind) !== null).length + island.bricks.length,
+      brickSlots: level.cols * level.rows,
+      ladder: props.ladders.length,
+      bar: bars.length,
+      chip: props.chips.length,
+      exit: props.exits.length,
+      prize: 1,
+    },
+    setGrid(grid: readonly TileKind[]): number {
+      return brickLayer.apply(grid);
+    },
+    update(_elapsed: number): void {
+      // 逐实体的补间归 meshSync（它有自己的 mesh，不在这里）。
+    },
+    dispose(): void {
+      // InstancedMesh 与墙板共用 box / chipGeo 两个几何体 —— 下面统一释放，
+      // 这里只释放每个实例网格自己的实例缓冲（dispose 不动几何体）。
+      brickLayer.mesh.dispose();
+      for (const mesh of meshes) mesh.dispose();
+      for (const o of singles) scene.remove(o);
+      chipGeo.dispose();
+      box.dispose();
+      for (const m of Object.values(mat)) m.dispose();
+      scene.clear();
+    },
+  };
+}

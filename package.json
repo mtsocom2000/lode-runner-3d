@@ -1,0 +1,32 @@
+{
+  "name": "cube-corner-lode-runner-3d",
+  "private": true,
+  "version": "0.1.0",
+  "description": "《立方角隙》— 一张原版 Lode Runner 关卡沿中线折 90°，贴在墙角两个竖直面上；两墙之间是水面",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
+    "pack": "vite build --config vite.singlefile.config.ts",
+    "shot": "npm run pack && node tools/shot.mjs",
+    "probe": "npm run pack && node tools/probe.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "0.160.0",
+    "eslint": "^9.13.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.12.0",
+    "vite": "^5.4.10",
+    "vite-plugin-singlefile": "^2.0.2",
+    "vitest": "^2.1.4"
+  }
+}

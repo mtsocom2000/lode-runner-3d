@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>立方角隙 · v10：折面原版关卡 + 水面 + 砖块堆叠岛台</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#060a0f;font-family:"PingFang SC","Microsoft YaHei",sans-serif}
+  canvas{display:block}
+  #hud{position:fixed;top:12px;left:14px;color:#cfe3f4;font-size:13px;line-height:1.75;z-index:2;user-select:none;
+    background:rgba(10,16,24,.84);padding:12px 16px;border-radius:8px;border:1px solid #2f4459;backdrop-filter:blur(6px);max-width:440px}
+  #hud b{color:#4fe6ff}
+  #hud .dim{color:#8ba3b8}
+  #hud .warn{color:#7fd6ff}
+  .tag{position:fixed;font-size:11px;z-index:2;user-select:none;padding:2px 8px;border-radius:4px;color:#9fdcff;
+    border:1px solid #3a5570;background:rgba(15,24,34,.65)}
+  .tag.g{color:#ffd23f;background:rgba(28,22,8,.6);border:1px solid #6b5a1e}
+  #foot{position:fixed;bottom:10px;left:14px;color:#7d93a6;font-size:12px;z-index:2;background:rgba(10,16,24,.7);
+    padding:4px 10px;border-radius:6px;border:1px solid #2a3d50;max-width:50vw}
+  #banner{position:fixed;top:12px;right:14px;color:#ff9ecb;font-size:12px;z-index:2;background:rgba(26,12,22,.75);
+    padding:6px 12px;border-radius:6px;border:1px solid #7a3257}
+</style>
+</head>
+<body>
+<div id="hud">
+  <b>立方角隙 · v10</b>：折面原版关卡 + 水面 + 砖块堆叠岛台<br>
+  <span class="dim">
+  · 左右两面各承载<b style="color:#d5e8f6">半张原版关卡</b>（<b>统一立方体砖</b>，带缝）；沿棱线折 90°，摊平即一张完整关卡<br>
+  · 关卡<b style="color:#d5e8f6">故意不对称</b>；平台一律<b style="color:#4fe6ff">断开分段</b>（不再有整行实心的"梳子"）<br>
+  <span class="warn">· 水面规则：水永远不可"走"入（朝水方向非合法方向，直接阻止）<br>
+  &nbsp;&nbsp;① 地板天然断裂处坠落、下方无砖接住 → 落水<br>
+  &nbsp;&nbsp;② 在连杆上按"下"跳下、下方不是岛台 → 落水</span><br>
+  · 中央岛台＝<b>4×4 砖块堆叠 2 层</b>；左右各一条 1 格宽的<b>砖块小道</b>从墙伸出，<br>
+  &nbsp;&nbsp;末端故意留 1 格缺口、用<b>连杆</b>跨过去 —— 小道 / 缺口 / 岛台 三段分明<br>
+  · 水面只铺墙角围起来的这一块（远边压进墙里藏缝，近边只比岛台多留一点余量）<br>
+  · 蓝灰=可挖砖｜深灰=硬砖｜青=梯｜品红=横杆｜青钻=数据芯片｜绿=出口</span>
+</div>
+<div id="banner">概念方向 v10（外观三修：水面收进墙角 · 平台断开分段 · 小道与岛台分离）</div>
+<div class="tag" style="left:3%;top:27%">左墙 Face A · 关卡左半</div>
+<div class="tag" style="right:3%;top:27%">右墙 Face C · 关卡右半</div>
+<div class="tag g" style="left:43%;top:7%">棱线 = 折痕（横杆在此穿过）</div>
+<div class="tag" style="left:50%;bottom:6%;transform:translateX(-50%)">水面（不可走入）· 岛台（砖块堆叠）· 左右小道 + 连杆</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+"use strict";
+/* v10 — one original-style 2D level folded 90° along the seam onto the two vertical walls.
+   Level: 14 cols x 10 rows.  cols 0..6 = wall A, cols 7..13 = wall B (seam between col6 and col7).
+   rows bottom(0) -> top(9).   X=diggable brick  ==hard  H=ladder  -=bar  G=chip  E=exit  .=empty
+   col 4 is an open shaft from row2 down through row0 -> falling there drops into the water.
+   Platforms are intentionally BROKEN into short segments (max run = 4) so the level
+   no longer reads as a comb of full-width solid bars.                                   */
+const LEVEL=[
+ "XX.X.XX.XXX.XX",   /* r0 地板：断开分段（col4 = 竖井出口，直通水面） */
+ "..............",   /* r1 走廊（空行） */
+ "XXXX.XX..XX.XX",   /* r2 主平台：col0 接左小道；col4 竖井口；col5 梯基座 */
+ ".....H....XX..",   /* r3 梯 col5；右半留一小段平台 */
+ "XX.XX..XX.XX.X",   /* r4（曾是 14 格全实心 —— "梳子"感的元凶） */
+ ".XX.HXXX..H.XX",   /* r5 梯 col4 / col10；col6-col7 跨折痕相连 */
+ "XXX....XX..X.X",   /* r6 */
+ "..XX.X--X.XX..",   /* r7 横杆 col6-col7 穿过折痕 */
+ "XX.XX.X.XX.XX.",   /* r8 */
+ "..X.G.X.EE.X.G"];  /* r9  G=宝物  E=出口 */
+const ROWS=10, COLSA=7, N=14, HALF=(N-1)/2;
+const CUBE=0.86, GAP=1-CUBE;                 /* every brick is the same cube */
+const at=(c,r)=>(r>=0&&r<ROWS&&c>=0&&c<14)?LEVEL[r][c]:'.';
+
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x060a0f);
+const ortho=12.0;
+const cam=new THREE.OrthographicCamera(-ortho,ortho,ortho,-ortho,-100,500);
+const dv=new THREE.Vector3(1,.66,1).normalize();
+cam.position.copy(dv).multiplyScalar(200);cam.lookAt(-2.0,3.2,-2.0);
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(devicePixelRatio);
+renderer.shadowMap.enabled=true;document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xa8c6de,0x0d141c,1.0));
+const sun=new THREE.DirectionalLight(0xddf0ff,1.3);sun.position.set(14,34,18);sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-40,right:40,top:40,bottom:-40,far:220});sun.shadow.bias=-.0015;scene.add(sun);
+const rimL=new THREE.DirectionalLight(0x58b7ff,.5);rimL.position.set(-20,9,-18);scene.add(rimL);
+
+const boxG=new THREE.BoxGeometry(1,1,1);
+const root=new THREE.Group();scene.add(root);
+function add(geo,mat,p,scl,sh=true){const m=new THREE.Mesh(geo||boxG,mat);m.position.set(...p);
+ if(scl)m.scale.set(...scl);m.castShadow=sh;m.receiveShadow=sh;root.add(m);return m;}
+const M={
+  /* 墙面（两片背板）：比背景亮、比砖暗 —— 让"墙角"这件事看得出来 */
+  shell:new THREE.MeshLambertMaterial({color:0x1b2734}),
+  brick:new THREE.MeshLambertMaterial({color:0x40607c}),
+  hard :new THREE.MeshLambertMaterial({color:0x233240}),
+  lad  :new THREE.MeshLambertMaterial({color:0xbfe6ff}),
+  bar  :new THREE.MeshBasicMaterial({color:0xff4fd0}),
+  chip :new THREE.MeshBasicMaterial({color:0x4fe6ff}),
+  prize:new THREE.MeshLambertMaterial({color:0xf0c04a}),
+  exit :new THREE.MeshBasicMaterial({color:0x37e068}),
+  seam :new THREE.MeshBasicMaterial({color:0x4fe6ff}),
+  /* 墙面轮廓线：把两片墙的边勾出来，折角与水面才立得住 */
+  edge :new THREE.MeshBasicMaterial({color:0x33516b}),
+  /* 水面：再压暗一档 + 恢复一点边缘高光，读作"有边的水面"而不是蓝板 */
+  water:new THREE.MeshPhongMaterial({color:0x0b3b54,specular:0x7fc9e6,shininess:55,transparent:true,opacity:.74}),
+  bed  :new THREE.MeshLambertMaterial({color:0x040a12}),
+  rim  :new THREE.MeshBasicMaterial({color:0x4fb0d4,transparent:true,opacity:.40}),
+  glint:new THREE.MeshBasicMaterial({color:0x8fd6ea,transparent:true,opacity:.10})
+};
+/* ── shells（两片墙背板）+ 折痕线 + 墙面轮廓线 ──────────────────────────
+   没有这圈轮廓线，两片墙会整个隐进背景里 → "折面贴在墙角"读不出来，
+   水面也会退化成一枚浮在地上的蓝板。                                   */
+const WALLTOP=11.4, WATER_Y=0.62;
+add(boxG,M.shell,[-HALF-.5,WALLTOP/2,0],[1,WALLTOP,N+2]);
+add(boxG,M.shell,[0,WALLTOP/2,-HALF-.5],[N+2,WALLTOP,1]);
+add(boxG,M.seam,[-HALF,5.2,-HALF],[.09,10.6,.09]);
+{const E=-HALF+.06, W=.05, Z=(N+2)/2, T=WALLTOP;
+ add(boxG,M.edge,[E,T/2,-Z],[W,T,W],false);  add(boxG,M.edge,[E,T/2, Z],[W,T,W],false);
+ add(boxG,M.edge,[E,.05,0],[W,W,Z*2],false); add(boxG,M.edge,[E,T-.05,0],[W,W,Z*2],false);
+ add(boxG,M.edge,[-Z,T/2,E],[W,T,W],false);  add(boxG,M.edge,[ Z,T/2,E],[W,T,W],false);
+ add(boxG,M.edge,[0,.05,E],[Z*2,W,W],false); add(boxG,M.edge,[0,T-.05,E],[Z*2,W,W],false);}
+/* ── the folded level: every brick is the SAME cube (CUBE^3), with gaps ── */
+function place(c,r){
+  if(c<COLSA){const z=(COLSA-1-c)-HALF;return{p:[-HALF+.06+CUBE/2,r+.5,z],axis:'z'};}
+  const x=(c-COLSA)-HALF;              return{p:[x,r+.5,-HALF+.06+CUBE/2],axis:'x'};
+}
+const CUBE3=[CUBE,CUBE,CUBE];
+for(let c=0;c<14;c++)for(let r=0;r<ROWS;r++){
+  const ch=at(c,r); if(ch==='.')continue;
+  const {p,axis}=place(c,r);
+  if(ch==='X'||ch==='='){ add(boxG,ch==='='?M.hard:M.brick,p,CUBE3); }
+  else if(ch==='H'){
+    const o=axis==='z'?[[0,0,.24],[0,0,-.24]]:[[.24,0,0],[-.24,0,0]];
+    for(const q of o) add(boxG,M.lad,[p[0]+q[0],p[1],p[2]+q[2]],[.07,CUBE,.07]);
+    for(let k=0;k<3;k++) add(boxG,M.lad,[p[0],p[1]-.3+k*.3,p[2]],axis==='z'?[.07,.06,.6]:[.6,.06,.07]);
+  }
+  else if(ch==='-'){ add(boxG,M.bar,p,axis==='z'?[.10,.10,CUBE]:[CUBE,.10,.10]); }
+  else if(ch==='G'){ add(new THREE.OctahedronGeometry(.19),M.chip,[p[0],p[1],p[2]],null,false); }
+  else if(ch==='E'){ add(boxG,M.exit,p,CUBE3,false); }
+}
+/* ── WATER：只铺"两面墙围起来的这一块"，不再溢到墙角外面 ──────────────
+   墙的内表面在 x=-6.5 / z=-6.5 →
+     · 远边取 -6.6：往墙里压 0.1，藏住接缝（否则会看到一条水与墙的缝）
+     · 近边取 +2.6：只比岛台（±1.93）多留一点余量
+   于是 x,z ∈ [-6.6, 2.6]，中心 (-2.0,-2.0)，半边长 4.6。                  */
+const WC=-2.0, WH=4.6;
+add(boxG,M.bed,  [WC,.01,WC],[WH*2,.03,WH*2],false);
+add(boxG,M.water,[WC,WATER_Y/2,WC],[WH*2,WATER_Y,WH*2],false);
+{const y=WATER_Y+.012, L=WH*2+.1;
+ add(boxG,M.rim,[WC,y,WC-WH],[L,.035,.10],false);
+ add(boxG,M.rim,[WC,y,WC+WH],[L,.035,.10],false);
+ add(boxG,M.rim,[WC-WH,y,WC],[.10,.035,L],false);
+ add(boxG,M.rim,[WC+WH,y,WC],[.10,.035,L],false);}
+const glints=[];
+for(let i=0;i<5;i++){const g=add(boxG,M.glint,[WC,WATER_Y+.02,-5.2+i*1.8],[2.4,.02,.16],false);glints.push(g);}
+/* ── island 4x4: STACKED CUBES (2 layers); top surface = row2 top (y=3) ── */
+function cubeStack(x,z,layers,mat){for(let L=0;L<layers;L++) add(boxG,mat,[x,(1.71+.86*L),z],CUBE3);}
+for(let i=0;i<4;i++)for(let j=0;j<4;j++) cubeStack(-1.5+i,-1.5+j,2,M.brick);
+add(boxG,M.prize,[0,3.44,0],[.6,.6,.6]);
+/* ── 两条小道：1 格宽、2 层砖，从墙伸向岛台；末端故意留 1 格缺口，
+      再用一根连杆（品红）跨过去 —— 让"小道 / 缺口 / 岛台"三段各自可辨，
+      而不是糊成一整块。（连杆直连岛台，正是企划案里写过的玩法） ── */
+for(let i=0;i<4;i++) cubeStack(-6.14+i*.86,-0.5,2,M.brick);   /* 左墙 Face A → 岛台 */
+for(let j=0;j<4;j++) cubeStack(-0.5,-6.14+j*.86,2,M.brick);   /* 右墙 Face B → 岛台 */
+const GJ=1.30;                                                /* 缺口跨度（略覆盖两端） */
+/* 连杆必须落在"砖面之上一层"（row3 → y=3.5）：玩家站在小道上直接手拉横移过去，
+   不需要先下降一格 —— 否则到了缺口对面就再也上不来了。 */
+add(boxG,M.bar,[-2.53,3.5,-0.5],[GJ,.13,.13],false);          /* 左：连杆跨缺口 */
+add(boxG,M.bar,[-0.5,3.5,-2.53],[.13,.13,GJ],false);          /* 右：连杆跨缺口 */
+/* ── actors ── */
+function pawn(mat,s){const g=new THREE.Group();
+ const a=new THREE.Mesh(boxG,mat);a.scale.set(s,s,s);a.castShadow=true;
+ const b=new THREE.Mesh(boxG,new THREE.MeshBasicMaterial({color:mat.color,depthTest:false,transparent:true,opacity:.9}));
+ b.scale.set(s+.02,s+.02,s+.02);b.renderOrder=998;g.add(a);g.add(b);scene.add(g);return g;}
+/* demo walker: walks the row2 platform (cols 0..3), steps into the col-4 shaft,
+   falls into the water, respawns */
+const PW=.5;
+const player=pawn(new THREE.MeshLambertMaterial({color:0x37b6ff}),PW);
+const drone =pawn(new THREE.MeshLambertMaterial({color:0xff5a3c}),.42);
+const stalk =pawn(new THREE.MeshLambertMaterial({color:0xbb63ff}),.40);
+const splash=new THREE.Mesh(new THREE.RingGeometry(.2,.62,28),new THREE.MeshBasicMaterial({color:0xbdf1ff,transparent:true,opacity:0,side:THREE.DoubleSide}));
+splash.rotation.x=-Math.PI/2;splash.position.set(-5.42,WATER_Y+.03,-4.5);scene.add(splash);
+let t=0,phase=0,fy=0;
+const walkX=-5.42, walkZ0=-0.5, walkZ1=-4.5, standY=2.93+PW/2;
+function loop(now){const dt=Math.min(.05,(now-(loop.p||now))/1000);loop.p=now;t+=dt;
+ if(phase===0){const k=Math.min(1,t/2.6);player.position.set(walkX,standY,walkZ0+(walkZ1-walkZ0)*k);
+   if(k>=1){phase=1;t=0;fy=standY;}}
+ else if(phase===1){fy-=dt*7.0;player.position.set(walkX,Math.max(WATER_Y-0.25,fy),walkZ1);
+   if(fy<=WATER_Y-0.2){phase=2;t=0;splash.material.opacity=.85;}}
+ else{if(t>2.0){phase=0;t=0;} splash.material.opacity=Math.max(0,.85-t/2);}
+ /* 两个敌人：一个贴右墙 Face B 巡逻，一个贴左墙 Face A 高处巡逻
+    （贴住墙面，不再悬在水面上方的空处） */
+ drone.position.set(-2.5+Math.sin(t*.8)*1.2,3.14,-5.38);
+ stalk.position.set(-5.38,6.40,-4.5+Math.sin(t*.5)*1.1);
+ for(let i=0;i<glints.length;i++){const g=glints[i];g.position.x=WC-3.8+((t*0.6+i*1.9)%7.6);
+   g.material.opacity=.06+.06*Math.abs(Math.sin(t*.8+i));}
+ renderer.render(scene,cam);requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);
+ const a=innerWidth/innerHeight;cam.left=-ortho*Math.max(1,a/1.4);cam.right=-cam.left;
+ cam.top=ortho*Math.max(1,1.4/a);cam.bottom=-cam.top;cam.updateProjectionMatrix();});
+</script>
+</body>
+</html>

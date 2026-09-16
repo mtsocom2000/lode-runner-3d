@@ -1,1 +1,28 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=proto.html"><title>Lode Runner 3D</title></head><body><a href="proto.html">进入 Lode Runner 3D 原型</a></body></html>
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>立方角隙 · 折面概念场景</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        /* 与 palette.bg 一致（浅暖灰）—— 页面底色与场景底色对不上时，
+           画布之外会露出一圈深色边，看起来像渲染坏了。 */
+        background: #eceae4;
+        color: #33383d;
+        font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/app/main.ts"></script>
+  </body>
+</html>
