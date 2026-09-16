@@ -153,8 +153,8 @@ export const CONCEPT_MINIMAL: LevelDef = {
     { x: -4, z: -6 }, // 面 B 小道（沿 z）
   ],
   joints: [
-    { deck: { x: -7, z: -4 }, wall: { face: 'A', col: 3, row: 1 } },
-    { deck: { x: -4, z: -7 }, wall: { face: 'B', col: 14, row: 1 } },
+    { deck: { x: -7, z: -4 }, wall: { face: 'A', col: 3, row: 1 }, enterDir: 'right' },
+    { deck: { x: -4, z: -7 }, wall: { face: 'B', col: 14, row: 1 }, enterDir: 'up' },
   ],
   /**
    * 出口闸门（T13）：`r5` 上夹住两个出口的四块硬砖。未集齐宝物时它们是墙，集齐后

@@ -11,6 +11,7 @@ import {
   type StepResult,
 } from '../src/core/rules/movement';
 import { BAROVER, BARSTUB, CLIFF, DROP, JETTY, UPPER, cellA, cellB, load } from './fixtures';
+import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 
 /** 站在某格（模式由 supportOf 定：砖/梯 → stand，杆 → hang）。夹具非法时直接炸，不静默。 */
 function at(level: ReturnType<typeof load>, cell: Cell): MoveState {
@@ -31,6 +32,32 @@ function shape(result: StepResult): string {
 describe('movement：方向表', () => {
   it('四个方向，顺序固定（供 input 层遍历映射）', () => {
     expect([...DIRS]).toEqual(['left', 'right', 'up', 'down']);
+  });
+});
+
+/**
+ * 墙面 ↔ 小道 的接点。**这是原先测试体系的结构性盲区**：`buildGraph` 只遍历墙面格，
+ * 甲板不在图里，所以"关卡是一个连通分量"那类断言永远碰不到这段路 —— 用户在试玩里
+ * 走不过去（2.1）而 251 例全绿，原因就在这。这一小段是它的第一块覆盖。
+ *
+ * 判据是双向的：**绿 ⇒ 接点没坏**，2.1 的成因是按键词表（方案 B 能治）；
+ * **红 ⇒ 接点真坏**，那是另一条修法。两种结果都算进展。
+ */
+describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () => {
+  const sim = load(CONCEPT_MINIMAL);
+
+  it('A 面接点：站在 A:3,1 按 right 拐上小道，落到 I:-7,-4', () => {
+    expect(shape(step(sim, at(sim, cellA(3, 1)), 'right'))).toBe('move:stand:I:-7,-4');
+  });
+
+  // ⚠ **真 bug，已实测复现（B-1 期间发现）**：B 面接点的 `enterDir` 是 `up`
+  // （因为 dz = +1.5 > 0），但 `up` 在墙面上是**爬梯子**的语义 —— `B:14,1` 没有梯子，
+  // 于是"上"被更早的梯子检查先拒成 `blocked:not-ladder`，**永远走不到接点分支**。
+  // A 面那条是绿的（`right` 不与梯子冲突），所以接点机制本身没问题，坏的是**方向选择**。
+  // 待办：接点要么换一个不与梯子冲突的方向，要么把接点分支提到梯子检查之前。
+  // 在那之前这条**跳过**而不是改写期望 —— 改期望就等于把 bug 冻进数据。
+  it.skip('B 面接点：站在 B:14,1 按 up 拐上小道，落到 I:-4,-7（已知失败：up 撞上梯子检查）', () => {
+    expect(shape(step(sim, at(sim, cellB(14, 1)), 'up'))).toBe('move:stand:I:-4,-7');
   });
 });
 

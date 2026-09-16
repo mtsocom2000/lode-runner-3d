@@ -114,7 +114,10 @@ function refreshHud(): void {
     '立方角隙 · 折面概念场景（浅色版）',
     `${level.id}：${level.cols}×${level.rows}，fold=${level.fold} —— 每面 ${level.fold}×${level.rows}（正好 3:2）`,
     `砖 ${stage.counts.brick ?? 0}/${stage.counts.brickSlots ?? 0} 槽 ｜ 梯 ${stage.counts.ladder ?? 0} ｜ 杆 ${stage.counts.bar ?? 0} ｜ 芯片 ${stage.counts.chip ?? 0} ｜ 出口 ${stage.counts.exit ?? 0} ｜ 岛台宝物 ${stage.counts.prize ?? 0}`,
-    `角色 ${at} ｜ tick ${state.tick} ｜ ${state.status}`,
+    // 命数必须可见：它是玩家做决策要看的第三个数（前面是"还剩几块宝物"和"闸门开没开"）。
+    // 之前漏了这一项，代价是**试玩时看不出自己掉没掉命** —— 用户报"角色回到出发点"时，
+    // HUD 显示不出来"那是因为摔死重生"，于是只能靠猜。三行数字里它最便宜、信息量最高。
+    `角色 ${at} ｜ 命数 ${state.lives} ｜ tick ${state.tick} ｜ ${state.status}`,
     // T13：目标状态。这两个数是玩家做决策要看的 —— "还剩几块"决定还有多远，
     // 闸门开没开决定现在能不能去出口。**刻意不显示宝物在哪**：那是玩家该自己找的。
     `宝物 ${state.treasures.length === 0 ? '已集齐' : `还剩 ${state.treasures.length} 块`} ｜ 出口闸门 ${state.gatesOpen ? '已开' : '封着（集齐才开）'}`,
