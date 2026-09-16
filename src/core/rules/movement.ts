@@ -179,22 +179,20 @@ export function step(level: Level, state: MoveState, dir: Dir): StepResult {
     return { kind: 'fall', end: fallTo(level, cell) };
   }
 
-  if (dir === 'up' || dir === 'down') {
-    if (state.mode === 'hang') return stepOnBar(level, state, dir);
-    // stand：只有梯能上下。
-    if (supportOf(level, cell) !== 'ladder') return blocked('not-ladder');
-
-    const target = cellAt(level, cell.col, dir === 'up' ? cell.row + 1 : cell.row - 1);
-    if (target === null) return blocked('not-ladder');
-    if (supportOf(level, target) !== 'ladder') return blocked('not-ladder');
-    return { kind: 'move', state: { cell: target, mode: 'stand' } };
-  }
-
-  // 甲板接头**优先于**网格邻居：墙面格"朝甲板那一侧"走的是接头，不是 `col ± 1`。
+  // 甲板接头**优先于**网格邻居，也**优先于下面的上下梯门**（B-1 修）。
   //
-  // 不加这段的话，接头的墙面端是**单向门**：`stepOnDeck` 能把你从小道送回墙上，
-  // 但你再也上不去 —— 因为从墙这边按过去只会走到隔壁墙格（接头的墙面端两侧通常都有网格邻居）。
-  // 图里 `buildGraph` 是从接头两端各连一条边的，移动层必须同样双向。
+  // 为什么必须在梯门之前：接头的墙面端可能要用 `up` / `down` 才能拐上小道（B 面接点就是
+  // `enterDir: 'up'`，因为小道朝 +z）。而下面那个门在 stand 态"脚下不是梯就立刻
+  // `return blocked('not-ladder')`" —— 接点端恰好不是梯，于是**永远到不了这段循环**。
+  // 实测量到的就是 `blocked:not-ladder`（见 test/movement.test.ts 的接点两条）。
+  //
+  // 提前是**安全**的：循环首句只为**声明过的接点墙面端**匹配，其余格子一律 `continue`，
+  // 所以对"不是接点端"的格子行为一字不变。
+  //
+  // 另外它也必须**优先于**网格邻居：不加这段的话，接头的墙面端是**单向门** ——
+  // `stepOnDeck` 能把你从小道送回墙上，但你再也上不去（从墙这边按过去只会走到隔壁墙格，
+  // 接头的墙面端两侧通常都有网格邻居）。图里 `buildGraph` 是从接头两端各连一条边的，
+  // 移动层必须同样双向。
   for (const joint of level.joints) {
     const w = joint.wall;
     if (w.face !== cell.face || w.col !== cell.col || w.row !== cell.row) continue;
@@ -208,6 +206,17 @@ export function step(level: Level, state: MoveState, dir: Dir): StepResult {
       kind: 'move',
       state: { cell: { face: 'I', col: joint.deck.x, row: joint.deck.z }, mode: 'stand' },
     };
+  }
+
+  if (dir === 'up' || dir === 'down') {
+    if (state.mode === 'hang') return stepOnBar(level, state, dir);
+    // stand：只有梯能上下。
+    if (supportOf(level, cell) !== 'ladder') return blocked('not-ladder');
+
+    const target = cellAt(level, cell.col, dir === 'up' ? cell.row + 1 : cell.row - 1);
+    if (target === null) return blocked('not-ladder');
+    if (supportOf(level, target) !== 'ladder') return blocked('not-ladder');
+    return { kind: 'move', state: { cell: target, mode: 'stand' } };
   }
 
   const target = cellAt(level, dir === 'left' ? cell.col - 1 : cell.col + 1, cell.row);
