@@ -49,7 +49,13 @@ const args = [
 ];
 
 const r = spawnSync(CHROME, args, { encoding: 'utf8' });
-rmSync(profile, { recursive: true, force: true });
+// 同 probe.mjs：清理是尽力而为。`force` 不抑制 EPERM，而这里紧跟 Chrome 退出，
+// 子进程可能还没放开文件；吞掉这个瞬时错误，否则会盖掉截图本身的成败判断。
+try {
+  rmSync(profile, { recursive: true, force: true });
+} catch (err) {
+  if (err?.code !== 'EPERM') throw err;
+}
 
 // Chrome 会把 "N bytes written to file ..." 也写进 stderr，那是**成功**的信息。
 // 所以只在真的失败时才回显 stderr —— 否则每次截图都会在 PowerShell 里冒一条刺眼的红字。
