@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_N, CUBE, DECK_TOP_Y, HEADROOM, ISLAND_HALF, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, BRICK_N, CUBE, DECK_TOP_Y, HEADROOM, ISLAND_HALF, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
 
@@ -259,7 +259,26 @@ function createBrickLayer(
   extra: readonly (Piece & { readonly color: number })[],
 ): BrickLayer {
   const slots = level.cols * level.rows;
-  const mesh = new THREE.InstancedMesh(geo, mat, slots + extra.length);
+  const total = slots + extra.length;
+
+  /**
+   * 描边层：**全尺寸**的深色盒，与砖块同一批变换。
+   *
+   * 两个关键点，缺一不可：
+   * 1. **先画**（`renderOrder = -1`）且 **`depthWrite: false`** —— 它写颜色不写深度，
+   *    于是随后画的砖块（缩小到 `BRICK_FACE`）照常盖在它上面，**露出来的那一圈就是轮廓线**。
+   *    若让它写深度，砖块会被它挡住（它比砖大，正面更靠近相机）。
+   * 2. 颜色用 `PALETTE.ink`（灰黑）而不是背景色 —— 留缝会让背景透出来，读成"砖在浮着"，
+   *    而这里读成"一条线"。用户要的是后者。
+   */
+  const outline = new THREE.InstancedMesh(
+    geo,
+    new THREE.MeshBasicMaterial({ color: PALETTE.ink, depthWrite: false }),
+    total,
+  );
+  outline.renderOrder = -1;
+
+  const mesh = new THREE.InstancedMesh(geo, mat, total);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
 
@@ -269,8 +288,13 @@ function createBrickLayer(
   const scl = new THREE.Vector3();
   const col = new THREE.Color();
   const write = (index: number, piece: Piece & { readonly color: number }): void => {
+    // 描边层：原样（= 铺满整格）
     pos.set(piece.p[0], piece.p[1], piece.p[2]);
     scl.set(piece.s[0], piece.s[1], piece.s[2]);
+    outline.setMatrixAt(index, m.compose(pos, q, scl));
+
+    // 砖体：同样位置，缩小到 `BRICK_FACE`（于是四周露出一圈描边）
+    scl.set(piece.s[0] * BRICK_FACE, piece.s[1] * BRICK_FACE, piece.s[2] * BRICK_FACE);
     mesh.setMatrixAt(index, m.compose(pos, q, scl));
     mesh.setColorAt(index, col.setHex(piece.color));
   };
@@ -280,6 +304,7 @@ function createBrickLayer(
   /** 上一次应用过的瓦片表 —— 差分的全部内容就是拿它跟新表比。初值 undefined，故首次 apply 会写满。 */
   const applied: (TileKind | undefined)[] = new Array<TileKind | undefined>(slots).fill(undefined);
 
+  scene.add(outline);
   scene.add(mesh);
 
   return {
@@ -298,6 +323,7 @@ function createBrickLayer(
       }
       if (changed > 0) {
         mesh.instanceMatrix.needsUpdate = true;
+        outline.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       }
       return changed;

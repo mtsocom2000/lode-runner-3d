@@ -130,6 +130,14 @@ export const PALETTE = {
    * 不是金（r 不到 150）、不是角色蓝（b-r = 52，远小于 90）。
    */
   drone: 0x8467b8,
+  /**
+   * 砖块轮廓线（T-观感）。用户的原话是"灰黑外边框"。
+   *
+   * 它是**唯一**的用途：垫在砖体背后、比砖大一圈的那层深色（见 `metrics.ts` 的 `BRICK_FACE`
+   * 与 `scene.ts` 的 `createBrickLayer`）。比 `hard`（约 95 级）再压深一档 —— 它要读成"线"，
+   * 而不是"另一种砖"。对 5 条探针色相规则全部安全（暗且低饱和，撞不上任何一个色相）。
+   */
+  ink: 0x45423c,
 } as const;
 
 export type PaletteKey = keyof typeof PALETTE;
