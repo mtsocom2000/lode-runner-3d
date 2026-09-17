@@ -1,5 +1,6 @@
 import {
   NO_KEYS,
+  REPEAT_DELAY_TICKS,
   consumed,
   digIntent,
   digOfKey,
@@ -10,12 +11,14 @@ import {
   press,
   release,
   released,
+  ticked,
   type KeyState,
 } from '../src/app/input';
-import { MOVE_TICKS, createSim, tick, type SimState } from '../src/core/sim';
+import { MOVE_TICKS, createSim, tick, type SimEvent, type SimState } from '../src/core/sim';
 import type { Dir } from '../src/core/rules/movement';
 import { toFold, toWorld } from '../src/core/world/fold';
-import type { Cell, Face } from '../src/core/types';
+import { CONCEPT_MINIMAL, PLAYER_SPAWN } from '../src/core/level/levels/conceptMinimal';
+import { cellKey, type Cell, type Face } from '../src/core/types';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 import { createCamera } from '../src/render/camera';
 
@@ -37,6 +40,13 @@ const DEF: LevelDef = {
   tiles: ['XXXXXX', '......', 'XXXXXX'],
 };
 const SPAWN: Cell = { face: 'A', col: 0, row: 1 };
+
+/** 推进 n 个 tick。重复延迟按 tick 计，所以边界必须能被精确地摆出来。 */
+function tickN(state: KeyState, n: number): KeyState {
+  let out = state;
+  for (let i = 0; i < n; i++) out = ticked(out);
+  return out;
+}
 
 describe('input：按键 → 方向', () => {
   it('方向键与 WASD 都认，且大小写不敏感', () => {
@@ -78,12 +88,20 @@ describe('input：键盘状态机', () => {
     expect(moveIntent(tapped)).toBe('right'); // 但这一下仍然欠着
   });
 
-  it('消费之后锁存清空，但按住的不受影响', () => {
+  it('消费之后锁存清空；但按住**不会**立刻再给一步（2026-09-17 改，见下）', () => {
     const tapped = consumed(release(press(NO_KEYS, 'right'), 'right'));
     expect(moveIntent(tapped)).toBeNull();
 
+    // ⚠️ **这条断言被改过，是有意的。** 原文是：
+    //     const holding = consumed(press(NO_KEYS, 'right'));
+    //     expect(moveIntent(holding)).toBe('right');
+    // 也就是"走完第一步、只要还按着就立刻再走一格" —— 那**正是**用户报的必现 bug：
+    // 按一下 d 走两格，而出生点右边第二格是落水缺口 → 落水 → 扣命（见本文件下方同名用例）。
+    // 现在按住要等 `REPEAT_DELAY_TICKS`：`held` 本身没被动到，只是这一 tick 不放行。
     const holding = consumed(press(NO_KEYS, 'right'));
-    expect(moveIntent(holding)).toBe('right');
+    expect(holding.held).toEqual(['right']); // 按住状态仍在（`consume` 不碰 `held`）
+    expect(moveIntent(holding)).toBeNull(); // 但下一步要等延迟
+    expect(moveIntent(tickN(holding, REPEAT_DELAY_TICKS))).toBe('right'); // 到点就恢复
   });
 
   it('失焦时把所有键放掉（否则切回来角色会自己一直走），但保留锁存', () => {
@@ -92,6 +110,59 @@ describe('input：键盘状态机', () => {
     const blurred = released(k);
     expect(blurred.held).toEqual([]);
     expect(moveIntent(blurred)).toBe('up');
+  });
+});
+
+describe('input：重复延迟（点一下只走一格，按住才连走）', () => {
+  it('按下的第一步立即兑现；之后要等满延迟才给重复步', () => {
+    let k = press(NO_KEYS, 'right');
+    expect(moveIntent(k)).toBe('right'); // 第一步：立刻（走 `latched`）
+
+    k = consumed(k); // 第一步被兑现 → 开始计重复延迟
+    expect(moveIntent(k)).toBeNull();
+    k = tickN(k, REPEAT_DELAY_TICKS - 1);
+    expect(moveIntent(k)).toBeNull(); // 差一个 tick 也不放行
+    k = ticked(k);
+    expect(moveIntent(k)).toBe('right'); // 到点放行
+  });
+
+  it('第一次重复之后不再加延迟，节奏交回 core 的冷却（MOVE_TICKS）', () => {
+    let k = consumed(press(NO_KEYS, 'right'));
+    k = tickN(k, REPEAT_DELAY_TICKS);
+    expect(moveIntent(k)).toBe('right');
+    k = consumed(k); // 这一步来自 `held`（`latched` 早已是 null）
+    expect(moveIntent(k)).toBe('right'); // 不再等 —— 连走速度由 MOVE_TICKS 决定
+  });
+
+  it('松手早于延迟 → 那一步之后不会再有第二步（旧实现会多走一格）', () => {
+    const tap = consumed(release(press(NO_KEYS, 'right'), 'right'));
+    expect(tap.held).toEqual([]); // 手指已抬起
+    expect(moveIntent(tickN(tap, REPEAT_DELAY_TICKS * 3))).toBeNull(); // 松了就绝不会再自己走
+  });
+
+  it('系统按键重复不会清掉延迟（否则按住会被它提前放行）', () => {
+    let k = consumed(press(NO_KEYS, 'right')); // 已进入倒计时
+    k = tickN(k, 3);
+    k = press(k, 'right'); // 系统重复送来的同一个 keydown
+    k = ticked(k);
+    expect(moveIntent(k)).toBeNull(); // 延迟没被它清掉
+    k = tickN(k, REPEAT_DELAY_TICKS);
+    expect(moveIntent(k)).toBe('right'); // 该到点还是到点
+  });
+
+  it('连点两下 = 各自一步（延迟只约束"按住"，不约束"重新按"）', () => {
+    let k = consumed(press(NO_KEYS, 'right')); // 第一下已兑现
+    k = tickN(k, 3); // 还压在延迟里
+    k = release(k, 'right');
+    k = press(k, 'right'); // 重新按一下
+    expect(moveIntent(k)).toBe('right'); // 新按下立刻给意图，不必等
+  });
+
+  it('延迟与 core 的冷却同量级：250ms 比 MOVE_TICKS(133ms) 宽，所以"点按"不再取决于手速', () => {
+    // 这条是**契约的性质**而不是实现细节：延迟必须明显大于一格的冷却，
+    // 否则"点一下"与"按住"会重新粘在一起（旧 bug 的形状）。
+    expect(REPEAT_DELAY_TICKS).toBeGreaterThan(MOVE_TICKS);
+    expect(REPEAT_DELAY_TICKS).toBeGreaterThanOrEqual(12); // ≥200ms @60Hz
   });
 });
 
@@ -134,6 +205,78 @@ describe('input：轻点不该被冷却窗口吃掉（这条是 T7 存在的理�
   it('锁存：同一次轻点换来**整整一步**，角色走到第二格', () => {
     const player = runTapDuringCooldown(true).entities[0];
     expect(player?.cell.col).toBe(2);
+  });
+});
+
+describe('input：出生点按一下 d 不该死（用户报告的必现 bug）', () => {
+  /**
+   * 用户的原话：刷新后按一下 `d`，角色移动到梯子上又很快移回来，按三下就 `dead`。
+   *
+   * 机制：`CONCEPT_MINIMAL` 的出生点 `A:0,1` 右边一格是**梯脚** `A:1,1`（安全，
+   * 由 `r0 col1 = X` 撑着），再右边一格 `col2` 的 `r0` 是缺口 —— 从 `col1` 再走一步就
+   * 一路无支撑 → 落水 → 扣命 → 重生回出生点。所以"按一次键走两格"就必然掉命，
+   * 而"很快移回来"就是**重生**。
+   *
+   * 这里用**真实**的输入状态机驱动**真实**的关卡，把"按下后一直不松"的 tick 数扫一遍。
+   * 边界是 `MOVE_TICKS`(8)：旧实现里第 9 个 tick 冷却刚归零，`held` 电平立刻换来第二步。
+   */
+  function holdFrom(start: SimState, dir: Dir, ticks: number): { state: SimState; events: readonly SimEvent[]; cells: string[] } {
+    let keys = press(NO_KEYS, dir); // 按下，期间不松手
+    let state = start;
+    const events: SimEvent[] = [];
+    const cells: string[] = [];
+    for (let i = 0; i < ticks; i++) {
+      // **必须对齐 `createInput.intents()`**：它每个 tick 先推时钟再算意图。
+      // 少了这一行，`holdArmedAt` 就永远到不了点 —— 按住再也走不动（测试会假绿/假红）。
+      keys = ticked(keys);
+      const before = state.entities[0];
+      const frame = tick(state, { move: moveIntent(keys), dig: digIntent(keys) });
+      state = frame.state;
+      events.push(...frame.events);
+
+      const after = state.entities[0];
+      if (before !== undefined && after !== undefined && after.cell.col !== before.cell.col) {
+        keys = consumed(keys); // 真的动了才销账（与 main.ts 的 actedOn 同义）
+      }
+      if (after !== undefined) {
+        const key = cellKey(after.cell);
+        if (cells[cells.length - 1] !== key) cells.push(key); // 只记"变了的时候"，否则每个没动的 tick 都会重复一次
+      }
+    }
+    return { state, events, cells };
+  }
+
+  /** 都短于 250ms 的重复延迟。其中 **9** 正是旧实现出事的那一档（`MOVE_TICKS + 1`）。 */
+  const SHORT_PRESSES = [1, 2, 4, 8, 9, 12, 14];
+
+  it('短按（< 重复延迟）→ 只走到梯脚 A:1,1，命数不减、没有落水', () => {
+    for (const n of SHORT_PRESSES) {
+      const { state, events, cells } = holdFrom(createSim(CONCEPT_MINIMAL, PLAYER_SPAWN), 'right', n);
+      const player = state.entities[0];
+      expect({
+        ticks: n,
+        lives: state.lives,
+        status: state.status,
+        cell: player === undefined ? '?' : cellKey(player.cell),
+        drowned: events.some((e) => e.kind === 'drowned'),
+        trace: cells.join(' > '),
+      }).toEqual({
+        ticks: n,
+        lives: 3,
+        status: 'playing',
+        cell: 'A:1,1',
+        drowned: false,
+        trace: 'A:1,1',
+      });
+    }
+  });
+
+  it('对照：一直按住 → 仍会走进 col2 的缺口掉命（危险没有被修掉，测试也不是空跑）', () => {
+    const { state, events } = holdFrom(createSim(CONCEPT_MINIMAL, PLAYER_SPAWN), 'right', 60);
+    expect(events.some((e) => e.kind === 'drowned')).toBe(true);
+    // 不写死死几次：重生后键**还按着**，所以会反复走下去送命（60 tick 里死了两次 → 1 条命）。
+    // 这条只钉"危险仍在"，不钉节奏 —— 节奏是上面那条短按用例的事。
+    expect(state.lives).toBeLessThan(3);
   });
 });
 
