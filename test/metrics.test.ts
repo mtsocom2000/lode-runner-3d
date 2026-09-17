@@ -1,5 +1,6 @@
 import { halfExtent } from '../src/core/world/fold';
 import { supportOf } from '../src/core/world/graph';
+import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
 import { BRICK_N, CUBE, PLAYER_SIZE, cellAnchor, playerAnchor } from '../src/render/metrics';
@@ -158,5 +159,54 @@ describe('metrics：playerAnchor —— 三种停驻，三种停法', () => {
     // 但这两条不会 —— 数值变了就当场红。
     expect(stand).toBeCloseTo(brickCell.row + 0.5 - (1 - CUBE / 2 - PLAYER_SIZE / 2), 10);
     expect(hang).toBeCloseTo(barCell.row + 0.5 - PLAYER_SIZE / 2, 10);
+  });
+});
+
+/**
+ * 甲板（岛台 / 小道）的锚点。这一组是**用户报的 bug 的回归**：
+ *
+ * 现象："角色会从某处飞到另一处"、"走不进岛台"。根因不在规则里（`step` 的可达性 BFS 显示
+ * 甲板 20/20 格全可达、宝物可达），而在**锚点**：`cellAnchor` 当年只有 A/B 两条分支，
+ * `face === 'I'` 落进 B 面那支，于是 `(-7,-4)` 被送进 `toFold` → `u = col - fold = -16` →
+ * 世界 `(-24.5, -3.5, -8.5)`。角色一踏进岛台就被画到**房间外、水面下**：
+ * 屏幕上就是"飞出去"，人自然以为"走不进去"。
+ *
+ * 断言写成**关系式**（脚底与墙面行 1 的脚底等高），不写死 1.25：
+ * 那个高度是"甲板只有一层砖厚 + 与墙面最低那层砖齐平"的算术后果，常量一改就该自动跟着变。
+ */
+describe('metrics：甲板格（face I）—— 两个下标就是世界 x/z，高度与墙面行 1 齐平', () => {
+  const concept = load(CONCEPT_MINIMAL);
+  /** 面 A 那条小道的外侧一格（关卡 `deck` 里的 `{x:-7, z:-4}`）。 */
+  const JETTY: Cell = { face: 'I', col: -7, row: -4 };
+
+  it('x/z 直接用格下标 —— 甲板不属于"沿墙 u × 高度 y"那套，绝不能过 toFold/toWorld', () => {
+    const p = cellAnchor(concept, JETTY).p;
+    expect([p[0], p[2]]).toEqual([-7, -4]);
+  });
+
+  it('回归：锚点必须落在两片墙围出的房间里（旧 bug 给的是 -24.5 / -8.5）', () => {
+    const limit = halfExtent(concept.fold); // 8.5
+    const p = cellAnchor(concept, JETTY).p;
+    expect(p[0]).toBeGreaterThanOrEqual(-limit);
+    expect(p[2]).toBeGreaterThanOrEqual(-limit);
+    expect(p[0]).toBeLessThanOrEqual(0);
+    expect(p[2]).toBeLessThanOrEqual(0);
+  });
+
+  it('站在甲板上：脚底与墙面"行 1"站着时的脚底**等高**（小道才接得上最底层砖块）', () => {
+    const deckFeet = playerAnchor(concept, JETTY, 'stand')[1] - PLAYER_SIZE / 2;
+    // 行 1 是墙面的行走行：脚下是 r0 那层砖的顶面。
+    const wallFeet = playerAnchor(concept, { face: 'A', col: 0, row: 1 }, 'stand')[1] - PLAYER_SIZE / 2;
+    expect(deckFeet).toBeCloseTo(wallFeet, 10);
+  });
+
+  it('岛台上站着的身体中心，与同一高度的墙面格一样**不悬空**（脚踩顶面）', () => {
+    const island: Cell = { face: 'I', col: -3, row: -3 }; // 宝物那一格
+    const body = playerAnchor(concept, island, 'stand');
+    expect(body[1] - PLAYER_SIZE / 2).toBeCloseTo(
+      playerAnchor(concept, { face: 'A', col: 0, row: 1 }, 'stand')[1] - PLAYER_SIZE / 2,
+      10,
+    );
+    expect([body[0], body[2]]).toEqual([-3, -3]);
   });
 });

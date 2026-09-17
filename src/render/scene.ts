@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_N, CUBE, HEADROOM, ISLAND_HALF, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_N, CUBE, DECK_TOP_Y, HEADROOM, ISLAND_HALF, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
 
@@ -186,8 +186,8 @@ function islandAndJetties(level: Level): {
   readonly centre: number;
 } {
   const half = halfExtent(level.fold);
-  /** 一层砖厚 → 砖心 0.5、顶面 1.0，与墙面最底那层砖的顶面齐平。 */
-  const layerY = CUBE / 2;
+  /** 一层砖厚：砖心落在**甲板顶面**下方半个立方体 —— 于是顶面正好与墙面最底那层砖齐平。 */
+  const layerY = DECK_TOP_Y - CUBE / 2;
   /** 墙砖朝内的那一面（A 面在 x 上、B 面在 z 上，数值一样）。 */
   const wallFace = -half + BRICK_N + CUBE / 2;
   /** 小道接在离折痕 `jettyU` 格的那一列上。取 5 → 面 A col 3、面 B col 14。 */

@@ -68,11 +68,25 @@ export const HANG_DROP = PLAYER_SIZE / 2;
 /**
  * 水面高度（世界 y）。落水规则在 T9；这里只是"看得见的水"。
  *
- * 为什么是 0.35：岛台与小道的**顶面必须落在 y = 1.0** —— 那是墙面上"行 1"的行走面
+ * 为什么是 0.35：岛台与小道的**顶面必须落在 `DECK_TOP_Y`（= 1.0）** —— 那是墙面上"行 1"的行走面
  * （行 0 那层砖的顶面）。它们只有一层砖厚，所以底面在 y = 0。水面压到 0.35，
  * 岛台才露出 0.65 的高差；水再高一点，岛台就会读成"沉在水里的一块板"。
  */
 export const WATER_Y = 0.35;
+
+/**
+ * 甲板（岛台 / 小道）**顶面**的世界 y。这是"甲板只有一层砖厚"这句话的全部算术：
+ *
+ * 墙面格心的高度是 `row + 0.5`（`core/world/fold.ts` 的 `toWorld`），所以行 0 那层砖的
+ * **顶面** = `0.5 + CUBE/2` —— 那正是墙面"行 1"的行走面。甲板铺在 y = 0 上、只有一层砖厚，
+ * 于是顶面必须落在同一个高度（`scene.ts` 摆岛砖时读的就是它：砖心 = `DECK_TOP_Y - CUBE/2`）。
+ *
+ * 为什么值得单独一个常量：**它是"小道接得上最底层砖块"的全部依据**。以前这个数只在
+ * `scene.ts` 里叫 `layerY`、`metrics.ts` 里没有名字 —— 于是 `cellAnchor` 的甲板分支
+ * 干脆漏了（甲板格被送进墙面换算 `toFold`/`toWorld`），角色一进岛台就被画到房间外。
+ * 见 `cellAnchor` 的注释。**两处各写一遍，就是那个 bug 的成因。**
+ */
+export const DECK_TOP_Y = 0.5 + CUBE / 2;
 
 /**
  * 岛台边长的一半（4×4 岛台 → 2.0）。**这是用户指定的数，别动。**
@@ -113,6 +127,17 @@ export interface Anchor {
  * 这是**砖心**的位置，也是**站在该格的角色的身体中心**（见文件头）。
  */
 export function cellAnchor(level: Level, cell: Cell): Anchor {
+  // 甲板格单独一条路。**必须在 `toFold`/`toWorld` 之前** —— 那两个函数只懂
+  // "沿墙 u × 高度 y"（`fold.ts` 的文件头），把甲板格送进去会得到房间外的坐标：
+  // `toFold({face:'I', col:-7, row:-4})` 把 x 当成全局列算成 `u = -7 - 9 = -16`，
+  // 于是锚点成了 `(-24.5, -3.5, -8.5)`。用户看到的就是"角色从某处飞到另一处"
+  // 与"走不进岛台"（模拟层一直是好的：`step` 的可达性 BFS 显示甲板 20/20 格可达）。
+  if (cell.face === 'I') {
+    // 两个下标**就是**世界 x/z；高度取甲板顶面 + 半砖，与墙面格的"格心"同口径
+    // （`playerAnchor` 的"站砖面"会给回 `顶面 + PLAYER_SIZE/2`，即脚踩顶面、不悬空）。
+    return { p: [cell.col, DECK_TOP_Y + CUBE / 2, cell.row], alongZ: false };
+  }
+
   const w = toWorld(toFold(cell, level.fold), level.fold);
   const alongZ = cell.face === 'A';
   const p: Vec3 = alongZ ? [w.x + BRICK_N, w.y, w.z] : [w.x, w.y, w.z + BRICK_N];
