@@ -65,16 +65,18 @@ describe('meshSync：重生必须就地落位（不许横穿缺口滑回起点�
 });
 
 describe('meshSync：终局不把尸体留在原地装活人', () => {
-  it('`dead` 时整体隐藏；重开回 `playing` 又可见（尸体与活人长得一样，必须区分开）', () => {
+  it('`dead` 时**只隐藏玩家**；重开回 `playing` 又可见（尸体与活人长得一样，必须区分开）', () => {
     const syncer = createSyncer(parent, level);
     syncer.update(base, 0.016);
-    expect(syncer.group.visible).toBe(true);
+    expect(syncer.isVisible(0)).toBe(true);
 
     syncer.update({ ...base, status: 'dead' }, 0.016);
-    expect(syncer.group.visible).toBe(false);
+    expect(syncer.isVisible(0)).toBe(false);
 
     syncer.update(base, 0.016); // R 重开之后
-    expect(syncer.group.visible).toBe(true);
+    expect(syncer.isVisible(0)).toBe(true);
+    // 没有这个 id → null（与 positionOf 同一条约定）
+    expect(syncer.isVisible(99)).toBeNull();
   });
 });
 

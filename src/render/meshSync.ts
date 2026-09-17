@@ -61,6 +61,13 @@ export interface Syncer {
   /** 各类实体真正画出来了几个（探针用它核对"声明了就该画出来"，见实现里的说明）。 */
   counts(): Readonly<Record<EntityKind, number>>;
   /**
+   * 这个实体的 mesh 现在可见吗；没有这个 id 就是 `null`。
+   *
+   * 存在的理由与 `positionOf` 同：终局隐藏玩家是**行为**，行为要被断言，
+   * 而 `group.visible` 是整组的总开关（第一版就是那么写的，结果无人机跟着一起消失）。
+   */
+  isVisible(id: number): boolean | null;
+  /**
    * 某实体**当前**的世界位置（补间之后、真正写进 mesh 的那个值）。
    *
    * 存在的唯一理由：让探针能拿它与 `playerAnchor` 对账。单测证明锚点算得对，
@@ -154,16 +161,19 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
       const alive = new Set<number>();
       const snap = opts?.snapEntities;
 
-      // 终局时**不要**把尸体留在原地装作还活着。用户报过"命数减为 0 之后还渲染了一个角色
-      // 在梯子上" —— 那其实是留在**落水那一格**（`col2`，紧挨梯子）的尸体，而它和活人
-      // 长得一模一样（`sim.ts` 的终局分支沿用当时的 entities，不重生）。
-      // T20 会换成正经的死亡表现；这里先做到"不骗人"。
-      group.visible = state.status !== 'dead';
+      // 终局时不把**玩家**的尸体留在原地装作还活着。用户报过"命数减为 0 之后还渲染了一个角色
+      // 在梯子上" —— 那其实是留在**落水那一格**（紧挨梯子）的尸体，而它和活人长得一模一样
+      // （`sim.ts` 的终局分支沿用当时的 entities，不重生）。
+      //
+      // **只隐藏玩家**：第一版写的是整组 `group.visible`，于是无人机也一起消失了 ——
+      // 死一次就看不到是谁撞的你。T20 会换成正经的死亡表现；这里先做到"不骗人"。
 
       for (const entity of state.entities) {
         alive.add(entity.id);
         const target = playerAnchor(level, entity.cell, entity.mode);
         const actor = actors.get(entity.id) ?? spawn(entity.id, entity.kind, target);
+
+        actor.group.visible = !(entity.kind === 'player' && state.status === 'dead');
 
         // 不连续的一帧：就地落位。否则 `aim` 会把这一跳铺成一条世界坐标直线 ——
         // 用户报的"跳过缺口回到起点"就是死亡+重生被画成了 3.0 格的横滑。
@@ -196,6 +206,10 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     const out: Record<EntityKind, number> = { player: 0, drone: 0 };
     for (const actor of actors.values()) out[actor.kind] += 1;
     return out;
+  },
+  isVisible(id: number): boolean | null {
+    const actor = actors.get(id);
+    return actor === undefined ? null : actor.group.visible;
   },
   dispose(): void {
     parent.remove(group);
