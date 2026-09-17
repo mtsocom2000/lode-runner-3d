@@ -78,6 +78,17 @@ export interface LevelDef {
    * 所以它从这里读出生格就够 —— 往 `Level` 上再挂一份只会多一个没人读的字段。
    */
   readonly enemies?: readonly EnemySpawn[];
+  /**
+   * 教学 / 玩法提示（T14）：HUD 逐行显示给玩家看的话。
+   *
+   * 为什么放进**关卡数据**而不是写死在 `main.ts`：提示是**这一关**要教的东西
+   * （L1 教"跨折痕 / 走小道 / 挖坑困敌"），换一关就该换一套。写死在 app 里，加 L2/L3 时
+   * 会变成一串 `if (levelId === ...)` —— 那是把数据藏进了代码。
+   *
+   * 与 `enemies` 同一条理由**不进 `Level`**：它不参与任何规则，`createSim` 也不需要它，
+   * 只有 HUD 要读 —— 在 `main.ts` 里从 `LevelDef` 读一次即可。
+   */
+  readonly hints?: readonly string[];
 }
 
 export type LoadError =

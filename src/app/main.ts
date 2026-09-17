@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CONCEPT_MINIMAL, PLAYER_SPAWN } from '../core/level/levels/conceptMinimal';
+import { L1, L1_SPAWN } from '../core/level/levels/l1';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel } from '../core/world/tiles';
@@ -17,9 +17,9 @@ const host = document.getElementById('app');
 if (!host) throw new Error('找不到 #app 挂载点（index.html 被改坏了？）');
 
 // 关卡先过 parseLevel —— 数据不合法就没有"渲染一个关"这回事，早点炸比看着像空关卡强。
-const parsed = parseLevel(CONCEPT_MINIMAL);
+const parsed = parseLevel(L1);
 if (!parsed.ok) {
-  throw new Error(`关卡 ${CONCEPT_MINIMAL.id} 数据不合法：${JSON.stringify(parsed.errors)}`);
+  throw new Error(`关卡 ${L1.id} 数据不合法：${JSON.stringify(parsed.errors)}`);
 }
 const level = parsed.level;
 
@@ -32,7 +32,7 @@ const camera = createCamera();
 const stage = createStage(level);
 
 /** sim 初态。出生点由关卡文件给出 —— 摆错位置是关卡 bug，`createSim` 会当场抛。 */
-let state: SimState = createSim(CONCEPT_MINIMAL, PLAYER_SPAWN);
+let state: SimState = createSim(L1, L1_SPAWN);
 
 /** 实体层（角色）。它只读 state，不推进 sim。 */
 const syncer = createSyncer(stage.scene, level);
@@ -103,7 +103,7 @@ function actedOn(frame: { readonly events: readonly SimEvent[] }): boolean {
  * 它内部会再 parse 一次 —— 启动时这点开销换来的是"关卡数据只有一个入口"，
  * 不值得为了省这一次而把 parse 结果在几层之间传来传去。
  */
-const levelIssues = validateLevel(CONCEPT_MINIMAL, PLAYER_SPAWN);
+const levelIssues = validateLevel(L1, L1_SPAWN);
 
 const hud = createHud(host);
 
@@ -129,8 +129,8 @@ function refreshHud(): void {
       ? '—'
       : `${player.cell.face}:${player.cell.col},${player.cell.row}（${player.mode}）`;
   hud.set([
-    '立方角隙 · 折面概念场景（浅色版）',
-    `${level.id}：${level.cols}×${level.rows}，fold=${level.fold} —— 每面 ${level.fold}×${level.rows}（正好 3:2）`,
+    `立方角隙 · ${level.name}（折面 · 浅色版）`,
+    `${level.id}：${level.cols}×${level.rows}，fold=${level.fold} —— 每面 ${level.fold}×${level.rows}`,
     `砖 ${stage.counts.brick ?? 0}/${stage.counts.brickSlots ?? 0} 槽 ｜ 梯 ${stage.counts.ladder ?? 0} ｜ 杆 ${stage.counts.bar ?? 0} ｜ 芯片 ${stage.counts.chip ?? 0} ｜ 出口 ${stage.counts.exit ?? 0} ｜ 岛台宝物 ${stage.counts.prize ?? 0}`,
     // 命数必须可见：它是玩家做决策要看的第三个数（前面是"还剩几块宝物"和"闸门开没开"）。
     // 之前漏了这一项，代价是**试玩时看不出自己掉没掉命** —— 用户报"角色回到出发点"时，
@@ -146,8 +146,10 @@ function refreshHud(): void {
     ...(player === undefined
       ? []
       : [formatDirHints(dirHints(level, player.cell, player.mode, screenAxes()))]),
-    '挖开的地板 4 秒后自己长回来 —— 人还在坑里就会被活埋',
-    '取到岛台上那块宝物后，出口两侧的闸门会变成梯子（T13）',
+    // 教学提示（T14）：来自**关卡数据**（`LevelDef.hints`），不写死在 app 里 ——
+    // 换一关就换一套（写死会变成一串 `if (levelId === …)`，那是把数据藏进代码）。
+    // 原先那两行写死的"挖开的地板 4 秒后…""取到宝物后闸门变梯子"已并入 L1 的 hints。
+    ...(L1.hints ?? []).map((hint) => `· ${hint}`),
     ...(state.status === 'won' ? ['★ 过关！'] : []),
     // 校验结果直接进 HUD。关卡不合法**必须看得见** —— 只在控制台里报，等于没报。
     // 通过时这段是空的，HUD 与以前逐字一样。
@@ -207,7 +209,7 @@ function flashForever(text: string): void {
  * `state.grid !== lastGrid` 的引用比较自然会认出来并重贴（闸门也就会重新封上）。
  */
 function restart(): void {
-  state = createSim(CONCEPT_MINIMAL, PLAYER_SPAWN);
+  state = createSim(L1, L1_SPAWN);
   // 重开要**把输入层那笔欠账销掉**（`latched`）：否则重开前刚按下的那一下会被
   // 欠到新一局，在第一步兑现成一个玩家没想要的方向。`consume` 只清 `latched`、
   // 不动 `held` —— 正按着不放的方向应当继续有效，这与 `input.ts` 里
