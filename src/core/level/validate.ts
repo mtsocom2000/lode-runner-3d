@@ -1,7 +1,8 @@
 import { cellKey, type Cell } from '../types';
 import { openGates } from '../rules/goals';
+import { walkNeighbours, walkReachable } from '../rules/reach';
 import { asCell, deckKey } from '../world/deck';
-import { buildGraph, isLadder, isStandable, reachableFrom, type Graph } from '../world/graph';
+import { buildGraph, isLadder, isStandable } from '../world/graph';
 import { parseLevel, type Level, type LevelDef, type LoadError, type TileKind } from '../world/tiles';
 
 /**
@@ -274,9 +275,11 @@ function exitGating(level: Level, spawn: Cell): readonly LevelIssue[] {
   // 而且**每一个**出口都要成立（闸门只封住半边、漏了另一边的出口，是最容易犯的手误）。
   if (level.gates.length === 0) return [];
 
-  const before = reachableFrom(buildGraph(level), spawn);
+  // 与 `findUnreachable` 同一条判据：**按移动规则**问"走不走得到"，不用静态图
+  // （否则"图说能到、玩家到不了"这类事故照样漏过去，见 `rules/reach.ts` 的文件头）。
+  const before = walkReachable(level, spawn).cells;
   const opened = withGrid(level, openGates(level.grid, level.gates, level.cols));
-  const after = reachableFrom(buildGraph(opened), spawn);
+  const after = walkReachable(opened, spawn).cells;
 
   const issues: LevelIssue[] = [];
   for (const exit of exits) {
@@ -336,8 +339,12 @@ function ladderGaps(level: Level): readonly LevelIssue[] {
  * 而是整张关卡的可达性结构不成立。只报"有 41 格到不了"会让人以为补个梯子就行。
  */
 function findUnreachable(level: Level, spawn: Cell): LevelIssue | undefined {
+  // **按移动规则**判定，不用静态图 —— 理由见 `rules/reach.ts` 的文件头：
+  // 曾经这里用 `buildGraph` + `reachableFrom`，于是甲板接头那一类"横向移动被接头吃掉"的
+  // 事故会漏过去（图连了边、`step` 走不到），表现为"校验说全过、玩家走不到"。
+  const reachable = walkReachable(level, spawn).cells;
+  // 静态图仍然要建：它的 `nodes` 就是"哪些格该被走到"的**清单**（节点 = 可站立格）。
   const graph = buildGraph(level);
-  const reachable = reachableFrom(graph, spawn);
 
   // 出口**故意**可以到不了 —— T13 的闸门封的就是它。所以这里把出口排除，交给 `exitGating`
   // 单独负责（那边也管相反的方向："开了之后必须到得了"）。不排除的话，
@@ -350,7 +357,7 @@ function findUnreachable(level: Level, spawn: Cell): LevelIssue | undefined {
   const first = stranded[0];
   if (first === undefined) return undefined;
 
-  const { count, largest } = componentsAmong(graph, stranded);
+  const { count, largest } = componentsAmong(level, stranded);
   return {
     rule: 'unreachable',
     detail: `${stranded.length}/${graph.nodes.length} 个可站立格到不了出生点，且它们彼此碎成 ${count} 块（最大 ${largest} 格）`,
@@ -360,9 +367,9 @@ function findUnreachable(level: Level, spawn: Cell): LevelIssue | undefined {
   };
 }
 
-/** 只在这些格之间做连通分量：`allowed` 之外的不算，所以孤岛不会"绕出去"。 */
+/** 只在这些格之间做连通分量（用**移动规则**的相邻关系，见 `rules/reach.ts`）：`allowed` 之外的不算，所以孤岛不会"绕出去"。 */
 function componentsAmong(
-  graph: Graph,
+  level: Level,
   seeds: readonly Cell[],
 ): { readonly count: number; readonly largest: number } {
   const allowed = new Set(seeds.map(cellKey));
@@ -381,11 +388,11 @@ function componentsAmong(
       const current = queue[head];
       if (current === undefined) continue;
       size += 1;
-      for (const edge of graph.neighbours(current)) {
-        const key = cellKey(edge.to);
+      for (const next of walkNeighbours(level, current)) {
+        const key = cellKey(next);
         if (!allowed.has(key) || seen.has(key)) continue;
         seen.add(key);
-        queue.push(edge.to);
+        queue.push(next);
       }
     }
     if (size > largest) largest = size;
