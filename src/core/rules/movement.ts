@@ -196,12 +196,7 @@ export function step(level: Level, state: MoveState, dir: Dir): StepResult {
   for (const joint of level.joints) {
     const w = joint.wall;
     if (w.face !== cell.face || w.col !== cell.col || w.row !== cell.row) continue;
-    const h = halfExtent(level.fold);
-    const u = cell.face === 'A' ? level.fold - 1 - cell.col : cell.col - level.fold;
-    const dx = joint.deck.x - (cell.face === 'A' ? -h : -h + u);
-    const dz = joint.deck.z - (cell.face === 'A' ? -h + u : -h);
-    const toward: Dir = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 'right' : 'left') : dz > 0 ? 'up' : 'down';
-    if (toward !== dir) continue;
+    if (joint.enterDir !== dir) continue;
     return {
       kind: 'move',
       state: { cell: { face: 'I', col: joint.deck.x, row: joint.deck.z }, mode: 'stand' },

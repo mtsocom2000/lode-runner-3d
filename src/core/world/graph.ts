@@ -1,5 +1,5 @@
 import { cellKey, type Cell } from '../types';
-import { asCell, type DeckCell } from './deck';
+import { asCell, type DeckCell, type JointDir } from './deck';
 import { faceOf, fromFold, isConsistentCell, seamNeighbour, toFold } from './fold';
 import type { Level, TileKind } from './tiles';
 
@@ -204,12 +204,27 @@ export function buildGraph(level: Level, opts: GraphOptions = {}): Graph {
   const horizontalOn = kinds.has('walk') || kinds.has('bar');
   const seamOn = kinds.has('seam');
 
+  /**
+   * 接头墙面端"被吃掉"的那个方向：在那一格 `step` 会**优先走接头上小道**
+   * （`movement.ts` 的接头循环排在网格邻居之前），所以图里不该有朝那个方向的**出边** ——
+   * 否则图会承诺一条 `step` 不会走的边，也就是"图说能走、玩家走不到"
+   * （见 `rules/reach.ts` 的文件头：L1 的底层走廊就是这么被切断的）。
+   *
+   * 只跳过**出边**，不跳反向：从邻格走进接点那一格是**真的能走** —— 接头只在"站在那一格"
+   * 的时候才生效。`decks: false` 时不跳：那时接头边根本不在图里，"吃掉"也就无从谈起。
+   */
+  const captured: ReadonlyMap<string, JointDir> = decksOn
+    ? new Map(level.joints.map((joint) => [cellKey(joint.wall), joint.enterDir]))
+    : new Map();
+
   for (const cell of nodes) {
     const out = adjacency.get(cellKey(cell));
     if (out === undefined) continue;
 
     if (climbOn && isLadder(level.at(cell.col, cell.row))) {
       for (const dy of [1, -1]) {
+        const dir: JointDir = dy === 1 ? 'up' : 'down';
+        if (captured.get(cellKey(cell)) === dir) continue;
         const target: Cell = { face: cell.face, col: cell.col, row: cell.row + dy };
         if (!isLadder(level.at(target.col, target.row))) continue;
         if (!isStandable(level, target)) continue;
@@ -219,6 +234,8 @@ export function buildGraph(level: Level, opts: GraphOptions = {}): Graph {
 
     if (horizontalOn) {
       for (const dc of [-1, 1]) {
+        const dir: JointDir = dc === 1 ? 'right' : 'left';
+        if (captured.get(cellKey(cell)) === dir) continue;
         const target: Cell = { face: cell.face, col: cell.col + dc, row: cell.row };
         // 折痕那一列（col fold-1 ↔ fold）**移动层面是一次正常的横向平移** ——
         // T3 的 step() 就是按 col±1 走过去的。这里特意把它排除在 walk/bar 之外，

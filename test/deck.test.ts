@@ -12,7 +12,7 @@ import { cellKey, parseCell, type Cell } from '../src/core/types';
 import { validateLevel } from '../src/core/level/validate';
 import { stateAt, step } from '../src/core/rules/movement';
 import { buildGraph, isStandable, reachableFrom } from '../src/core/world/graph';
-import { parseLevel } from '../src/core/world/tiles';
+import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 
 describe('deck：甲板是"不在摊平网格上"的水平面', () => {
   it('rectCells 含首含尾，且行列都升序', () => {
@@ -113,7 +113,9 @@ describe('parseLevel 把甲板透传进 Level（T10 步骤③）', () => {
   });
 
   it('joints 原样透传，且甲板格能还原成 Cell 再还原回来', () => {
-    const joints = [{ deck: { x: -1, z: 0 }, wall: { face: 'A', col: 4, row: 1 } }] as const;
+    const joints = [
+      { deck: { x: -1, z: 0 }, wall: { face: 'A', col: 4, row: 1 }, enterDir: 'right' },
+    ] as const;
     const level = load({ ...bare, deck: [{ x: -1, z: 0 }], joints });
 
     expect(level.joints).toEqual(joints);
@@ -132,28 +134,28 @@ describe('validate 抓得出指空的甲板接头（T10 步骤⑤）', () => {
   }
 
   it('接头的甲板端不在 level.deck 里 → deckJointDangling', () => {
-    const def = {
+    const def: LevelDef = {
       ...wall,
       deck: [{ x: 0, z: 0 }],
-      joints: [{ deck: { x: 9, z: 9 }, wall: { face: 'A' as const, col: 0, row: 1 } }],
+      joints: [{ deck: { x: 9, z: 9 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'right' }],
     };
     expect(rules(def)).toContain('deckJointDangling');
   });
 
   it('接头的墙面端站不住（r0 下方没有地板）→ deckJointDangling', () => {
-    const def = {
+    const def: LevelDef = {
       ...wall,
       deck: [{ x: 0, z: 0 }],
-      joints: [{ deck: { x: 0, z: 0 }, wall: { face: 'A' as const, col: 0, row: 0 } }],
+      joints: [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 0 }, enterDir: 'right' }],
     };
     expect(rules(def)).toContain('deckJointDangling');
   });
 
   it('两端都落到实处的健康接头不报这条', () => {
-    const def = {
+    const def: LevelDef = {
       ...wall,
       deck: [{ x: 0, z: 0 }],
-      joints: [{ deck: { x: 0, z: 0 }, wall: { face: 'A' as const, col: 0, row: 1 } }],
+      joints: [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'right' }],
     };
     expect(rules(def)).not.toContain('deckJointDangling');
   });
@@ -167,7 +169,7 @@ describe('甲板行走（movement.ts）', () => {
     { x: 1, z: 0 },
     { x: 2, z: 0 },
   ];
-  const joints: readonly DeckJoint[] = [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 } }];
+  const joints: readonly DeckJoint[] = [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'right' }];
 
   const parsed = parseLevel({ ...wall, deck: deckCells, joints });
   if (!parsed.ok) throw new Error(`夹具 parseLevel 失败：${JSON.stringify(parsed.errors)}`);
@@ -248,7 +250,7 @@ describe('甲板接进通行图（T10 步骤④）', () => {
     expect(reachableFrom(noJoint, onWall).has(cellKey(asCell({ x: 0, z: 0 })))).toBe(false);
 
     const jointed = buildGraph(
-      load({ deck: [{ x: 0, z: 0 }], joints: [{ deck: { x: 0, z: 0 }, wall: onWall }] }),
+      load({ deck: [{ x: 0, z: 0 }], joints: [{ deck: { x: 0, z: 0 }, wall: onWall, enterDir: 'right' }] }),
     );
     expect(reachableFrom(jointed, onWall).has(cellKey(asCell({ x: 0, z: 0 })))).toBe(true);
     // 反向也通（用户已定：这是 walk 边，不是单向的）
@@ -273,7 +275,7 @@ describe('甲板接进通行图（T10 步骤④）', () => {
   it('接头指向不存在的地面时**不连边**（关卡数据错了，不该悄悄补一条）', () => {
     const level = load({
       deck: [{ x: 0, z: 0 }],
-      joints: [{ deck: { x: 7, z: 7 }, wall: onWall }], // 甲板侧不存在
+      joints: [{ deck: { x: 7, z: 7 }, wall: onWall, enterDir: 'right' }], // 甲板侧不存在
     });
     const graph = buildGraph(level);
     expect(graph.nodes.some((c) => c.col === 7)).toBe(false);
