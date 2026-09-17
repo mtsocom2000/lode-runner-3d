@@ -33,6 +33,15 @@ import { PALETTE } from '../render/palette';
  */
 export interface Hud {
   set(lines: readonly string[]): void;
+  /**
+   * 短暂的大字提示（死亡 / 终局）。传 `null` 收掉。
+   *
+   * 为什么需要它：`drowned` / `buried` / `gameover` 在**同一个 tick 内**就把状态改完了
+   * （扣命、重生回起点、或终局），画面上除了"命数少 1"没有任何可见事件 —— 用户的原话是
+   * "死了以后至少应该有个短暂的 UI 提示或者过渡，好知道死了"。
+   * 事件流里早就有这些钩子（`sim.ts` 的 `SimEvent`），这里只是把它们显示出来。
+   */
+  flash(text: string | null): void;
 }
 
 /** 数字色值 → DOM 能用的 `#rrggbb`。`PALETTE` 存的是 0xRRGGBB，DOM 要字符串。 */
@@ -68,6 +77,29 @@ export function createHud(host: HTMLElement): Hud {
   ].join(';');
   host.appendChild(el);
 
+  // 大字提示：居中、单行、与面板同族的配色（色值一律从 `PALETTE` 派生，理由见文件头）。
+  // 默认 `display:none` —— 平时它对画面零影响。
+  const banner = document.createElement('div');
+  banner.style.cssText = [
+    'position:fixed',
+    'top:36%',
+    'left:50%',
+    'transform:translateX(-50%)',
+    'z-index:3',
+    'pointer-events:none',
+    'padding:10px 22px',
+    'border-radius:2px',
+    'font-size:26px',
+    'letter-spacing:.14em',
+    'font-weight:600',
+    `color:${hex(PALETTE.hard)}`,
+    `background:${hex(PALETTE.bg)}${PANEL_ALPHA}`,
+    `border:1px solid ${hex(PALETTE.edge)}`,
+    'font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif',
+    'display:none',
+  ].join(';');
+  host.appendChild(banner);
+
   return {
     set(lines: readonly string[]): void {
       el.replaceChildren();
@@ -75,6 +107,15 @@ export function createHud(host: HTMLElement): Hud {
         if (i > 0) el.appendChild(document.createElement('br'));
         el.appendChild(document.createTextNode(line));
       });
+    },
+    flash(text: string | null): void {
+      if (text === null) {
+        banner.style.display = 'none';
+        banner.replaceChildren();
+        return;
+      }
+      banner.textContent = text;
+      banner.style.display = 'block';
     },
   };
 }

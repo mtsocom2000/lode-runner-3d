@@ -64,6 +64,20 @@ describe('meshSync：重生必须就地落位（不许横穿缺口滑回起点�
   });
 });
 
+describe('meshSync：终局不把尸体留在原地装活人', () => {
+  it('`dead` 时整体隐藏；重开回 `playing` 又可见（尸体与活人长得一样，必须区分开）', () => {
+    const syncer = createSyncer(parent, level);
+    syncer.update(base, 0.016);
+    expect(syncer.group.visible).toBe(true);
+
+    syncer.update({ ...base, status: 'dead' }, 0.016);
+    expect(syncer.group.visible).toBe(false);
+
+    syncer.update(base, 0.016); // R 重开之后
+    expect(syncer.group.visible).toBe(true);
+  });
+});
+
 describe('tween：snapTo —— 不插值的那一档', () => {
   it('立刻就在目标点上，且已经"走完"', () => {
     const p: Vec3 = [1, 2, 3];

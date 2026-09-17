@@ -134,6 +134,12 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
       const alive = new Set<number>();
       const snap = opts?.snapEntities;
 
+      // 终局时**不要**把尸体留在原地装作还活着。用户报过"命数减为 0 之后还渲染了一个角色
+      // 在梯子上" —— 那其实是留在**落水那一格**（`col2`，紧挨梯子）的尸体，而它和活人
+      // 长得一模一样（`sim.ts` 的终局分支沿用当时的 entities，不重生）。
+      // T20 会换成正经的死亡表现；这里先做到"不骗人"。
+      group.visible = state.status !== 'dead';
+
       for (const entity of state.entities) {
         alive.add(entity.id);
         const target = playerAnchor(level, entity.cell, entity.mode);

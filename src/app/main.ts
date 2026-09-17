@@ -10,6 +10,7 @@ import { probePixels } from '../render/probe';
 import { createStage } from '../render/scene';
 import { createHud } from './hud';
 import { createInput } from './input';
+import { dirHints, formatDirHints, type ScreenAxes } from '../render/hints';
 import { createSelectiveBloom } from '../render/bloom';
 
 const host = document.getElementById('app');
@@ -105,6 +106,22 @@ function actedOn(frame: { readonly events: readonly SimEvent[] }): boolean {
 const levelIssues = validateLevel(CONCEPT_MINIMAL, PLAYER_SPAWN);
 
 const hud = createHud(host);
+
+/**
+ * 相机的屏幕右轴 / 上轴（世界向量）。方向提示用它把"世界位移"投到屏幕上。
+ *
+ * 与 `test/input.test.ts` 里钉"折痕对输入透明"那两条用的是**同一对轴**：那边从
+ * `matrixWorld.elements` 的两列取（列主序：第 0 列 = 屏幕向右、第 1 列 = 屏幕向上），这里同理。
+ */
+function screenAxes(): ScreenAxes {
+  camera.updateMatrixWorld();
+  const e = camera.matrixWorld.elements;
+  return {
+    right: [e[0] ?? 0, e[1] ?? 0, e[2] ?? 0],
+    up: [e[4] ?? 0, e[5] ?? 0, e[6] ?? 0],
+  };
+}
+
 function refreshHud(): void {
   const player = state.entities[0];
   const at =
@@ -123,6 +140,12 @@ function refreshHud(): void {
     // 闸门开没开决定现在能不能去出口。**刻意不显示宝物在哪**：那是玩家该自己找的。
     `宝物 ${state.treasures.length === 0 ? '已集齐' : `还剩 ${state.treasures.length} 块`} ｜ 出口闸门 ${state.gatesOpen ? '已开' : '封着（集齐才开）'}`,
     '方向键 / WASD 移动 ｜ Z 左挖 / X 右挖 ｜ R 重开本局',
+    // 用户反复反馈"WASD 在拐角与岛台上完全不准"。**不换映射** —— 实测在这个相机下
+    // 无解（甲板是水平面、方位角又是 45°，两个轴在屏幕上都投成 (±0.7,∓0.3)）；
+    // 能做的是把每个键实际会往屏幕哪边走如实报出来。推导见 render/hints.ts。
+    ...(player === undefined
+      ? []
+      : [formatDirHints(dirHints(level, player.cell, player.mode, screenAxes()))]),
     '挖开的地板 4 秒后自己长回来 —— 人还在坑里就会被活埋',
     '取到岛台上那块宝物后，出口两侧的闸门会变成梯子（T13）',
     ...(state.status === 'won' ? ['★ 过关！'] : []),
@@ -134,6 +157,34 @@ function refreshHud(): void {
   ]);
 }
 refreshHud();
+
+/**
+ * 死亡 / 终局的大字提示。**钩子早就在事件流里**（`sim.ts` 的 `SimEvent`：
+ * `drowned` / `buried` / `respawned` / `gameover`）—— 这里只是把它显示出来。
+ *
+ * 为什么非有不可：落水在 `sim` 里是**同一个 tick** 内完成的（扣命 → 重生回起点），
+ * 画面上除了"命数少 1"没有任何可见事件，于是玩家只能靠猜（用户的原话：
+ * "死了以后至少应该有个短暂的 UI 提示或者过渡，好知道死了"）。
+ *
+ * 计时用**壁钟**（`performance.now()`，与 rAF 的时间戳同源），不是 tick 数：
+ * 提示该显示多久是给人看的，不该随帧率或补 tick 变化。
+ */
+const DEATH_FLASH_MS = 1200;
+
+/** 计时中的大字提示的到期时刻；`null` = 当前没有计时中的提示（可能是常驻那条）。 */
+let bannerUntil: number | null = null;
+
+/** 限时提示（死亡反馈）。 */
+function flash(text: string, ms: number): void {
+  hud.flash(text);
+  bannerUntil = performance.now() + ms;
+}
+
+/** 常驻提示（终局：等 R 重开）。 */
+function flashForever(text: string): void {
+  hud.flash(text);
+  bannerUntil = null;
+}
 
 /**
  * 重开这一局（T21 的状态机收口）。
@@ -162,6 +213,9 @@ function restart(): void {
   // 不动 `held` —— 正按着不放的方向应当继续有效，这与 `input.ts` 里
   // "松手不动 latched、消费才清 latched" 是同一套语义。
   input.consume();
+  // 收掉 GAME OVER / 过关那条**常驻**提示（限时提示到点会自己收，见 loop 里那段）。
+  hud.flash(null);
+  bannerUntil = null;
   refreshHud();
 }
 
@@ -297,10 +351,25 @@ function loop(now: number): void {
     acc -= STEP_MS;
     if (actedOn(frame)) input.consume();
     for (const event of frame.events) {
-      if (event.kind !== 'respawned') continue;
-      if (snapped === null) snapped = new Set<number>();
-      snapped.add(event.entity);
+      if (event.kind === 'respawned') {
+        if (snapped === null) snapped = new Set<number>();
+        snapped.add(event.entity);
+        continue;
+      }
+      // 死亡 / 终局的可见反馈（见 `flash` 的注释）。注意 `drowned` 与 `gameover` 会在
+      // **同一个 tick** 里先后出现（前者在移动那步、后者在结算那步），所以"常驻"要写在后面 ——
+      // 否则终局那条会被"落水 −1 命"盖掉。
+      if (event.kind === 'drowned') flash('落 水 ｜ 命数 −1', DEATH_FLASH_MS);
+      else if (event.kind === 'buried') flash('被 活 埋 ｜ 命数 −1', DEATH_FLASH_MS);
+      else if (event.kind === 'gameover') flashForever('GAME OVER —— 按 R 重开');
+      else if (event.kind === 'won') flashForever('★ 过 关 ！');
     }
+  }
+
+  // 限时提示到点就收掉（壁钟口径，与 tick 数无关）。放在 tick 循环之后、画之前生效。
+  if (bannerUntil !== null && now >= bannerUntil) {
+    hud.flash(null);
+    bannerUntil = null;
   }
 
   // 瓦片变了才重贴（T11）。放在 tick 循环**之后**：一次 dt 可能跨好几个 tick，
