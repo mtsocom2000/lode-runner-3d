@@ -65,7 +65,7 @@ export const PLAYER_LIVES = 3;
 export const RESPAWN_TICKS = 30;
 
 /** 实体种类。T12 加 `drone`、T15 加 `stalker` —— 那时只需在这里加一格并补上它的决策函数。 */
-export type EntityKind = 'player';
+export type EntityKind = 'player' | 'drone';
 
 export interface Entity {
   readonly id: number;
@@ -75,6 +75,22 @@ export interface Entity {
   readonly mode: MoveMode;
   /** 还要等几个 tick 才能再动一格。0 = 本 tick 可以动。重生冻结也走这个。 */
   readonly cooldown: number;
+  /**
+   * 重生点。玩家的是 `createSim` 的 `spawn` 参数；敌人的是关卡声明的出生格。
+   *
+   * **为什么要挂在实体上**：§八-2 裁定敌人"溺水后延时重生"，每个实体都得知道自己回哪儿 ——
+   * 一个整局的字段表达不了"N 个敌人各自的重生点"。所以玩家的 `spawn` 也不再单独存一份
+   * （同一个事实存两处必然漂）。
+   */
+  readonly home: Cell;
+  /**
+   * 正在朝哪走。**移动成立后**才更新（撞墙不算）。
+   *
+   * 为什么现在就进实体：① 无人机的巡逻要"尽量直走、撞墙才转弯"——否则每个 tick 重新决策
+   * 会让它在原地发抖；② 玩家的朝向本来就是 T7/§八-4 要的东西（过折痕转 90°），
+   * 先在这里落一个字段，免得将来再改一次实体形状。
+   */
+  readonly facing: Dir;
 }
 
 /**
@@ -137,14 +153,14 @@ export interface SimState {
    */
   readonly lives: number;
   /**
-   * 出生点。落水之后回到这里。
+   * 出生点这个字段**没有**了：重生点搬到了 `Entity.home`（T12-a）。
    *
-   * 存进 state 而不是每次 tick 由外面传：`tick(prev, intents)` 必须是**自足**的。
-   * 否则重生就依赖调用方记得传对地方，而 `replay()` 只喂 state 与 intents ——
-   * 它没有办法补这个参数。**能不能重生，不能取决于谁在调用。**
+   * 当年它进 state 的理由是对的 —— "`tick(prev, intents)` 必须自足，能不能重生不能取决于
+   * 谁在调用"。但 T12 的敌人各自有重生点之后，一个整局的 `spawn` 表达不了这件事，
+   * 而"玩家的重生点"与"N 个敌人的重生点"本来就是同一类事实，应该存在同一个地方。
+   * 所以 `tick` 的重生一律读 `victim.home` —— 自足性没有任何损失。
    */
-  readonly spawn: Cell;
-  /** 玩家固定是 `entities[0]`（id 0）。T12/T15 往后追加敌人。 */
+  /** 玩家的固定 id（`entities[0]`）。敌人的 id 从 1 起。 */
   readonly entities: readonly Entity[];
 }
 
@@ -229,6 +245,32 @@ export function viewOf(state: SimState): Level {
 }
 
 /**
+ * 把关卡声明的敌人建成实体（T12-a）。出生格必须真的站得住 —— 与玩家出生点同一条判据：
+ * 站不住的出生格会让它在第一 tick 就开始坠落，那是关卡 bug，不该被静默吞掉。
+ *
+ * id 从 **1** 起（玩家固定是 0），因为 `casualty.entity` / 回放 / 渲染都按 id 认人。
+ */
+function spawnEnemies(level: Level, def: LevelDef): readonly Entity[] {
+  return (def.enemies ?? []).map((enemy, index) => {
+    const at = stateAt(level, enemy.cell);
+    if (at === null) {
+      throw new Error(
+        `关卡 ${level.id} 的敌人 #${index}（${enemy.kind}）出生格 ${describeCell(enemy.cell)} 停不住`,
+      );
+    }
+    return {
+      id: index + 1,
+      kind: enemy.kind,
+      cell: at.cell,
+      mode: at.mode,
+      home: at.cell,
+      facing: enemy.facing ?? 'right',
+      cooldown: 0,
+    };
+  });
+}
+
+/**
  * 从关卡定义与出生点建初态。关卡必须先通过 `parseLevel`（数据不合法就没有模拟可言），
  * 出生点必须真的站得住 —— 否则第一 tick 就会开始坠落，那是关卡 bug，不该被静默吞掉。
  */
@@ -261,11 +303,22 @@ export function createSim(def: LevelDef, spawn: Cell, lives: number = PLAYER_LIV
     // 开局闸门是关着的（T13）。它由"集齐宝物"打开，不由关卡数据预置。
     gatesOpen: false,
     lives,
-    // 存**规范化之后**的格子（`at.cell`）而不是入参 `spawn`：入参可能带着不一致的 face
-    // （比如 `face: 'B'` 但 col 落在 A 半区），而 `stateAt` 给的是这一格真正的身份。
-    // 重生点必须是"验证过站得住的那一个"，不能是"调用方写的那一个"。
-    spawn: at.cell,
-    entities: [{ id: 0, kind: 'player', cell: at.cell, mode: at.mode, cooldown: 0 }],
+    entities: [
+      {
+        id: 0,
+        kind: 'player',
+        // 存**规范化之后**的格子（`at.cell`）而不是入参 `spawn`：入参可能带着不一致的 face
+        // （比如 `face: 'B'` 但 col 落在 A 半区），而 `stateAt` 给的是这一格真正的身份。
+        // 重生点必须是"验证过站得住的那一个"，不能是"调用方写的那一个"。
+        cell: at.cell,
+        mode: at.mode,
+        home: at.cell,
+        // 开局朝右。朝向的表现（过折痕转 90°）是 T7/§八-4 的事，这里只落字段。
+        facing: 'right',
+        cooldown: 0,
+      },
+      ...spawnEnemies(level, def),
+    ],
   };
 }
 
@@ -274,7 +327,13 @@ function describeCell(c: Cell): string {
   return `${c.face}:${c.col},${c.row}`;
 }
 
-/** 玩家取输入方向；敌人（T12/T15）在这里接各自 AI，现在没有敌人。 */
+/**
+ * 这个实体本 tick 想往哪走。
+ *
+ * 玩家取输入方向；敌人接各自 AI —— 无人机的**巡逻段/追击段**是 T12-b，
+ * 所以现在 `drone` 一律返回 `null`（站着不动）。T12-a 只把**实体化管道**打通：
+ * 关卡数据 → 实体 → 渲染，AI 挂在下一个明确的口子上（`ai/drone.ts`）。
+ */
 function decide(entity: Entity, intents: Intents): Dir | null {
   return entity.kind === 'player' ? intents.move : null;
 }
@@ -310,6 +369,8 @@ function advance(level: Level, entity: Entity, intents: Intents, events: SimEven
         ...entity,
         cell: result.state.cell,
         mode: result.state.mode,
+        // 移动成立才算"朝这边走"：撞墙不更新（否则贴着墙按住会把朝向刷成墙的方向）。
+        facing: dir,
         cooldown: MOVE_TICKS - 1,
       };
 
@@ -533,13 +594,14 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
 
   // 还有命：全体回出生点。目前只有玩家一个实体，但用 map 而不是直接改 entities[0] ——
   // 这样"T12 加进来的敌人不该被玩家连累传走"这件事不用靠人记得。
-  const home = stateAt(level, prev.spawn);
+  // 重生到**受害者自己的** `home`（玩家的是出生点；T12-d 起敌人也用这一条 —— 见 §八-2）。
+  const home = stateAt(level, victim.home);
   const respawned = entities.map((e) =>
     e.id === casualty.entity
-      ? { ...e, cell: prev.spawn, mode: home?.mode ?? e.mode, cooldown: RESPAWN_TICKS }
+      ? { ...e, cell: victim.home, mode: home?.mode ?? e.mode, cooldown: RESPAWN_TICKS }
       : e,
   );
-  events.push({ kind: 'respawned', entity: casualty.entity, cell: prev.spawn, lives });
+  events.push({ kind: 'respawned', entity: casualty.entity, cell: victim.home, lives });
 
   return {
     state: { ...prev, tick: nextTick, grid, fills, entities: respawned, treasures, gatesOpen, lives },

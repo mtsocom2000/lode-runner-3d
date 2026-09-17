@@ -248,7 +248,9 @@ function reportProbe(): void {
   // 一眼就能分出是模拟错了还是渲染错了。这正是探针存在的意义。
   const payload = {
     level: level.id,
-    counts: stage.counts,
+    // 场景（砖/梯/杆/芯片/出口/宝物）来自 `stage`，**实体**（玩家/无人机）来自 `syncer` ——
+    // 两边都是**渲染层自己的账**，探针据此判断"声明了就该画出来"。
+    counts: { ...stage.counts, ...syncer.counts() },
     sim: { tick: state.tick, status: state.status, entities: state.entities.length },
     playerExpect: playerExpectation(),
     ...summary,

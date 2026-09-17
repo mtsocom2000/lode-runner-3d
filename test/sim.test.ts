@@ -67,6 +67,11 @@ describe('sim：常量与建初态', () => {
       cell: spawnUpper,
       mode: 'stand',
       cooldown: 0,
+      // T12-a：重生点搬到实体上（敌人的重生点各不同，一个整局的字段表达不了）。
+      // 玩家这里必须**等于出生点** —— 它就是玩家重生回哪儿。
+      home: spawnUpper,
+      // 朝向：开局朝右；移动成立后才更新（这条语义由下面的用例钉住）。
+      facing: 'right',
     });
   });
 

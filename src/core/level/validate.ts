@@ -42,6 +42,8 @@ export type RuleId =
   | 'rowsEven'
   /** 出生点得站得住。 */
   | 'spawnStandable'
+  /** 敌人出生格得站得住（T12）。 */
+  | 'enemyStandable'
   /** 出口得站得住。 */
   | 'exitStandable'
   /** 梯子不能断。 */
@@ -124,6 +126,19 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
       rule: 'spawnStandable',
       detail: `出生点 ${where(spawn)} 站不住（那一格不是梯/杆，且正下方不是实心）`,
       at: spawn,
+    });
+  }
+
+  // ②-b 敌人的出生格也得站得住（T12）。
+  //
+  // 与 ② 同一条判据、同一类 bug：`createSim` 也会抛，但那时应用已经起不来了；
+  // 在这里报出来，HUD 上能直接看见"是哪个敌人摆错了"。
+  for (const [index, enemy] of (def.enemies ?? []).entries()) {
+    if (isStandable(level, enemy.cell)) continue;
+    issues.push({
+      rule: 'enemyStandable',
+      detail: `敌人 #${index}（${enemy.kind}）出生格 ${where(enemy.cell)} 站不住（那一格不是梯/杆，且正下方不是实心）`,
+      at: enemy.cell,
     });
   }
 

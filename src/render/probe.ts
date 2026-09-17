@@ -101,6 +101,14 @@ const FEATURE_RULES: Readonly<Record<string, (r: number, g: number, b: number) =
    * > **改 `PALETTE.player` 的色相仍要回看这里**（palette.ts 文件头写的"同一份契约的两端"）。
    */
   player: (r, g, b) => b - r > 90 && b - g > 50,
+  /**
+   * 紫罗兰：巡逻无人机（`PALETTE.drone` = 0x8467b8 = 132,103,184）。
+   *
+   * 它是场景里**独一份**的色相（选色时逐一排除了 bar 的陶土红、exit/prize/chip/player 的绿金青蓝，
+   * 见 `palette.ts` 的说明），所以这条规则只需要把"紫"卡出来，不必贴绝对值 ——
+   * 与 `player` 那条同一条理由：**紧在因后处理而不变的关系上，不紧在一个绝对色值上**。
+   */
+  drone: (r, g, b) => b > 150 && r > 90 && r > g && b > g * 1.4,
 };
 
 /**

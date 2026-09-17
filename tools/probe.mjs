@@ -108,6 +108,9 @@ const EXPECTED_FEATURES = [
   // 不再是青色 —— 调色板一改，这条规则与它就必须一起改（见 palette.ts 的契约说明）。
   { feature: 'cyan', count: 'chip', meaning: '数据芯片' },
   { feature: 'prize', count: 'prize', meaning: '岛台宝物' },
+  // 实体（T12）：`counts` 里这一项来自 `syncer.counts()`（渲染层真正建了几个实体），
+  // 所以"关卡声明了无人机 ⇒ 画面上必须有无人机"这条是**两端各自记账**的核对。
+  { feature: 'drone', count: 'drone', meaning: '巡逻无人机' },
 ];
 for (const { feature, count, meaning } of EXPECTED_FEATURES) {
   const declared = (summary.counts?.[count] ?? 0) > 0;

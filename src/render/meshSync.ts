@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SimState } from '../core/sim';
+import type { EntityKind, SimState } from '../core/sim';
 import type { Level } from '../core/world/tiles';
 import { PLAYER_SIZE, playerAnchor } from './metrics';
 import { PALETTE } from './palette';
@@ -58,6 +58,8 @@ export interface Syncer {
    * 不做补间 —— 依据是事件流里的 `respawned`，不是任何距离阈值（见文件头）。
    */
   update(state: SimState, dt: number, opts?: { readonly snapEntities?: ReadonlySet<number> }): void;
+  /** 各类实体真正画出来了几个（探针用它核对"声明了就该画出来"，见实现里的说明）。 */
+  counts(): Readonly<Record<EntityKind, number>>;
   /**
    * 某实体**当前**的世界位置（补间之后、真正写进 mesh 的那个值）。
    *
@@ -79,6 +81,7 @@ export interface ObjectParent {
 }
 
 interface Actor {
+  readonly kind: EntityKind;
   readonly group: THREE.Group;
   tween: Tween;
 }
@@ -94,27 +97,44 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
   parent.add(group);
 
   const box = new THREE.BoxGeometry(PLAYER_SIZE, PLAYER_SIZE, PLAYER_SIZE);
-  // 身体用 unlit：角色要在任何光线下都是**同一个颜色**（探针的 player 规则就认它）。
-  const bodyMat = new THREE.MeshBasicMaterial({ color: PALETTE.player });
-  const glowMat = new THREE.MeshBasicMaterial({
-    color: PALETTE.player,
-    transparent: true,
-    opacity: GLOW_OPACITY,
-    side: THREE.BackSide, // 只画背面 → 身体四周留一圈，而不是糊上一层
-    depthTest: false,
-    depthWrite: false,
-  });
+
+  /**
+   * 外发光壳：与身体同色、半透明、只画背面 —— 身体四周留一圈轮廓，被砖挡住也还看得见。
+   * （`player` 的像素规则正是靠"壳盖在身体上恒等于身体色"这条性质，见 `probe.ts`。）
+   */
+  const glowOf = (color: number): THREE.MeshBasicMaterial =>
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: GLOW_OPACITY,
+      side: THREE.BackSide,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+  /**
+   * 每种实体**一份**材质（不是每个实体一份）。身体一律 unlit：角色在任何光线下都是
+   * 同一个颜色，探针的色相规则就认这个。按 `kind` 共用，所以再加一个敌人不会再多一份材质。
+   */
+  const bodyMat: Readonly<Record<EntityKind, THREE.MeshBasicMaterial>> = {
+    player: new THREE.MeshBasicMaterial({ color: PALETTE.player }),
+    drone: new THREE.MeshBasicMaterial({ color: PALETTE.drone }),
+  };
+  const glowMat: Readonly<Record<EntityKind, THREE.MeshBasicMaterial>> = {
+    player: glowOf(PALETTE.player),
+    drone: glowOf(PALETTE.drone),
+  };
 
   const actors = new Map<number, Actor>();
 
-  function spawn(id: number, at: Vec3): Actor {
+  function spawn(id: number, kind: EntityKind, at: Vec3): Actor {
     const g = new THREE.Group();
 
-    const body = new THREE.Mesh(box, bodyMat);
+    const body = new THREE.Mesh(box, bodyMat[kind]);
     body.castShadow = true;
     g.add(body);
 
-    const glow = new THREE.Mesh(box, glowMat);
+    const glow = new THREE.Mesh(box, glowMat[kind]);
     glow.scale.setScalar(GLOW_SCALE);
     glow.renderOrder = GLOW_RENDER_ORDER;
     g.add(glow);
@@ -123,7 +143,7 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     group.add(g);
 
     // 首次出现**不滑入**：`from === to` 于是 `sample` 直接给目标点，人就地站好。
-    const actor: Actor = { group: g, tween: tweenTo(at, at) };
+    const actor: Actor = { kind, group: g, tween: tweenTo(at, at) };
     actors.set(id, actor);
     return actor;
   }
@@ -143,7 +163,7 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
       for (const entity of state.entities) {
         alive.add(entity.id);
         const target = playerAnchor(level, entity.cell, entity.mode);
-        const actor = actors.get(entity.id) ?? spawn(entity.id, target);
+        const actor = actors.get(entity.id) ?? spawn(entity.id, entity.kind, target);
 
         // 不连续的一帧：就地落位。否则 `aim` 会把这一跳铺成一条世界坐标直线 ——
         // 用户报的"跳过缺口回到起点"就是死亡+重生被画成了 3.0 格的横滑。
@@ -161,18 +181,28 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
         actors.delete(id);
       }
     },
-    positionOf(id: number): Vec3 | null {
-      const actor = actors.get(id);
-      if (actor === undefined) return null;
-      const p = actor.group.position;
-      return [p.x, p.y, p.z];
-    },
-    dispose(): void {
-      parent.remove(group);
-      box.dispose();
-      bodyMat.dispose();
-      glowMat.dispose();
-      actors.clear();
-    },
-  };
+  positionOf(id: number): Vec3 | null {
+    const actor = actors.get(id);
+    if (actor === undefined) return null;
+    const p = actor.group.position;
+    return [p.x, p.y, p.z];
+  },
+  /**
+   * 各类实体**真正画出来了**几个。探针拿它判断"关卡声明了无人机 ⇒ 画面上就该有无人机"：
+   * 这是**渲染层自己的账**（不是从关卡字符串反推），与色相判定同源 —— 见 `tools/probe.mjs`
+   * 里 `EXPECTED_FEATURES` 的说明。
+   */
+  counts(): Readonly<Record<EntityKind, number>> {
+    const out: Record<EntityKind, number> = { player: 0, drone: 0 };
+    for (const actor of actors.values()) out[actor.kind] += 1;
+    return out;
+  },
+  dispose(): void {
+    parent.remove(group);
+    box.dispose();
+    for (const m of Object.values(bodyMat)) m.dispose();
+    for (const m of Object.values(glowMat)) m.dispose();
+    actors.clear();
+  },
+};
 }

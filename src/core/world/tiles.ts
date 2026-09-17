@@ -1,4 +1,5 @@
 import type { Cell } from '../types';
+import type { Dir } from '../rules/movement';
 import { buildDeck } from './deck';
 import type { DeckCell, DeckJoint } from './deck';
 
@@ -69,6 +70,14 @@ export interface LevelDef {
    * `G` 字形留给**墙上**的宝物（后续关卡用）。
    */
   readonly treasures?: readonly DeckCell[];
+  /**
+   * 敌人（T12）。可选 —— 没有敌人的关卡照旧（概念场景就是）。
+   *
+   * 为什么**不进** `Level`：`Level` 是**规则操作的那张几何**（图、支撑、落水判定都只吃它），
+   * 而敌人是**实体**（`SimState.entities`），不是地形。`createSim` 直接吃 `LevelDef`，
+   * 所以它从这里读出生格就够 —— 往 `Level` 上再挂一份只会多一个没人读的字段。
+   */
+  readonly enemies?: readonly EnemySpawn[];
 }
 
 export type LoadError =
@@ -76,6 +85,24 @@ export type LoadError =
   | { readonly kind: 'ragged'; readonly row: number; readonly expected: number; readonly got: number }
   | { readonly kind: 'badChar'; readonly row: number; readonly col: number; readonly ch: string }
   | { readonly kind: 'foldMismatch'; readonly fold: number; readonly cols: number };
+
+/** 敌人种类。T12 只做 `drone`（T15 加 `stalker`）—— 与 `sim.ts` 的 `EntityKind` 同源。 */
+export type EnemyKind = 'drone';
+
+/**
+ * 关卡里声明的敌人（T12）。
+ *
+ * 为什么**只声明出生格**、不声明巡逻路线：文档 §A.4 定的是"沿平面匀速巡逻 + 落坑受困"，
+ * 巡逻是**行为**不是地形，画在关卡数据里会变成第二份真相（行为该由 `ai/drone.ts` 决定）。
+ * 出生格同时也是它的**重生点**（§八-2 裁定：溺水后延时重生）。
+ *
+ * `facing` 可选：巡逻起步朝哪边。缺省 `right`。
+ */
+export interface EnemySpawn {
+  readonly kind: EnemyKind;
+  readonly cell: Cell;
+  readonly facing?: Dir;
+}
 
 export interface Level {
   readonly id: string;
