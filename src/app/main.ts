@@ -10,6 +10,7 @@ import { probePixels } from '../render/probe';
 import { createStage } from '../render/scene';
 import { createHud } from './hud';
 import { createInput } from './input';
+import { createSelectiveBloom } from '../render/bloom';
 
 const host = document.getElementById('app');
 if (!host) throw new Error('找不到 #app 挂载点（index.html 被改坏了？）');
@@ -172,6 +173,8 @@ function resize(): void {
   const w = window.innerWidth;
   const h = window.innerHeight;
   renderer.setSize(w, h);
+  // 两个 composer 的缓冲尺寸也要跟：漏掉它，泛光会按旧尺寸采样（换窗口后糊掉）。
+  bloom.setSize(w, h);
   frameCamera(camera, w / h);
 }
 
@@ -250,6 +253,18 @@ function playerExpectation(): {
   };
 }
 
+/**
+ * 选择性泛光（用户裁定"需要"，第二次返工）。创建在这里是因为 `renderer` / `stage` /
+ * `camera` 到这一步都已就位，而它必须在 `resize()`（文件末尾那次调用）之前存在。
+ *
+ * **它取代了 `renderer.render(...)`** —— 两条路只能走一条。为什么不能靠调 threshold：
+ * 背景板线性亮度 ≈0.81 比所有物体（≈0.20–0.50）都亮，阈值分不开，见 `bloom.ts` 的推导。
+ */
+const bloom = createSelectiveBloom(renderer, stage.scene, camera, {
+  width: window.innerWidth,
+  height: window.innerHeight,
+});
+
 const STEP_MS = 1000 / TICK_HZ;
 const MAX_CATCHUP_MS = 250;
 
@@ -289,7 +304,8 @@ function loop(now: number): void {
 
   stage.update(now / 1000);
   syncer.update(state, elapsedMs / 1000);
-  renderer.render(stage.scene, camera);
+  // 走选择性泛光而不是 `renderer.render` —— 泛光要靠它。两条路只能选一条。
+  bloom.render();
 
   frames += 1;
   // 等第 2 帧再读：第 1 帧的阴影贴图可能还没成形。
