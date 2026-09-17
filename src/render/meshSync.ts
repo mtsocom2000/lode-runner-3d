@@ -3,7 +3,7 @@ import type { SimState } from '../core/sim';
 import type { Level } from '../core/world/tiles';
 import { PLAYER_SIZE, playerAnchor } from './metrics';
 import { PALETTE } from './palette';
-import { advance, aim, sample, tweenTo, type Tween, type Vec3 } from './tween';
+import { advance, aim, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
 
 /**
  * 实体层：把 `SimState.entities` 摆到墙上，并把"格到格"的跳变补成滑动（T6）。
@@ -23,6 +23,17 @@ import { advance, aim, sample, tweenTo, type Tween, type Vec3 } from './tween';
  * 第 2 步按秒推进，是"帧率无关 / resize 无关"的全部秘密：帧率只改变采样的**密度**，
  * 不改变"走到同一时刻时人在哪"。这条性质由 `test/tween.test.ts` 钉着。
  *
+ * ## 位置不连续时**不补间**（重生 / 将来的关卡切换）
+ *
+ * 一帧三步描述的是**连续运动**。但有些位置变化不是运动：落水扣命后实体被直接放回出生点，
+ * 而这在 `sim` 里发生在**同一个 tick**（`fall → drowned → respawned`，见 `sim.ts` 的 tick 第⑤步），
+ * 中间那条下坠**没有帧**。若照常补间，角色会被画成一条横穿场景的直线 ——
+ * 用户报的"跳过缺口，回到起点处"就是这样：从 `col3` 横滑 **3.0 格**回 `col0`，正好从缺口上方掠过。
+ *
+ * 所以 `update` 收一个 `snapEntities`：这批实体**就地落位**。判据来自**事件流**
+ * （`respawned` 是模拟层明写的事实），不是"距离超过多少就算瞬移"那种启发式 ——
+ * 后者等于在渲染层重新定义"什么算合法移动"，那是 `graph.ts` 文件头明令禁止的第二份真相。
+ *
  * ## 渲染只读 state（架构文档 §三 红线）
  *
  * 本文件不推进 sim、不改 state，只把已经发生的事实画出来。角色的**朝向**（T7：过折痕转 90°）
@@ -40,8 +51,13 @@ const GLOW_RENDER_ORDER = 998;
 
 export interface Syncer {
   readonly group: THREE.Group;
-  /** 用最新 state 与**本帧真实秒数**更新所有实体。 */
-  update(state: SimState, dt: number): void;
+  /**
+   * 用最新 state 与**本帧真实秒数**更新所有实体。
+   *
+   * `snapEntities`：本帧**位置不连续**（重生/瞬移）的实体 id。列进来的实体**就地落位**、
+   * 不做补间 —— 依据是事件流里的 `respawned`，不是任何距离阈值（见文件头）。
+   */
+  update(state: SimState, dt: number, opts?: { readonly snapEntities?: ReadonlySet<number> }): void;
   /**
    * 某实体**当前**的世界位置（补间之后、真正写进 mesh 的那个值）。
    *
@@ -50,6 +66,16 @@ export interface Syncer {
    */
   positionOf(id: number): Vec3 | null;
   dispose(): void;
+}
+
+/**
+ * 同步器挂靠的父节点。**只用到 `add` / `remove`** —— 故意写成结构化类型而不是
+ * `THREE.Object3D`：架构红线禁止测试里 import three，而同步层是应该被单测的
+ * （`test/meshSync.test.ts` 就给一个两行的壳，见那个"位置不连续"的用例）。
+ */
+export interface ObjectParent {
+  add(object: THREE.Object3D): void;
+  remove(object: THREE.Object3D): void;
 }
 
 interface Actor {
@@ -63,7 +89,7 @@ interface Actor {
  *
  * `level` 只用来定折痕（`fold`）—— 它必须与喂进来的 state 是同一关，这是调用方的前提。
  */
-export function createSyncer(parent: THREE.Object3D, level: Level): Syncer {
+export function createSyncer(parent: ObjectParent, level: Level): Syncer {
   const group = new THREE.Group();
   parent.add(group);
 
@@ -104,15 +130,20 @@ export function createSyncer(parent: THREE.Object3D, level: Level): Syncer {
 
   return {
     group,
-    update(state: SimState, dt: number): void {
+    update(state: SimState, dt: number, opts?: { readonly snapEntities?: ReadonlySet<number> }): void {
       const alive = new Set<number>();
+      const snap = opts?.snapEntities;
 
       for (const entity of state.entities) {
         alive.add(entity.id);
         const target = playerAnchor(level, entity.cell, entity.mode);
         const actor = actors.get(entity.id) ?? spawn(entity.id, target);
 
-        actor.tween = advance(aim(actor.tween, target), dt);
+        // 不连续的一帧：就地落位。否则 `aim` 会把这一跳铺成一条世界坐标直线 ——
+        // 用户报的"跳过缺口回到起点"就是死亡+重生被画成了 3.0 格的横滑。
+        actor.tween =
+          snap?.has(entity.id) === true ? snapTo(target) : advance(aim(actor.tween, target), dt);
+
         const p = sample(actor.tween);
         actor.group.position.set(p[0], p[1], p[2]);
       }

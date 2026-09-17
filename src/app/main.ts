@@ -286,13 +286,21 @@ function loop(now: number): void {
   acc += elapsedMs;
 
   // 每个 tick 采一次输入**电平**：一次 dt 可能跨好几个 tick，"按住"在这几个 tick 里都有效。
-  // 事件流目前没有别的消费者（T9 结算落水、T20 特效），所以每个 tick 只问它一件事：
-  // "玩家这一下按键被兑现了吗？"兑现了才去销输入层的锁存 —— 否则轻点会被冷却窗口吃掉。
+  // 输入锁存：兑现了才销账 —— 否则轻点会被冷却窗口吃掉。
+  //
+  // 顺带把"本帧哪些实体瞬移了"收出来（目前只有重生这一种）。事件流现在有两个消费者：
+  // 输入销账、同步层的就地落位（T20 的特效会是第三个）。
+  let snapped: Set<number> | null = null;
   while (acc >= STEP_MS) {
     const frame = tick(state, input.intents());
     state = frame.state;
     acc -= STEP_MS;
     if (actedOn(frame)) input.consume();
+    for (const event of frame.events) {
+      if (event.kind !== 'respawned') continue;
+      if (snapped === null) snapped = new Set<number>();
+      snapped.add(event.entity);
+    }
   }
 
   // 瓦片变了才重贴（T11）。放在 tick 循环**之后**：一次 dt 可能跨好几个 tick，
@@ -303,7 +311,9 @@ function loop(now: number): void {
   }
 
   stage.update(now / 1000);
-  syncer.update(state, elapsedMs / 1000);
+  // 重生是**瞬移**，补间必须就地落位：`sim` 把 `fall → drowned → respawned` 压在同一个 tick 里，
+  // 照常插值会把这一跳画成一条横穿场景的直线（用户报的"跳过缺口，回到起点处"）。
+  syncer.update(state, elapsedMs / 1000, snapped === null ? undefined : { snapEntities: snapped });
   // 走选择性泛光而不是 `renderer.render` —— 泛光要靠它。两条路只能选一条。
   bloom.render();
 

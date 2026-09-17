@@ -24,6 +24,19 @@ export function tweenTo(from: Vec3, to: Vec3): Tween {
 }
 
 /**
+ * 一个"已经在终点"的补间：`from === to`，且时钟已经走满。
+ *
+ * 用途只有一个：**位置发生了不连续的变化**（重生、将来的关卡切换）时禁止插值 ——
+ * 否则角色会被画成一条横穿场景的直线（见 `meshSync` 的 `snapEntities`）。
+ *
+ * 为什么复用 `Tween` 而不加一个"瞬移"分支：`sample` / `isDone` / `aim` 等消费方一行都不用改，
+ * 而且瞬移只发生一帧：下一帧 `aim` 会发现目标没变、原样返回，照常滑。
+ */
+export function snapTo(to: Vec3): Tween {
+  return { from: to, to, elapsed: TWEEN_SECONDS };
+}
+
+/**
  * 中途换目标：**从当前插值位置**重新出发，绝不回跳。
  *
  * 这是这类同步最典型的手感事故：一格走完之前 sim 又给出下一格，如果直接把 `from`
