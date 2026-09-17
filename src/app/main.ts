@@ -353,7 +353,9 @@ function loop(now: number): void {
     acc -= STEP_MS;
     if (actedOn(frame)) input.consume();
     for (const event of frame.events) {
-      if (event.kind === 'respawned') {
+      if (event.kind === 'respawned' || event.kind === 'returned') {
+        // `returned` = 敌人被重置回家（玩家死亡时的追捕重置）。它同样是**瞬移** ——
+        // 不列进来的话，敌人会从被杀的地方滑过整张地图回家（就是那个"飞"的坑）。
         if (snapped === null) snapped = new Set<number>();
         snapped.add(event.entity);
         continue;
@@ -363,6 +365,7 @@ function loop(now: number): void {
       // 否则终局那条会被"落水 −1 命"盖掉。
       if (event.kind === 'drowned') flash('落 水 ｜ 命数 −1', DEATH_FLASH_MS);
       else if (event.kind === 'buried') flash('被 活 埋 ｜ 命数 −1', DEATH_FLASH_MS);
+      else if (event.kind === 'caught') flash('被 抓 住 ｜ 命数 −1', DEATH_FLASH_MS);
       else if (event.kind === 'gameover') flashForever('GAME OVER —— 按 R 重开');
       else if (event.kind === 'won') flashForever('★ 过 关 ！');
     }

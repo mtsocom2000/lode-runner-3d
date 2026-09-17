@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tick, createSim } from '../src/core/sim';
+import { tick, createSim, RESPAWN_TICKS } from '../src/core/sim';
 import { validateLevel } from '../src/core/level/validate';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 import { cellA, cellB } from './fixtures';
@@ -58,7 +58,10 @@ describe('T12-a：敌人在初态里就是实体', () => {
   });
 
   it('朝向只在**移动成立**时更新：撞墙（出界 / 砖）不改朝向', () => {
-    const start = createSim(DEF, SPAWN);
+    // 用**没有敌人**的夹具：朝向是玩家的属性，而夹具里的无人机会在同一个 tick 追过来
+    // （接触即死把玩家送回出生点）—— 那会让这条断言变成在测别的东西。
+    const plain: LevelDef = { ...DEF, enemies: undefined };
+    const start = createSim(plain, SPAWN);
     // 出生点在 col 0：往左是网格外 → blocked，朝向必须还是 right
     const blocked = tick(start, { move: 'left', dig: null }).state;
     expect(blocked.entities[0]?.facing).toBe('right');
@@ -74,6 +77,46 @@ describe('T12-a：敌人在初态里就是实体', () => {
     if (!withEnemies.ok || !without.ok) throw new Error('夹具必须合法');
     expect(withEnemies.level.grid).toEqual(without.level.grid);
     expect(withEnemies.level.deck).toEqual(without.level.deck);
+  });
+});
+
+describe('T12-c：接触即死（原版守卫，用户裁定）', () => {
+  /** 无人机就摆在玩家旁边一格 —— 一个 tick 内必撞上。 */
+  const CONTACT: LevelDef = {
+    id: 'CONTACT',
+    name: '接触夹具',
+    fold: 2,
+    tiles: ['XXXX', '....', 'XXXX', '....'],
+    enemies: [{ kind: 'drone', cell: cellA(1, 1) }],
+  };
+
+  it('无人机走到玩家那一格 → `caught` + 扣命 + 重生回出生点', () => {
+    const frame = tick(createSim(CONTACT, cellA(0, 1)), { move: null, dig: null });
+    // `returned` = 敌人被重置回家（同一条规则的另一半），见下一个用例
+    expect(frame.events.map((e) => e.kind)).toEqual(['entered', 'caught', 'respawned', 'returned']);
+    const caught = frame.events[1];
+    expect(caught?.kind === 'caught' && caught.by).toBe(1); // 谁抓的
+    expect(frame.state.lives).toBe(2);
+    // 重生回**自己的** home（玩家就是出生点）
+    expect(frame.state.entities[0]?.cell).toEqual(cellA(0, 1));
+    expect(frame.state.entities[0]?.cooldown).toBe(RESPAWN_TICKS);
+  });
+
+  it('死亡时**追捕重置**：敌人回自己的家并冻结 —— 否则守在出生点就能连锁带走三条命', () => {
+    let state = createSim(CONTACT, cellA(0, 1));
+    state = tick(state, { move: null, dig: null }).state; // 第一次被抓
+    expect(state.lives).toBe(2);
+
+    // 关键：它**不再赖在玩家那一格上**，而是回了家（A:1,1）且带冻结。
+    // （第一版想用"重生期间不判接触"挡住连锁，但那个窗口只覆盖重生那一 tick，实测无效。）
+    expect(state.entities[1]?.cell).toEqual(cellA(1, 1));
+    expect(state.entities[1]?.cooldown).toBe(RESPAWN_TICKS);
+
+    // 冻结期内它走不动 → 不可能再撞上，命数不动
+    for (let i = 0; i < RESPAWN_TICKS - 1; i++) {
+      state = tick(state, { move: null, dig: null }).state;
+    }
+    expect(state.lives).toBe(2);
   });
 });
 

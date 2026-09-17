@@ -1,4 +1,4 @@
-import type { Cell } from './types';
+import { cellKey, type Cell } from './types';
 import { decideDrone } from './ai/drone';
 import type { DeckCell, DeckJoint } from './world/deck';
 import { faceOf } from './world/fold';
@@ -192,8 +192,22 @@ export type SimEvent =
    * 途径①是"没看清地形"，途径②是"自己松的手"，T20 的涟漪特效与 T13 的通关脚本都要分开它们。
    */
   | { readonly kind: 'drowned'; readonly entity: number; readonly cell: Cell; readonly path: DrownPath }
+  /**
+   * 被无人机抓住（T12-c）。用户裁定"**接触即死**"= 原版守卫行为。
+   *
+   * 单独一条事件而不复用 `drowned`：反馈完全不同（被抓 vs 落水），T20 要分开播；
+   * 而且 `by`（谁抓的）是 AI 统计（T19）与将来的击杀反馈要用的。
+   */
+  | { readonly kind: 'caught'; readonly entity: number; readonly by: number; readonly cell: Cell }
   /** 扣命之后回到出生点。`lives` 是**扣完之后**的剩余命数。 */
   | { readonly kind: 'respawned'; readonly entity: number; readonly cell: Cell; readonly lives: number }
+  /**
+   * 敌人被**重置回它的家**（T12-c：玩家死亡时追捕重置）。
+   *
+   * 为什么单开一条而不是复用 `respawned`：`respawned.lives` 是**玩家的剩余命数**，
+   * 挂在敌人身上没有意义（语义会立刻变味）。渲染那边两条都当"瞬移"处理。
+   */
+  | { readonly kind: 'returned'; readonly entity: number; readonly cell: Cell }
   /** 命数归零，这一局结束。 */
   | { readonly kind: 'gameover' }
   /**
@@ -578,13 +592,26 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
     }
   }
 
-  // ── ⑤ 结算：落水或活埋 ──
+  // ── ⑤ 结算：被抓 / 落水 / 活埋 ──
   //
   // 一次只结一个：同一 tick 里又落水又被埋在物理上要求同一个人占两个格，不可能。
   // `buried` 在 ① 里入列、`drowned` 在 ③ 里入列，所以 `find` 会先看到 `buried`。
+  //
+  // **被抓（T12-c）在这里判**，不放在移动那一步：接触是移动的**结果**，与"踩空落水"同级。
+  // 于是它天然复用下面那一整套扣命/重生，不必另写一条死亡路径。
+  const activePlayer = entities.find((e) => e.kind === 'player');
+  if (activePlayer !== undefined) {
+    const enemy = entities.find(
+      (e) => e.kind !== 'player' && cellKey(e.cell) === cellKey(activePlayer.cell),
+    );
+    if (enemy !== undefined) {
+      events.push({ kind: 'caught', entity: activePlayer.id, by: enemy.id, cell: activePlayer.cell });
+    }
+  }
+
   const casualty = events.find(
-    (e): e is Extract<SimEvent, { kind: 'drowned' | 'buried' }> =>
-      e.kind === 'drowned' || e.kind === 'buried',
+    (e): e is Extract<SimEvent, { kind: 'drowned' | 'buried' | 'caught' }> =>
+      e.kind === 'drowned' || e.kind === 'buried' || e.kind === 'caught',
   );
   if (casualty === undefined) {
     return { state: { ...prev, tick: nextTick, grid, fills, entities, treasures, gatesOpen }, events };
@@ -619,14 +646,26 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
 
   // 还有命：全体回出生点。目前只有玩家一个实体，但用 map 而不是直接改 entities[0] ——
   // 这样"T12 加进来的敌人不该被玩家连累传走"这件事不用靠人记得。
-  // 重生到**受害者自己的** `home`（玩家的是出生点；T12-d 起敌人也用这一条 —— 见 §八-2）。
+  // 还有命：玩家回出生点，**敌人也回各自的出生点**（T12-c 的"追捕重置"）。
+  //
+  // 为什么敌人也必须回：接触即死之后，"守在出生点的无人机"会把三条命**连锁**带走 ——
+  // 玩家在重生冻结里根本动不了，只能看着它一格一格撞上来（我第一版想用"重生期间不判接触"
+  // 挡住它，但那个窗口只覆盖了重生那一 tick，实测毫无作用）。让追捕在死亡那一刻**重置**，
+  // 才是唯一不依赖关卡作者小心的做法；关卡那边还要配合一条：出生点别紧挨某个敌人的家。
+  //
+  // 敌人用 `returned` 而不是 `respawned`：后者的 `lives` 字段是玩家的命数，挂给敌人会变味。
+  // 两条事件在渲染层都当**瞬移**处理 —— 否则敌人会从被杀的地方滑过整张地图回家。
   const home = stateAt(level, victim.home);
-  const respawned = entities.map((e) =>
-    e.id === casualty.entity
-      ? { ...e, cell: victim.home, mode: home?.mode ?? e.mode, cooldown: RESPAWN_TICKS }
-      : e,
-  );
-  events.push({ kind: 'respawned', entity: casualty.entity, cell: victim.home, lives });
+  const respawned = entities.map((e) => {
+    if (e.id === casualty.entity) {
+      events.push({ kind: 'respawned', entity: e.id, cell: victim.home, lives });
+      return { ...e, cell: victim.home, mode: home?.mode ?? e.mode, cooldown: RESPAWN_TICKS };
+    }
+    if (e.kind === 'player') return e;
+    const enemyHome = stateAt(level, e.home);
+    events.push({ kind: 'returned', entity: e.id, cell: e.home });
+    return { ...e, cell: e.home, mode: enemyHome?.mode ?? e.mode, cooldown: RESPAWN_TICKS };
+  });
 
   return {
     state: { ...prev, tick: nextTick, grid, fills, entities: respawned, treasures, gatesOpen, lives },
