@@ -1,4 +1,5 @@
 import type { Cell } from './types';
+import { decideDrone } from './ai/drone';
 import type { DeckCell, DeckJoint } from './world/deck';
 import { faceOf } from './world/fold';
 import {
@@ -328,14 +329,28 @@ function describeCell(c: Cell): string {
 }
 
 /**
+ * 推进实体时它需要知道的**世界上下文**。
+ *
+ * 目前只有一件事：**玩家在哪**（无人机的追击段要问它）。刻意**不把整个 `SimState`
+ * 传下去** —— `advance` 只该知道"动一步需要什么"，把整局状态递给它等于把"谁都能读所有东西"
+ * 变成默认。上下文接口小，才看得清依赖。
+ *
+ * 取的是**本 tick 开始时**的玩家位置（`prev.entities`），于是结果与实体遍历顺序无关 ——
+ * 顺序依赖是回放里最难查的一类 bug。
+ */
+interface AdvanceContext {
+  readonly playerCell: Cell | null;
+}
+
+/**
  * 这个实体本 tick 想往哪走。
  *
- * 玩家取输入方向；敌人接各自 AI —— 无人机的**巡逻段/追击段**是 T12-b，
- * 所以现在 `drone` 一律返回 `null`（站着不动）。T12-a 只把**实体化管道**打通：
- * 关卡数据 → 实体 → 渲染，AI 挂在下一个明确的口子上（`ai/drone.ts`）。
+ * 玩家取输入方向；无人机交给 `ai/drone.ts`（巡逻段 + 追击段，用户裁定）。
+ * 这里只做**接线**：把"等级 + 它在哪 + 玩家在哪"喂过去，决策本身全在那个模块里。
  */
-function decide(entity: Entity, intents: Intents): Dir | null {
-  return entity.kind === 'player' ? intents.move : null;
+function decide(entity: Entity, intents: Intents, level: Level, ctx: AdvanceContext): Dir | null {
+  if (entity.kind === 'player') return intents.move;
+  return decideDrone({ level, at: { cell: entity.cell, mode: entity.mode }, facing: entity.facing, playerCell: ctx.playerCell });
 }
 
 /**
@@ -345,10 +360,16 @@ function decide(entity: Entity, intents: Intents): Dir | null {
  * （"还剩几条命""这一局是不是结束了"），不是单体移动的一部分。混进来的话，
  * 将来加敌人时会变成"某个无人机掉水里把玩家传回了出生点"这种荒唐事。
  */
-function advance(level: Level, entity: Entity, intents: Intents, events: SimEvent[]): Entity {
+function advance(
+  level: Level,
+  entity: Entity,
+  intents: Intents,
+  ctx: AdvanceContext,
+  events: SimEvent[],
+): Entity {
   if (entity.cooldown > 0) return { ...entity, cooldown: entity.cooldown - 1 };
 
-  const dir = decide(entity, intents);
+  const dir = decide(entity, intents, level, ctx);
   if (dir === null) return entity; // 站着不动：不进入冷却，下一 tick 按方向立刻起步
 
   const result = step(level, { cell: entity.cell, mode: entity.mode }, dir);
@@ -495,9 +516,13 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   // ── ③ 移动 ──
   // `level` 用 ② 之后的 grid 重建：移动必须看见刚挖出来的坑。
   const level = viewOf({ ...prev, grid });
+  // 无人机的追击要问"玩家在哪"。取**本 tick 开始时**的位置（`prev.entities`），
+  // 于是与实体遍历顺序无关 —— 顺序依赖是回放里最难查的一类 bug。
+  const player = prev.entities.find((e) => e.kind === 'player');
+  const ctx: AdvanceContext = { playerCell: player?.cell ?? null };
   const entities: Entity[] = [];
   for (const entity of prev.entities) {
-    entities.push(advance(level, entity, intents, events));
+    entities.push(advance(level, entity, intents, ctx, events));
   }
 
   // ── ④ 采宝 → 开闸 → 过关（T13）──

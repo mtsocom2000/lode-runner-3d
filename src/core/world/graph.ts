@@ -61,6 +61,17 @@ export interface GraphOptions {
    * 用来问受限可达性："只靠地面能不能到" / "不许用杆时还剩什么"。
    */
   readonly kinds?: readonly EdgeKind[];
+  /**
+   * 要不要把**甲板**（岛台 / 小道）算进来（默认 `true`）。
+   *
+   * 为什么需要这个开关：T12 的巡逻无人机按用户裁定**只在墙面内**活动。甲板节点、甲板内部的
+   * 边、以及小道接头边都是 `buildGraph` **无条件**加的（它们不是 `kinds` 里的边种 ——
+   * 甲板格是两个坐标系之外的第二类**节点**），所以"不要甲板"表达不出来。
+   *
+   * 在 `ai/` 里手写"这一步不许上甲板"是不行的：那等于在 AI 里重新定义一次"什么算合法移动"，
+   * 而那份定义已经有主（本文件 + `rules/movement.ts`）—— 两处各写一遍必然漂。
+   */
+  readonly decks?: boolean;
 }
 
 export interface Graph {
@@ -177,7 +188,11 @@ export function buildGraph(level: Level, opts: GraphOptions = {}): Graph {
   // 甲板是节点的**第二个来源**（T10）。上面那对 `rows × cols` 循环永远扫不到它 ——
   // 甲板格的两个下标是 (x, z)、属于面 'I'，和墙的 (col, row) 不是一个坐标系。
   // 放在墙之后：`nodes` 的顺序仍然完全确定（甲板顺序由 `level.deck` 定，parseLevel 已定序）。
-  const deckCells: Cell[] = level.deck.map(asCell);
+  //
+  // `decks: false` 时整块跳过 —— 于是"只在墙面内"的图连甲板**节点**都没有，
+  // `has(甲板格)` 为 false、路径也不会从甲板穿过去（见 GraphOptions.decks）。
+  const decksOn = opts.decks !== false;
+  const deckCells: Cell[] = decksOn ? level.deck.map(asCell) : [];
   for (const cell of deckCells) {
     const key = cellKey(cell);
     if (adjacency.has(key)) continue; // 已去过重，这里再兜一层，避免重复节点
@@ -227,7 +242,7 @@ export function buildGraph(level: Level, opts: GraphOptions = {}): Graph {
 
   // 甲板内部的 walk：岛台是 4×4 的砖面，站在上面能横向挪。
   // **只连甲板↔甲板** —— 甲板格不与墙的 col±1 相邻（不同坐标系），跨过去要走接头。
-  if (horizontalOn) {
+  if (horizontalOn && decksOn) {
     for (const cell of deckCells) {
       const out = adjacency.get(cellKey(cell));
       if (out === undefined) continue;
@@ -242,7 +257,7 @@ export function buildGraph(level: Level, opts: GraphOptions = {}): Graph {
   // 小道接缝：甲板 ↔ 墙（T10）。**显式声明**，不由几何推 —— 理由见 deck.ts 的 `DeckJoint`。
   // 用户已定：这条是 `walk` 边（走上去取宝物），不是 `seam`（seam 专指折角那一次转身）。
   // 两端缺一就不连：接头指向一个不存在的地面，是关卡数据错了，不该悄悄补一条边。
-  if (horizontalOn) {
+  if (horizontalOn && decksOn) {
     for (const joint of level.joints) {
       const deckSide = asCell(joint.deck);
       const a = adjacency.get(cellKey(deckSide));
