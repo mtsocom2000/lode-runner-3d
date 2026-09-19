@@ -74,6 +74,23 @@ export const RESPAWN_TICKS = 30;
  */
 export const ENEMY_DOWN_TICKS = 60;
 
+/**
+ * 敌人走一格要几个 tick（T12 手感调整）。
+ *
+ * 起点是"与玩家同速"（`MOVE_TICKS` = 8），但那在 7×10 的 L1 里**压迫感过强**：无人机从不思考、
+ * 而玩家要读地形，同速等于"一停下来就被追上"。用户试玩原话：
+ * "机器人速度快了点，适当减慢不然没法玩了。"
+ *
+ * 取 **12**（慢 1.5 倍：5 格/秒 vs 玩家的 7.5）：玩家拉得开距离，但它仍追得上 ——
+ * 只是要求你**一直在动**，而不是可以站住想一想。这是留给试玩的旋钮：还嫌紧就往上调。
+ */
+export const DRONE_MOVE_TICKS = 12;
+
+/** 这个实体走一格要几个 tick。玩家与敌人**不同速**，理由见 `DRONE_MOVE_TICKS`。 */
+function moveTicks(kind: EntityKind): number {
+  return kind === 'drone' ? DRONE_MOVE_TICKS : MOVE_TICKS;
+}
+
 /** 实体种类。T12 加 `drone`、T15 加 `stalker` —— 那时只需在这里加一格并补上它的决策函数。 */
 export type EntityKind = 'player' | 'drone';
 
@@ -479,7 +496,7 @@ function advance(
         mode: result.state.mode,
         // 移动成立才算"朝这边走"：撞墙不更新（否则贴着墙按住会把朝向刷成墙的方向）。
         facing: dir,
-        cooldown: MOVE_TICKS - 1,
+        cooldown: moveTicks(entity.kind) - 1,
       };
 
     case 'fall':
@@ -513,7 +530,7 @@ function settleFall(
     ...entity,
     cell: end.cell,
     mode: landed === null ? entity.mode : landed.mode,
-    cooldown: MOVE_TICKS - 1,
+    cooldown: moveTicks(entity.kind) - 1,
   };
 }
 

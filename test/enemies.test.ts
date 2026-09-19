@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { tick, createSim, replay, wait, ENEMY_DOWN_TICKS, RESPAWN_TICKS } from '../src/core/sim';
+import {
+  tick,
+  createSim,
+  replay,
+  wait,
+  ENEMY_DOWN_TICKS,
+  DRONE_MOVE_TICKS,
+  MOVE_TICKS,
+  RESPAWN_TICKS,
+} from '../src/core/sim';
 import { validateLevel } from '../src/core/level/validate';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 import { cellA, cellB } from './fixtures';
@@ -214,6 +223,30 @@ describe('T12-c：落坑受困 + 踩其头顶的前提', () => {
     const frame = tick(stacked, { move: null, dig: null });
     expect(frame.events.some((e) => e.kind === 'caught')).toBe(false);
     expect(frame.state.lives).toBe(3);
+  });
+});
+
+describe('T12 手感：敌人比玩家慢（用户试玩反馈"机器人速度快了点"）', () => {
+  const SPEED: LevelDef = {
+    id: 'SPEED',
+    name: '速度夹具',
+    fold: 2,
+    tiles: ['XXXX', '....', 'XXXX', '....'],
+    enemies: [{ kind: 'drone', cell: cellB(3, 1) }], // 离玩家远一点，先看它自己走
+  };
+
+  it('同一次移动之后：玩家的冷却 = MOVE_TICKS-1，无人机的 = DRONE_MOVE_TICKS-1', () => {
+    const start = createSim(SPEED, cellA(0, 1));
+    // 玩家往右走一步
+    const afterPlayer = tick(start, { move: 'right', dig: null }).state;
+    expect(afterPlayer.entities[0]?.cooldown).toBe(MOVE_TICKS - 1);
+    // 无人机自己走一步（追击 → 沿最短路径）
+    const afterDrone = tick(start, { move: null, dig: null }).state;
+    expect(afterDrone.entities[1]?.cooldown).toBe(DRONE_MOVE_TICKS - 1);
+  });
+
+  it('敌人确实更慢（否则这条手感结论只是注释）', () => {
+    expect(DRONE_MOVE_TICKS).toBeGreaterThan(MOVE_TICKS);
   });
 });
 
