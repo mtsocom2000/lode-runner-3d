@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -432,13 +432,16 @@ export function createStage(level: Level): Stage {
   }
 
   // ── 两片墙（背板）+ 折痕线 ──
-  put(mat.shell, [-half - 0.5, wallTop / 2, faceCentre], [1, wallTop, faceSpan]);
-  put(mat.shell, [faceCentre, wallTop / 2, -half - 0.5], [faceSpan, wallTop, 1]);
-  put(mat.seam, [-half, wallTop / 2 - 0.5, -half], [0.09, wallTop - 0.8, 0.09]);
+  //
+  // 背板的**内表面** = `-half + INK`：砖块从它往外凸出 `CUBE`（1.0），而砖的内表面正好落在
+  // 甲板砖的面上（见 `metrics.ts` 的 `INK` —— 那个常量同时决定"小道能不能与墙贴合"）。
+  put(mat.shell, [-half + INK, wallTop / 2, faceCentre], [1, wallTop, faceSpan]);
+  put(mat.shell, [faceCentre, wallTop / 2, -half + INK], [faceSpan, wallTop, 1]);
+  put(mat.seam, [-half + INK, wallTop / 2 - 0.5, -half + INK], [0.09, wallTop - 0.8, 0.09]);
 
   // ── 墙面轮廓线：没有这一圈，两片墙会整片隐进背景，"折面贴在墙角"就读不出来了 ──
   {
-    const e = -half + 0.06;
+    const e = -half + INK + 0.06;
     const w = 0.05;
     const z0 = faceCentre - faceSpan / 2;
     const z1 = faceCentre + faceSpan / 2;

@@ -46,18 +46,18 @@ describe('movement：方向表', () => {
  * B 面那条曾经真的红过：`up` 在墙面上是**爬梯子**的语义，而接点分支当时排在梯子检查**之后**，
  * 于是 `blocked:not-ladder` —— 修法是把接点循环提到梯子门之前（见 `movement.ts` 里那段说明）。
  *
- * 墙面端的位置随后又跟着**半格对齐**（`metrics.ts` 的 `DECK_SHIFT`）挪了半格：接点列取的是
- * "小道砖正对着的那块墙砖"，所以概念关卡是 `A:4` / `B:13`（原先 `A:3` / `B:14` 会让画面与落点差半格）。
+ * 墙面端的位置随后跟着**半格对齐**（`metrics.ts` 的 `DECK_SHIFT`）挪过：接点列取的是
+ * "小道砖正对着的那块墙砖"，概念关卡因此是 `A:3` / `B:14`（`fold = 9`、半格偏移 `+0.5`）。
  */
 describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () => {
   const sim = load(CONCEPT_MINIMAL);
 
-  it('A 面接点：站在 A:4,1 按 right 拐上小道，落到 I:-7,-4', () => {
-    expect(shape(step(sim, at(sim, cellA(4, 1)), 'right'))).toBe('move:stand:I:-7,-4');
+  it('A 面接点：站在 A:3,1 按 right 拐上小道，落到 I:-7,-4', () => {
+    expect(shape(step(sim, at(sim, cellA(3, 1)), 'right'))).toBe('move:stand:I:-7,-4');
   });
 
-  it('B 面接点：站在 B:13,1 按 up 拐上小道，落到 I:-4,-7', () => {
-    expect(shape(step(sim, at(sim, cellB(13, 1)), 'up'))).toBe('move:stand:I:-4,-7');
+  it('B 面接点：站在 B:14,1 按 up 拐上小道，落到 I:-4,-7', () => {
+    expect(shape(step(sim, at(sim, cellB(14, 1)), 'up'))).toBe('move:stand:I:-4,-7');
   });
 });
 
