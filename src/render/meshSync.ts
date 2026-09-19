@@ -55,9 +55,14 @@ const GLOW_RENDER_ORDER = 998;
  * 2026-09-19 放大过一轮（`0.5 / 0.13` → `0.8 / 0.22`）：用户要拿它来判断"哪边是前、哪边是后"
  * （挖改成了 `Q` 后挖 / `R` 前挖），原来那尺寸在默认视距下几乎是地面上的一个点。
  */
-const ARROW_LENGTH = 0.8;
-const ARROW_WIDTH = 0.22;
+const ARROW_LENGTH = 0.7;
+const ARROW_WIDTH = 0.24;
 const ARROW_FLAT = 0.3;
+/**
+ * 箭头中心离身体中心的距离。身体半宽是 `PLAYER_SIZE / 2`，所以要 > 它，记号才不被身体压住。
+ * 取 0.45：箭头整体落在身体前缘之外，尖端约在"正前方大半格"处 —— 指向的就是下一步要去的格子。
+ */
+const ARROW_OFFSET = 0.45;
 
 export interface Syncer {
   readonly group: THREE.Group;
@@ -163,8 +168,10 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
    */
   const arrowGeo = new THREE.ConeGeometry(ARROW_WIDTH, ARROW_LENGTH, 3);
   arrowGeo.rotateX(Math.PI / 2);
-  // 往前挪一点：尖端从身体前缘探出来（不然整个记号躺在身体底下，看不见）。
-  arrowGeo.translate(0, 0, 0.1);
+  // 往前挪出身体：**整个记号都在身体前缘之外**（尖端离身体中心 `ARROW_OFFSET + ARROW_LENGTH/2`）。
+  // 第一版只挪 0.1，而身体本身半宽就有 0.4 —— 箭头基本躺在身体底下，只在边上探出一个尖，
+  // 用户的原话是"需要一个指示器，指示当前玩家角色的方向"。
+  arrowGeo.translate(0, 0, ARROW_OFFSET);
   const arrowMat: Readonly<Record<EntityKind, THREE.MeshBasicMaterial>> = {
     player: new THREE.MeshBasicMaterial({ color: PALETTE.player }),
     drone: new THREE.MeshBasicMaterial({ color: PALETTE.drone }),

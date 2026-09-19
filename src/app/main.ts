@@ -3,7 +3,7 @@ import { L2, L2_SPAWN } from '../core/level/levels/l2';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel } from '../core/world/tiles';
-import { surfaceOf, type Surface } from '../core/types';
+import { surfaceOf, cellKey, type Surface } from '../core/types';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
@@ -117,6 +117,44 @@ function actedOn(frame: { readonly events: readonly SimEvent[] }): boolean {
 const levelIssues = validateLevel(L2, L2_SPAWN);
 
 const hud = createHud(host);
+
+/**
+ * 运行时日志（用户 2026-09-19 要的）：**非预期的东西必须看得见**。
+ *
+ * 只往 `console` 里报等于没报 —— 用户看到的是一个"行为有点怪但还在跑"的画面，没有任何线索。
+ * 这里先接两条全局钩子：未捕获的异常、未处理的 Promise。它们平时不出现，一旦出现就是真问题。
+ */
+window.addEventListener('error', (e) => {
+  hud.log(`✗ 异常：${e.message} @ ${e.filename}:${e.lineno}`);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  hud.log(`✗ 未处理的 Promise：${String(e.reason)}`);
+});
+hud.log(`构建 ${__BUILD_STAMP__}`);
+hud.log(`关卡 ${L2.id}（${level.cols}×${level.rows}, fold=${level.fold}）`);
+if (levelIssues.length === 0) hud.log('关卡校验：通过');
+else for (const issue of levelIssues) hud.log(`✗ 关卡校验 ${issue.rule}：${issue.detail}`);
+
+/**
+ * 值得进日志的 sim 事件 —— 挑的都是"玩法上出了事"的那种。
+ *
+ * **不记** `entered` / `fell` / `filled`：那些每走一步都有，会把面板刷屏、把真问题淹掉。
+ * 记的每一种都能直接对上用户的一句报障："走过那几块砖的时候它把我埋了" →
+ * `t123 buried A:7,1`。
+ */
+const LOGGED_EVENTS: ReadonlySet<SimEvent['kind']> = new Set([
+  'dug',
+  'drowned',
+  'caught',
+  'buried',
+  'downed',
+  'respawned',
+  'returned',
+  'collected',
+  'opened',
+  'won',
+  'gameover',
+]);
 
 /**
  * 相机的屏幕右轴 / 上轴（世界向量）。方向提示用它把"世界位移"投到屏幕上。
@@ -401,6 +439,10 @@ function loop(now: number): void {
     acc -= STEP_MS;
     if (actedOn(frame)) input.consume();
     for (const event of frame.events) {
+      // 运行时日志：带 tick 与格号 —— 用户报"走过那几块砖的时候出的问题"时，这就是那句可直接对上话。
+      if (LOGGED_EVENTS.has(event.kind)) {
+        hud.log(`t${frame.state.tick} ${event.kind}${'cell' in event ? ` ${cellKey(event.cell)}` : ''}`);
+      }
       if (event.kind === 'respawned' || event.kind === 'returned') {
         // `returned` = 敌人被重置回家（玩家死亡时的追捕重置）。它同样是**瞬移** ——
         // 不列进来的话，敌人会从被杀的地方滑过整张地图回家（就是那个"飞"的坑）。

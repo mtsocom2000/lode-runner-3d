@@ -42,7 +42,26 @@ export interface Hud {
    * 事件流里早就有这些钩子（`sim.ts` 的 `SimEvent`），这里只是把它们显示出来。
    */
   flash(text: string | null): void;
+  /**
+   * 运行时日志（用户 2026-09-19 要的）：一行一行往下加，只留最近 `LOG_LINES` 行。
+   *
+   * 存在的理由：**非预期的错误必须看得见**。只往 `console` 里报，等于没报 —— 而用户看到的是
+   * 一个"行为有点怪但还在跑"的画面，没有任何线索。所以它和 HUD 面板一样是屏幕上的一块。
+   *
+   * 记什么由调用方决定（`main.ts`）：JS 异常、未处理的 Promise、关卡校验问题、
+   * 以及 sim 事件里值得注意的那几种。
+   */
+  log(text: string): void;
 }
+
+/** 日志面板保留的行数。多了会盖住画面；少了不够查。 */
+const LOG_LINES = 7;
+
+/**
+ * 主面板的最大宽度（px）。用户 2026-09-19 报"太宽了、挡场景" —— 那几行教学提示很长，
+ * 不限宽时面板会横着铺出去。320 是"最长那行换行后仍读得顺"与"别侵占画面"之间取的。
+ */
+const PANEL_WIDTH = 320;
 
 /** 数字色值 → DOM 能用的 `#rrggbb`。`PALETTE` 存的是 0xRRGGBB，DOM 要字符串。 */
 function hex(color: number): string {
@@ -64,12 +83,18 @@ export function createHud(host: HTMLElement): Hud {
     'left:14px',
     'z-index:2',
     'pointer-events:none',
-    'padding:8px 12px',
+    'padding:7px 10px',
     // 2px 而不是 8px：参照图的语汇是平涂 CAD，没有大圆角。
     'border-radius:2px',
-    'font-size:12px',
-    'line-height:1.65',
+    'font-size:11.5px',
+    'line-height:1.6',
     'letter-spacing:.02em',
+    // **限宽**（用户 2026-09-19："面板太宽了，挡了一点场景"）。
+    // 那几行教学提示很长，没有宽度约束时面板会横着铺到屏幕中间去。
+    // 限宽 + 自动换行 = 面板站在左边一条，挡住的东西少得多。
+    `max-width:${PANEL_WIDTH}px`,
+    'white-space:normal',
+    'overflow-wrap:anywhere',
     `color:${hex(PALETTE.hard)}`,
     `background:${hex(PALETTE.bg)}${PANEL_ALPHA}`,
     `border:1px solid ${hex(PALETTE.edge)}`,
@@ -100,6 +125,34 @@ export function createHud(host: HTMLElement): Hud {
   ].join(';');
   host.appendChild(banner);
 
+  // 运行时日志面板：贴在左下角（主面板在左上）。等宽字体 —— 里面会出现键名、坐标、事件名，
+  // 对齐了才好扫。默认**空的也占位**吗？不：没有日志时它整块 `display:none`，对画面零影响。
+  const logEl = document.createElement('div');
+  logEl.style.cssText = [
+    'position:fixed',
+    'bottom:12px',
+    'left:14px',
+    'z-index:2',
+    'pointer-events:none',
+    'padding:6px 9px',
+    'border-radius:2px',
+    'font-size:11px',
+    'line-height:1.5',
+    'letter-spacing:.01em',
+    `max-width:${PANEL_WIDTH}px`,
+    'white-space:pre-wrap',
+    'overflow-wrap:anywhere',
+    `color:${hex(PALETTE.hard)}`,
+    `background:${hex(PALETTE.bg)}${PANEL_ALPHA}`,
+    `border:1px solid ${hex(PALETTE.edge)}`,
+    'font-family:ui-monospace,SFMono-Regular,Consolas,monospace',
+    'display:none',
+  ].join(';');
+  host.appendChild(logEl);
+
+  /** 最近 `LOG_LINES` 行。留着的理由：面板只画这么高，旧的滚掉才看得见新的。 */
+  let logLines: readonly string[] = [];
+
   return {
     set(lines: readonly string[]): void {
       el.replaceChildren();
@@ -116,6 +169,15 @@ export function createHud(host: HTMLElement): Hud {
       }
       banner.textContent = text;
       banner.style.display = 'block';
+    },
+    log(text: string): void {
+      logLines = [...logLines, text].slice(-LOG_LINES);
+      logEl.replaceChildren();
+      logLines.forEach((line, i) => {
+        if (i > 0) logEl.appendChild(document.createElement('br'));
+        logEl.appendChild(document.createTextNode(line));
+      });
+      logEl.style.display = 'block';
     },
   };
 }
