@@ -226,6 +226,42 @@ describe('T12-c：落坑受困 + 踩其头顶的前提', () => {
   });
 });
 
+describe('T12-e：挖坑反制（用户报的 bug）—— 守卫会**走进**玩家挖的坑', () => {
+  /** `r0` 硬底 / `r1` 可挖砖 / `r2` 行走行。`r1` 中间那格**已经是坑**（`X.XXXX`）= "玩家刚挖开它"。 */
+  const TIERED: LevelDef = {
+    id: 'TIERED',
+    name: '有底的坑夹具',
+    fold: 3,
+    tiles: ['======', 'X.XXXX', '......'],
+    enemies: [{ kind: 'drone', cell: cellA(2, 2) }],
+  };
+  const DRONE = 1;
+
+  /** 那个坑"正在回填" —— 缺了这条记录就只是个洞，不是坑（T11）。 */
+  function withBackfill(base: ReturnType<typeof createSim>) {
+    const index = 1 * (TIERED.fold * 2) + 1; // row * cols + col
+    return { ...base, fills: [{ index, remaining: 120 }] };
+  }
+
+  it('它**不再绕开**：下一步就走进坑、掉进去、落在坑底（= 受困的前一步）', () => {
+    const start = withBackfill(createSim(TIERED, cellA(0, 2)));
+    const frame = tick(start, { move: null, dig: null });
+    const drone = frame.state.entities[DRONE];
+    // 修复前它拿当前地形建图 → 坑不是节点 → 精确绕开（留在 A:2,2 上巡逻）。
+    expect(drone?.cell).toEqual(cellA(1, 1));
+    expect(drone?.down).toBe(0); // 有底 → 不是溺水
+    expect(frame.events.some((e) => e.kind === 'fell')).toBe(true);
+  });
+
+  it('掉进去之后就走不动了 —— 接上 T12-c 的"落坑受困"，回填会把它埋掉', () => {
+    let state = tick(withBackfill(createSim(TIERED, cellA(0, 2))), { move: null, dig: null }).state;
+    expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 1));
+    // 困在坑里：连走 20 tick 一步没动（不追人、也不自己爬出来）
+    state = replay(state, wait(20))[19]?.state ?? state;
+    expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 1));
+  });
+});
+
 describe('T12 手感：敌人比玩家慢（用户试玩反馈"机器人速度快了点"）', () => {
   const SPEED: LevelDef = {
     id: 'SPEED',

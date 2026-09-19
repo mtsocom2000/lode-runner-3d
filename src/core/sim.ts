@@ -437,6 +437,8 @@ function decide(entity: Entity, intents: Intents, level: Level, ctx: AdvanceCont
     at: { cell: entity.cell, mode: entity.mode },
     facing: entity.facing,
     playerCell: ctx.playerCell,
+    // 坑：追击**规划**用"地形还完整"的图（守卫会掉进坑里 —— 见 `ai/drone.ts`）。
+    pits: ctx.pits,
   });
 }
 

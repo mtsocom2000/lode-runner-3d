@@ -144,6 +144,24 @@ export interface Level {
   readonly treasures: readonly DeckCell[];
 }
 
+/**
+ * 换一份网格后的 `Level` 视图。
+ *
+ * `at` 是**闭包**（捕获的是原 `grid`），所以换网格必须同时换 `at`，否则新网格会被旧 `at` 查回来。
+ * 两个消费者：`validate` 要建"闸门已开"的图；`ai/drone` 要用"**地形还完整**"的图规划追击
+ * （把正在回填的坑当成还是砖 —— 见 `ai/drone.ts` 里"守卫为什么应该掉进坑里"）。
+ */
+export function withGrid(level: Level, grid: readonly TileKind[]): Level {
+  return {
+    ...level,
+    grid,
+    at: (col, row) =>
+      col < 0 || col >= level.cols || row < 0 || row >= level.rows
+        ? undefined
+        : grid[row * level.cols + col],
+  };
+}
+
 export type ParseResult =
   | { readonly ok: true; readonly level: Level }
   | { readonly ok: false; readonly errors: readonly LoadError[] };

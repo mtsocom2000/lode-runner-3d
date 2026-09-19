@@ -3,7 +3,7 @@ import { openGates } from '../rules/goals';
 import { walkNeighbours, walkReachable } from '../rules/reach';
 import { asCell, deckKey } from '../world/deck';
 import { buildGraph, isLadder, isStandable } from '../world/graph';
-import { parseLevel, type Level, type LevelDef, type LoadError, type TileKind } from '../world/tiles';
+import { parseLevel, withGrid, type Level, type LevelDef, type LoadError, type TileKind } from '../world/tiles';
 
 /**
  * 关卡语义校验（T8）。
@@ -243,19 +243,6 @@ function danglingJoints(level: Level): readonly LevelIssue[] {
   }
 
   return issues;
-}
-
-/**
- * 换一份网格后的 `Level` 视图。`at` 是**闭包**（捕获的是原 `grid`），所以换网格必须同时换 `at`，
- * 否则新网格会被旧 `at` 查回来。`exitGating` 要建"闸门已开"的图，正需要这个。
- */
-function withGrid(level: Level, grid: readonly TileKind[]): Level {
-  return {
-    ...level,
-    grid,
-    at: (col, row) =>
-      col < 0 || col >= level.cols || row < 0 || row >= level.rows ? undefined : grid[row * level.cols + col],
-  };
 }
 
 /**

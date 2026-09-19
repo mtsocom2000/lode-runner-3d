@@ -1,7 +1,7 @@
 import { DIRS, step, type Dir, type MoveState } from '../rules/movement';
-import type { Cell } from '../types';
+import { parseCell, type Cell } from '../types';
 import { buildGraph, findPath } from '../world/graph';
-import type { Level } from '../world/tiles';
+import { withGrid, type Level, type TileKind } from '../world/tiles';
 
 /**
  * 巡逻无人机（T12-b）。**两段式** —— 用户裁定的原话是"巡逻段 + 追击段（= 原版守卫）"。
@@ -62,6 +62,11 @@ export interface DroneInput {
   readonly facing: Dir;
   /** 玩家本 tick 开始时在哪；没有玩家（终局）是 `null`。 */
   readonly playerCell: Cell | null;
+  /**
+   * 正在回填的坑（`cellKey`，T11）。**只影响"怎么规划"，不影响"走到会怎样"** ——
+   * 见 `chaseDir` 里那段"守卫为什么应该掉进坑里"。省略 = 没有坑。
+   */
+  readonly pits?: ReadonlySet<string>;
 }
 
 /** 本 tick 该朝哪走；`null` = 不动（到不了玩家，而且四个方向都走不通）。 */
@@ -69,13 +74,45 @@ export function decideDrone(input: DroneInput): Dir | null {
   return chaseDir(input) ?? patrolDir(input.level, input.at, input.facing);
 }
 
-/** 追击段：玩家在墙面内可达 → 最短路径的第一步。 */
+/**
+ * "**地形还完整**"的网格：把正在回填的坑当成还是可挖砖。没有坑时原样返回（不做无谓的拷贝）。
+ *
+ * 为什么不直接拿当前地形去规划：那样图里没有坑那一格，`findPath` 会**精确地绕开它** ——
+ * 玩家辛苦挖的坑对守卫毫无作用（用户报的原话："机器人似乎检测到了这个坑，就不会沿着会掉进
+ * 坑里的路线移动了，这样的话挖坑就失去了意义"）。
+ */
+function plannedGrid(input: DroneInput): readonly TileKind[] {
+  const pits = input.pits;
+  if (pits === undefined || pits.size === 0) return input.level.grid;
+  const grid = [...input.level.grid];
+  for (const key of pits) {
+    const cell = parseCell(key);
+    if (cell === null) continue;
+    const index = cell.row * input.level.cols + cell.col;
+    if (index >= 0 && index < grid.length) grid[index] = 'dig';
+  }
+  return grid;
+}
+
+/**
+ * 追击段：玩家在墙面内可达 → 沿**记忆里的地形**走最短路径的第一步。
+ *
+ * ## 为什么守卫会（也应该）掉进坑里
+ *
+ * 守卫是照着"地形还完整"的图规划路线的（`plannedGrid`），但**脚下是当前地形** ——
+ * 于是它一头走进玩家刚挖的缺口、掉下去，正好落进"**落坑受困 → 土回填 → 活埋**"那条链。
+ * 这就是原版守卫的行为：它们不躲洞，它们掉进去；玩家挖坑反制才有意义。
+ * （用当前地形规划会绕开坑，整条玩法失效。）
+ *
+ * 注意"计划"与"物理"的分工：这里只决定**朝哪走**；踩空会怎样由 `sim.advance` 里的 `step`
+ * 判定（那才是唯一的地形真相）。
+ */
 function chaseDir(input: DroneInput): Dir | null {
   const { level, at, playerCell } = input;
   if (playerCell === null) return null;
 
   // `decks: false` —— 见文件头"为什么只在墙面内要写成图的开关"。
-  const graph = buildGraph(level, { decks: false });
+  const graph = buildGraph(withGrid(level, plannedGrid(input)), { decks: false });
   if (!graph.has(at.cell) || !graph.has(playerCell)) return null;
 
   const path = findPath(graph, at.cell, playerCell);

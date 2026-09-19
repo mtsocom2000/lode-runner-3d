@@ -5,7 +5,7 @@ import { stateAt, type MoveState } from '../src/core/rules/movement';
 import { buildGraph } from '../src/core/world/graph';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import { cellA, cellB } from './fixtures';
-import type { Cell } from '../src/core/types';
+import { cellKey, type Cell } from '../src/core/types';
 
 /**
  * T12-b：巡逻无人机 = **巡逻段 + 追击段**（用户裁定的"两段式"，= 原版守卫）。
@@ -120,5 +120,48 @@ describe('T12-b 只在墙面内（用户裁定）：玩家上岛台就追不到'
     const deckCell: Cell = { face: 'I', col: -3, row: -3 };
     expect(buildGraph(level, { decks: false }).has(deckCell)).toBe(false);
     expect(buildGraph(level).has(deckCell)).toBe(true);
+  });
+});
+
+/**
+ * T12-e：**挖坑反制**。用户试玩原话：
+ *
+ * > 机器人会像玩家角色移动，但是如果玩家角色在面前挖了一个坑之后，机器人似乎检测到了这个坑，
+ * > 就不会沿着会掉进坑里的路线移动了，这样的话挖坑就失去了意义
+ *
+ * 这是一个真 bug，而且是"判据用错了地方"：追击拿**当前地形**建图，坑那一格不是节点，
+ * 于是 `findPath` 精确地绕开它。原版守卫是照着**记忆里的地形**走的 —— 它不会躲洞，它会掉进去。
+ * 修法就是本文件 `plannedGrid`：规划时把正在回填的坑当成还是砖。
+ */
+describe('T12-e：追击按"地形还完整"规划 → 守卫会走进玩家挖的坑', () => {
+  /** `r0` 硬底 / `r1` 可挖砖 / `r2` 行走行：挖掉 `r1` 的砖，走在 `r2` 那一格就会**掉进有底的坑**。
+   *  `r1` 中间那格（`X.XXXX`）**已经是坑** —— 等价于"玩家刚把它挖开"，这才测得出规划口径的差别
+   *  （地形里没有坑、只有 `pits` 说有，是自相矛盾的夹具）。 */
+  const TIERED: LevelDef = {
+    id: 'TIERED',
+    name: '有底的坑夹具',
+    fold: 3,
+    tiles: ['======', 'X.XXXX', '......'],
+  };
+  const level = load(TIERED);
+  /** `A:1,1` 正在回填 —— 无人机在 `A:2,2`，玩家在 `A:0,2`。 */
+  const pits = new Set([cellKey({ face: 'A', col: 1, row: 1 })]);
+
+  it('对照：不提"有坑"→ 坑不是节点 → 精确绕开（这正是 bug 本身）', () => {
+    const at = standOn(level, cellA(2, 2));
+    // `A:1,2`（坑上方那格）不可站立 → 图里没有 → 追击放弃 → 落回巡逻（朝 right 直走）
+    expect(decideDrone({ level, at, facing: 'right', playerCell: cellA(0, 2) })).toBe('right');
+  });
+
+  it('按"地形还完整"规划 → 朝坑走一步（玩家挖的坑这才成为陷阱）', () => {
+    const at = standOn(level, cellA(2, 2));
+    expect(decideDrone({ level, at, facing: 'right', playerCell: cellA(0, 2), pits })).toBe('left');
+  });
+
+  it('坑修好（不在 `pits` 里）时两种口径一致：不该因为这条修法而改变正常追击', () => {
+    const at = standOn(level, cellA(2, 2));
+    expect(decideDrone({ level, at, facing: 'right', playerCell: cellA(0, 2), pits: new Set() })).toBe(
+      'right',
+    );
   });
 });
