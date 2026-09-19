@@ -121,7 +121,7 @@ describe('T16 · L2 织网：落水缺口上的连杆（用户裁定的位置，
     expect(t.end.cell).toEqual(cellA(6, 1));
   });
 
-  it('吊在杆上按 `s` 松手 → **掉进水里**（危险还在，只是不再是"必掉"）', () => {
+  it('吊在杆上按 `X`（世界向下）松手 → **掉进水里**（危险还在，只是不再是"必掉"）', () => {
     const released = step(level, { cell: cellA(5, 1), mode: 'hang' }, 'down');
     expect(released.kind).toBe('fall');
     if (released.kind !== 'fall') throw new Error('松手必须是坠落');

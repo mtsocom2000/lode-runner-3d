@@ -75,4 +75,14 @@ describe('hints：屏幕方向（用户反馈"WASD 在拐角与岛台上完全�
     expect(get(hints, 'left').glyph).toBe('×');
     expect(formatDirHints(hints)).not.toContain('⚠');
   });
+
+  it('墙面那行**不列** `w`/`s`（那里它们不是移动键，按了不走）', () => {
+    // 用户 2026-09-19 的裁定：墙上的上下是爬梯，而爬梯归 `Z`/`X` —— 见 `moveAllowed`。
+    const line = formatDirHints(hintsAt('A', 5, 1), 'wall');
+    expect(line).not.toContain('w=');
+    expect(line).not.toContain('s=');
+    expect(line).toContain('a=');
+    expect(line).toContain('d=');
+    expect(line).toContain('Z/X');
+  });
 });

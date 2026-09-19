@@ -1,5 +1,5 @@
 import { DIRS, type Dir, type MoveMode } from '../core/rules/movement';
-import type { Cell } from '../core/types';
+import type { Cell, Surface } from '../core/types';
 import type { Level } from '../core/world/tiles';
 import { NEGLIGIBLE, stepDelta } from './metrics';
 import type { Vec3 } from './tween';
@@ -80,9 +80,13 @@ export function dirHints(
 }
 
 /** 一行给 HUD 的提示：方位 + 键位，末尾单列"会落水"的键。 */
-export function formatDirHints(hints: readonly DirHint[]): string {
-  const parts = hints.map((h) => `${KEY[h.dir]}=${h.glyph}`);
-  const danger = hints.filter((h) => h.danger).map((h) => KEY[h.dir]);
+export function formatDirHints(hints: readonly DirHint[], surface: Surface = 'deck'): string {
+  // 墙面是竖直面 —— 屏幕上没有斜向，`w`/`s` 在那里**不是移动键**（上下归 `Z`/`X`，
+  // 用户 2026-09-19 的裁定）。既然按了不走，就别把它列进"按下的键实际会往哪走"。
+  const live = surface === 'deck' ? hints : hints.filter((h) => h.dir !== 'up' && h.dir !== 'down');
+  const parts = live.map((h) => `${KEY[h.dir]}=${h.glyph}`);
+  const danger = live.filter((h) => h.danger).map((h) => KEY[h.dir]);
   const tail = danger.length === 0 ? '' : ` ｜ ⚠ 会落水：${danger.join('/')}`;
-  return `屏幕方向（按下的键实际会往哪走）：${parts.join('  ')}${tail}`;
+  const lift = surface === 'deck' ? 'Z/X 上下一层' : 'Z/X 上下爬梯（吊杆时 X = 松手）';
+  return `屏幕方向（按下的键实际会往哪走）：${parts.join('  ')} ｜ ${lift}${tail}`;
 }

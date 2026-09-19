@@ -3,6 +3,7 @@ import { L2, L2_SPAWN } from '../core/level/levels/l2';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel } from '../core/world/tiles';
+import { surfaceOf } from '../core/types';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
@@ -140,13 +141,18 @@ function refreshHud(): void {
     // T13：目标状态。这两个数是玩家做决策要看的 —— "还剩几块"决定还有多远，
     // 闸门开没开决定现在能不能去出口。**刻意不显示宝物在哪**：那是玩家该自己找的。
     `宝物 ${state.treasures.length === 0 ? '已集齐' : `还剩 ${state.treasures.length} 块`} ｜ 出口闸门 ${state.gatesOpen ? '已开' : '封着（集齐才开）'}`,
-    '方向键 / WASD 移动 ｜ Z 上 / X 下（爬梯、上塔） ｜ Q 左挖 / E 右挖 ｜ R 重开本局',
+    '方向键 / WASD 面内移动（墙上只有 a/d） ｜ Z 上 / X 下（爬梯、上塔、松手） ｜ Q 左挖 / E 右挖 ｜ R 重开本局',
     // 用户反复反馈"WASD 在拐角与岛台上完全不准"。**不换映射** —— 实测在这个相机下
     // 无解（甲板是水平面、方位角又是 45°，两个轴在屏幕上都投成 (±0.7,∓0.3)）；
     // 能做的是把每个键实际会往屏幕哪边走如实报出来。推导见 render/hints.ts。
     ...(player === undefined
       ? []
-      : [formatDirHints(dirHints(level, player.cell, player.mode, screenAxes(), bridgesOf(state)))]),
+      : [
+          formatDirHints(
+            dirHints(level, player.cell, player.mode, screenAxes(), bridgesOf(state)),
+            surfaceOf(player.cell),
+          ),
+        ]),
     // 教学提示（T14）：来自**关卡数据**（`LevelDef.hints`），不写死在 app 里 ——
     // 换一关就换一套（写死会变成一串 `if (levelId === …)`，那是把数据藏进代码）。
     // 原先那两行写死的"挖开的地板 4 秒后…""取到宝物后闸门变梯子"已并入 L1 的 hints。
@@ -371,7 +377,10 @@ function loop(now: number): void {
   // 玩家是谁 —— 死亡提示只该为**玩家**亮。见下面那段"必须看是谁"。
   const playerId = state.entities.find((e) => e.kind === 'player')?.id;
   while (acc >= STEP_MS) {
-    const intents = input.intents();
+    // 输入的含义按**玩家此刻站在哪种面**上分（墙面上 `w`/`s` 没有走法）。每 tick 重取，
+    // 因为跨接头 / 跨折痕的那一步会换面。`surfaceOf` 是"我在哪种面上"的唯一出处。
+    const walker = state.entities.find((e) => e.kind === 'player');
+    const intents = input.intents(walker === undefined ? 'wall' : surfaceOf(walker.cell));
     const frame = tick(state, intents);
     state = frame.state;
     acc -= STEP_MS;

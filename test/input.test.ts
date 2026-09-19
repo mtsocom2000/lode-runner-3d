@@ -2,12 +2,14 @@ import {
   NO_KEYS,
   REPEAT_DELAY_TICKS,
   consumed,
+  createInput,
   digIntent,
   digOfKey,
   digPress,
   digRelease,
   dirOfKey,
   holdBroken,
+  moveAllowed,
   moveIntent,
   press,
   release,
@@ -56,6 +58,22 @@ function tickN(state: KeyState, n: number): KeyState {
   return out;
 }
 
+/**
+ * 一枚**假的键盘**：`createInput` 只用到 `addEventListener` / `removeEventListener`，
+ * 于是可以把事件直接喂进去测"按键真的发出来了什么"（不用起 DOM）。
+ */
+function keyboard(): { target: Window; send: (type: 'keydown' | 'keyup', key: string) => void } {
+  const handlers = new Map<string, (e: unknown) => void>();
+  const target = {
+    addEventListener: (type: string, fn: (e: unknown) => void) => handlers.set(type, fn),
+    removeEventListener: (type: string) => handlers.delete(type),
+  } as unknown as Window;
+  return {
+    target,
+    send: (type, key) => handlers.get(type)?.({ key, preventDefault: () => undefined }),
+  };
+}
+
 describe('input：按键 → 方向', () => {
   it('方向键与 WASD 都认，且大小写不敏感', () => {
     expect(dirOfKey('ArrowLeft')).toBe('left');
@@ -72,6 +90,54 @@ describe('input：按键 → 方向', () => {
     for (const key of [' ', 'Enter', 'Shift', 'q', '1']) {
       expect(dirOfKey(key)).toBeNull();
     }
+  });
+});
+
+/**
+ * 用户 2026-09-19 的裁定：**`w`/`s` 在墙面上不是移动键**（墙上的上下是爬梯，归 `Z`/`X`）。
+ *
+ * 这条钉两层：①纯判据 `moveAllowed`；②接到**真的键盘事件**上跑一遍 ——
+ * 因为"按键怎么发出来"和"走法合不合法"是两件事，只有后者被 `movement.step` 管着。
+ */
+describe('input：键位含义按面分（用户裁定：墙上 w/s 不走）', () => {
+  it('`up`/`down` 在甲板上可用、在墙面上没有；`left`/`right` 两面都在', () => {
+    expect(moveAllowed('up', 'deck')).toBe(true);
+    expect(moveAllowed('down', 'deck')).toBe(true);
+    expect(moveAllowed('up', 'wall')).toBe(false);
+    expect(moveAllowed('down', 'wall')).toBe(false);
+    for (const dir of ['left', 'right'] as const) {
+      expect(moveAllowed(dir, 'wall')).toBe(true);
+      expect(moveAllowed(dir, 'deck')).toBe(true);
+    }
+  });
+
+  it('真的按 `w`：甲板上给出 `up`，墙面上给 null', () => {
+    const { target, send } = keyboard();
+    const input = createInput(target);
+    send('keydown', 'w');
+
+    expect(input.intents('deck').move).toBe('up');
+    expect(input.intents('wall').move).toBeNull();
+    // 还**按着不放**：于是回到甲板时这个键重新有含义（"按住"就是按住）。
+    expect(input.intents('deck').move).toBe('up');
+  });
+
+  it('在墙上**轻点** `w`：这一下被作废 —— 之后走上甲板不会自己动一格', () => {
+    const { target, send } = keyboard();
+    const input = createInput(target);
+    send('keydown', 'w');
+    send('keyup', 'w');
+
+    expect(input.intents('wall').move).toBeNull(); // 墙面上没有这个走法 → 当没按过
+    expect(input.intents('deck').move).toBeNull(); // 那一下**不欠着**了
+  });
+
+  it('真的按 `a`：两面都给 `left`', () => {
+    const { target, send } = keyboard();
+    const input = createInput(target);
+    send('keydown', 'a');
+    expect(input.intents('wall').move).toBe('left');
+    expect(input.intents('deck').move).toBe('left');
   });
 });
 

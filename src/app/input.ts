@@ -1,5 +1,6 @@
 import type { Dir, Lift } from '../core/rules/movement';
 import { TICK_HZ, type Intents } from '../core/sim';
+import type { Surface } from '../core/types';
 
 /**
  * 键盘 → `Intents`（T7）。
@@ -40,6 +41,17 @@ import { TICK_HZ, type Intents } from '../core/sim';
  * `test/input.test.ts` 拿**真相机**的右轴/上轴把这条性质钉住了：谁要是转了相机或改了折角，
  * 那条测试会立刻失败 —— 那时才需要引入"本地方向系"。计划里 T7 的"过折痕转 90°"指的是
  * 角色的**朝向**（一个目前还没有视觉表现的属性），不是按键映射。
+ *
+ * ## 键位含义**按面分**（用户 2026-09-19 的裁定，`moveAllowed`）
+ *
+ * 上面那条说"同一个方向键在 A/B 两面做同一件事"—— 那是**同一类面**（都是墙）。跨到**另一类面**
+ * （甲板）就不成立了：墙面是竖直的（屏幕上只有 ←→↑↓），甲板是水平的（屏幕上正好是四个斜向）。
+ *
+ * 用户的原话是"我希望去除掉 awsd 的自动转换……禁止 ws 可以上下爬梯子"。落到这里就是一条：
+ * **墙面上的 `w`/`s` 不是移动键** —— 那里的上下是爬梯，归 `Z`/`X`。于是"我要上去"永远只有一个
+ * 答案（`Z`），不会因为在墙上就变成 `w`。（吊杆"松手"同理，现在是 `X`。）
+ *
+ * 判据在 `moveAllowed`；`intents()` 每 tick 收一次"玩家此刻站在哪种面"。
  *
  * ## 纯逻辑与回响分离
  *
@@ -113,6 +125,22 @@ export function digOfKey(key: string): Dir | null {
     default:
       return null;
   }
+}
+
+/**
+ * 这一步该不该由 `WASD` 发出来（用户 2026-09-19 的裁定）。
+ *
+ * **墙面是竖直面**：屏幕上的四个方向正好是 ←→↑↓，其中 ↑/↓ 是**爬梯**。用户裁定爬梯只归
+ * `Z`/`X`（世界上下），于是 `w`/`s` 在墙面上**根本不是移动键** —— 不是"按了被拦下"，
+ * 是这里**没有这个走法**。（顺带一个必然后果：吊在杆上"松手"原来是按 `s`，现在按 `X`。）
+ *
+ * **甲板是水平面**：四个方向都是水平的（屏幕上落成四个斜向）→ 四个键都在。
+ *
+ * 这条**不是**在重复 `movement.step` 的判据：`step` 管的是"这个走法合不合法"（还有 AI、
+ * 脚本、回放在用它），这里管的是"**哪个键**代表这个走法"。两件事，各自一个出处。
+ */
+export function moveAllowed(dir: Dir, surface: Surface): boolean {
+  return surface === 'deck' || (dir !== 'up' && dir !== 'down');
 }
 
 /**
@@ -262,8 +290,13 @@ export function digIntent(state: KeyState): Dir | null {
 }
 
 export interface Input {
-  /** 每个 sim tick 调一次 —— 输入是**电平**，不是边沿。 */
-  intents(): Intents;
+  /**
+   * 每个 sim tick 调一次 —— 输入是**电平**，不是边沿。
+   *
+   * `surface` = 玩家此刻站在哪种面上（`core/types.ts` 的 `surfaceOf` 是唯一出处）：
+   * 墙面上的 `w`/`s` 没有走法可言（见 `moveAllowed`）。
+   */
+  intents(surface: Surface): Intents;
   /** 实体动过一次之后调一次，把锁存的那一下销账。 */
   consume(): void;
   /**
@@ -337,10 +370,20 @@ export function createInput(target: Window = window): Input {
   target.addEventListener('blur', onBlur);
 
   return {
-    intents: (): Intents => {
+    intents: (surface: Surface): Intents => {
       // 先走时钟：一次采样 = 一个 tick，重复延迟按它计。
       keys = ticked(keys);
-      return { move: moveIntent(keys), dig: digIntent(keys), lift: liftIntent(keys) };
+      const dig = digIntent(keys);
+      const lift = liftIntent(keys);
+      let move = moveIntent(keys);
+      if (move !== null && !moveAllowed(move, surface)) {
+        // 这个面上没有这个走法（墙上的 `w`/`s`）。把它当**没按过**、别欠着 ——
+        // 否则在墙上点一下 `w`，等会儿走上甲板会莫名自己动一格。
+        // `held` 不动：真按着不放的人，走上甲板时那个键就重新有含义了。
+        keys = { ...keys, latched: null };
+        move = null;
+      }
+      return { move, dig, lift };
     },
     consume: (): void => {
       keys = consumed(keys);
