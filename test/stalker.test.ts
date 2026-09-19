@@ -63,9 +63,12 @@ describe('T15：可爬崖 —— 玩家躲到岛台上也追得上', () => {
     expect(decideDrone(input)).toBe('left'); // 巡逻：沿 facing 直走（左边是可走的墙格）
   });
 
-  it('攀爬者：同一条输入 → 朝接头走（`right`），因为它的**图里有甲板节点**', () => {
+  it('攀爬者：同一条输入 → 朝接头走（`down`），因为它的**图里有甲板节点**', () => {
     const input = { level, at: stand(onWallNearJoint), facing: 'left' as const, playerCell: onIsland };
-    expect(decideStalker(input)).toBe('right'); // 追击：第一步就上小道
+    // 接头的方向 2026-09-19 从 `right` 改成 `down`：`right` 在那格是**走得通**的走廊走法，
+    // 接头占着它就等于把走廊切断（用户实测到的那一步）。`down` 在那一格堵死（脚下是砖不是梯），
+    // 所以它是"没别的路可走"时的那一步 —— 追击路径的第一步因此变成 `down`。
+    expect(decideStalker(input)).toBe('down'); // 追击：第一步就上小道
   });
 
   it('两个方向确实不同（否则上面两条只是在测同一件事）', () => {

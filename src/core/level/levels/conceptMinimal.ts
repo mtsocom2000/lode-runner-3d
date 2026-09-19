@@ -153,7 +153,7 @@ export const CONCEPT_MINIMAL: LevelDef = {
     { x: -4, z: -6 }, // 面 B 小道（沿 z）
   ],
   joints: [
-    { deck: { x: -7, z: -4 }, wall: { face: 'A', col: 4, row: 1 }, enterDir: 'right' },
+    { deck: { x: -7, z: -4 }, wall: { face: 'A', col: 4, row: 1 }, enterDir: 'down' },
     { deck: { x: -4, z: -7 }, wall: { face: 'B', col: 13, row: 1 }, enterDir: 'down' },
   ],
   /**

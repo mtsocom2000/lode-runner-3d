@@ -1,6 +1,6 @@
 import { halfExtent } from '../src/core/world/fold';
 import { supportOf } from '../src/core/world/graph';
-import { OPPOSITE_DIR } from '../src/core/rules/movement';
+import { DIRS, OPPOSITE_DIR, step } from '../src/core/rules/movement';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
@@ -262,8 +262,15 @@ describe('metrics：跨面的那一步之后，按住的键还有没有意义', 
     const lv = load(CONCEPT_MINIMAL);
     for (const joint of lv.joints) {
       const deckCell: Cell = { face: 'I', col: joint.deck.x, row: joint.deck.z };
-      // "沿小道走来的那个键" = 往外 = `enterDir` 的反向。
-      const outward = OPPOSITE_DIR[joint.enterDir];
+      // "沿小道走来的那个键" = 在**小道自己那侧**求：唯一那个"走到另一格甲板"的方向，取反向。
+      //（2026-09-19 之前这里是 `enterDir` 的反向 —— 那时两者是同一个键；现在 `enterDir` 必须是
+      // "那一格堵住的方向"，与沿小道走的键**无关**了，见 `movement.ts` 的 `jointStep`。）
+      const along = DIRS.filter((d) => {
+        const r = step(lv, { cell: deckCell, mode: 'stand' }, d);
+        return r.kind === 'move' && r.state.cell.face === 'I';
+      });
+      expect(along).toHaveLength(1);
+      const outward = OPPOSITE_DIR[along[0] as (typeof DIRS)[number]];
       const before = stepDelta(lv, deckCell, 'stand', outward);
       const after = stepDelta(lv, joint.wall, 'stand', outward);
       expect(before).not.toBeNull();

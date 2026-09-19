@@ -159,6 +159,27 @@ describe('validate 抓得出指空的甲板接头（T10 步骤⑤）', () => {
     };
     expect(rules(def)).not.toContain('deckJointDangling');
   });
+
+  it('接头用了那一格**走得通**的方向 → `jointNeverEntered`（永远进不去，还会吃掉那条走法）', () => {
+    // `tiles: ['XX','..']` ⇒ `A:0,1` 往右是一步正常的走廊移动。接头只在"网格走不通"时才生效，
+    // 所以这条接头永远进不去；更要紧的是它把 `right` 吃掉了 —— 用户实测到的"走廊在那一格断开"
+    // 正是 A 面接头写成 `right` 造成的（见 `movement.ts` 的 `jointStep`）。
+    const def: LevelDef = {
+      ...wall,
+      deck: [{ x: 0, z: 0 }],
+      joints: [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'right' }],
+    };
+    expect(rules(def)).toContain('jointNeverEntered');
+  });
+
+  it('接头用那一格**堵住**的方向 → 放行（`down`：r0 是实心砖、不是梯）', () => {
+    const def: LevelDef = {
+      ...wall,
+      deck: [{ x: 0, z: 0 }],
+      joints: [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'down' }],
+    };
+    expect(rules(def)).not.toContain('jointNeverEntered');
+  });
 });
 
 describe('甲板行走（movement.ts）', () => {
@@ -172,7 +193,10 @@ describe('甲板行走（movement.ts）', () => {
     { x: 1, z: 0 },
     { x: 2, z: 0 },
   ];
-  const joints: readonly DeckJoint[] = [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'right' }];
+  // `enterDir` 取 `down`：夹具里 `r0` 全是实心砖，所以 `A:0,1` 那一格**往下是堵死的**
+  //（不是梯子）。接头的方向必须是"那一格本来就堵住"的方向 —— 取 `right` 的话走廊能走，
+  // 接头就永远进不去、还会吃掉那条走法（2026-09-19 的真实 bug，见 `movement.ts` 的 `jointStep`）。
+  const joints: readonly DeckJoint[] = [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'down' }];
 
   const parsed = parseLevel({ ...wall, deck: deckCells, joints });
   if (!parsed.ok) throw new Error(`夹具 parseLevel 失败：${JSON.stringify(parsed.errors)}`);
@@ -209,8 +233,14 @@ describe('甲板行走（movement.ts）', () => {
   it('接头是**双向**的：甲板 → 墙、墙 → 甲板都能走', () => {
     // 甲板 → 墙（stepOnDeck 的 ②）
     expect(step(lv, at(deck0), 'left')).toEqual({ kind: 'move', state: { cell: wallEnd, mode: 'stand' } });
-    // 墙 → 甲板：这条曾经缺失，接头在移动层是单向门（能下来、上不去）
-    expect(step(lv, at(wallEnd), 'right')).toEqual({ kind: 'move', state: { cell: deck0, mode: 'stand' } });
+    // 墙 → 甲板：这条曾经缺失，接头在移动层是单向门（能下来、上不去）。
+    // 现在走 `down` —— 那一格往下堵死，所以接头是"没别的路可走"时的那一步。
+    expect(step(lv, at(wallEnd), 'down')).toEqual({ kind: 'move', state: { cell: deck0, mode: 'stand' } });
+    // 而 `right` 照旧是走廊里的普通一步（接头**不抢**它）。
+    expect(step(lv, at(wallEnd), 'right')).toEqual({
+      kind: 'move',
+      state: { cell: { face: 'A', col: 1, row: 1 }, mode: 'stand' },
+    });
   });
 });
 

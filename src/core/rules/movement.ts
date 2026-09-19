@@ -302,7 +302,23 @@ export function stepLift(level: Level, state: MoveState, lift: Lift, opts: StepO
  * 前置条件：`state` 只能由本函数的 `move` 结果、`stateAt`、或 `trail` 产生。
  * 万一传进来一个停不住的格子，按物理处理 —— 直接开始坠落（而不是抛异常）。
  */
+/**
+ * 走一步。纯函数：不改任何东西，只回答"这一步会怎样"。
+ *
+ * 分两层：**先问网格**（`gridStep`），网格走不通才**问接头**（`jointStep`）。
+ * 这个次序就是"接头不许抢走廊"这条规则的**实现** —— 理由见 `jointStep`。
+ */
 export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions = {}): StepResult {
+  const grid = gridStep(level, state, dir, opts);
+  if (grid.kind !== 'blocked') return grid;
+  return jointStep(level, state, dir, opts) ?? grid;
+}
+
+/**
+ * 网格内的那一步（走 / 爬梯 / 坠落 / 甲板内的同层走）。**不认识甲板接头** ——
+ * 分开正是为了让"网格走不通才轮到接头"这条次序能被写下来、也能被校验规则复用。
+ */
+export function gridStep(level: Level, state: MoveState, dir: Dir, opts: StepOptions = {}): StepResult {
   const cell = state.cell;
 
   // 甲板格单独走一条路。**必须放在 `fallTo` 之前**：那个函数内部会 `faceOf` 重造格，
@@ -311,34 +327,6 @@ export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions
 
   if (supportOf(level, cell, opts.bridges) === null) {
     return { kind: 'fall', end: fallTo(level, cell, opts.bridges) };
-  }
-
-  // 甲板接头**优先于**网格邻居，也**优先于下面的上下梯门**（B-1 修）。
-  //
-  // 为什么必须在梯门之前：接头的墙面端可能要用 `up` / `down` 才能拐上小道（B 面接点就是
-  // `enterDir: 'up'`，因为小道朝 +z）。而下面那个门在 stand 态"脚下不是梯就立刻
-  // `return blocked('not-ladder')`" —— 接点端恰好不是梯，于是**永远到不了这段循环**。
-  // 实测量到的就是 `blocked:not-ladder`（见 test/movement.test.ts 的接点两条）。
-  //
-  // 提前是**安全**的：循环首句只为**声明过的接点墙面端**匹配，其余格子一律 `continue`，
-  // 所以对"不是接点端"的格子行为一字不变。
-  //
-  // 另外它也必须**优先于**网格邻居：不加这段的话，接头的墙面端是**单向门** ——
-  // `stepOnDeck` 能把你从小道送回墙上，但你再也上不去（从墙这边按过去只会走到隔壁墙格，
-  // 接头的墙面端两侧通常都有网格邻居）。图里 `buildGraph` 是从接头两端各连一条边的，
-  // 移动层必须同样双向。
-  //
-  // `opts.decks === false` 的行动者（无人机）**不认接头**：它的世界里没有甲板（见 `StepOptions`）。
-  if (opts.decks !== false) {
-    for (const joint of level.joints) {
-      const w = joint.wall;
-      if (w.face !== cell.face || w.col !== cell.col || w.row !== cell.row) continue;
-      if (joint.enterDir !== dir) continue;
-      return {
-        kind: 'move',
-        state: { cell: { face: 'I', col: joint.deck.x, row: joint.deck.z }, mode: 'stand' },
-      };
-    }
   }
 
   if (dir === 'up' || dir === 'down') {
@@ -368,6 +356,42 @@ export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions
 
   if (support === null) return { kind: 'fall', end: fallTo(level, target, opts.bridges) };
   return { kind: 'move', state: { cell: target, mode: support === 'bar' ? 'hang' : 'stand' } };
+}
+
+/**
+ * **甲板接头**：墙面某一格 ↔ 小道的某一格（`LevelDef.joints`）。**网格走不通才算它。**
+ *
+ * ## 为什么排在网格之后（2026-09-19，用户实测之后）
+ *
+ * 上一版把它排在网格**之前**，理由是"接头的墙面端两侧通常都有网格邻居，不加这段就是单向门"。
+ * 那个理由对"上不上得去"是成立的，代价却没人算过：它让接头**抢走一个走廊走法**。
+ *
+ * 用户看到的是"沿走廊按 `d`，走到中间那一格人却拐进水里的小道"。实测 `A:7,1`：
+ * 按 `d` 得到的世界位移是 `(+1,0,0)`（出墙），而沿墙的 `d` 是 `(0,0,-1)` —— 差了 90°；
+ * 更要紧的是**那一格再也到不了 `col 8`**，走廊被接头切断了。
+ *
+ * 排到网格之后，"抢走走廊"就**在结构上不可能发生**：网格能走就走网格，网格堵住才轮到接头。
+ * 配套一条校验规则：**接头的 `enterDir` 必须是那一格本来就堵住的方向**，否则它永远进不去
+ * （`validate.ts` 的 `jointNeverEntered` 会报出来）。B 面那个接头本来就是对的
+ * （`enterDir: 'down'`，那一格脚下是砖不是梯 → 堵），是 A 面写成 `right` 才出的问题。
+ *
+ * `opts.decks === false` 的行动者（无人机）**不认接头**：它的世界里没有甲板（见 `StepOptions`）。
+ */
+function jointStep(level: Level, state: MoveState, dir: Dir, opts: StepOptions): StepResult | null {
+  if (opts.decks === false) return null;
+  const cell = state.cell;
+  if (cell.face === 'I') return null;
+
+  for (const joint of level.joints) {
+    const w = joint.wall;
+    if (w.face !== cell.face || w.col !== cell.col || w.row !== cell.row) continue;
+    if (joint.enterDir !== dir) continue;
+    return {
+      kind: 'move',
+      state: { cell: { face: 'I', col: joint.deck.x, row: joint.deck.z }, mode: 'stand' },
+    };
+  }
+  return null;
 }
 
 /**

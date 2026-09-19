@@ -1,5 +1,6 @@
 import { cellKey, type Cell } from '../types';
 import { openGates } from '../rules/goals';
+import { gridStep } from '../rules/movement';
 import { walkNeighbours, walkReachable } from '../rules/reach';
 import { asCell, deckKey } from '../world/deck';
 import { buildGraph, isBar, isLadder, isSolid, isStandable } from '../world/graph';
@@ -70,7 +71,19 @@ export type RuleId =
    * 而不是"某个脚本碰巧跑通"。两个方向都验：未开时就走得到 = 闸门白设；
    * 开了还到不了 = 这一关永远赢不了。
    */
-  | 'exitGated';
+  | 'exitGated'
+  /**
+   * 接头用了那一格**走得通**的方向 —— 于是它永远进不去（2026-09-19）。
+   *
+   * `movement.step` 现在是"网格走不通才轮到接头"。所以接头的 `enterDir` 必须是那一格
+   * **本来就堵住**的方向。写成走得通的方向，后果有两个，而且都很难查：
+   * ①那条走法会被接头吃掉（用户实测：走廊在那一格断开，`col 7 → col 8` 走不了）；
+   * ②这个接头本身永远进不去。
+   *
+   * 判据直接用 `gridStep` —— 与 `step` 内部**同一个函数**，不在这里重写一遍近似
+   * （重写就等于给"这一步能不能走"造了第二个出处）。
+   */
+  | 'jointNeverEntered';
 
 export interface LevelIssue {
   readonly rule: RuleId;
@@ -186,6 +199,7 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
   // 甲板接头不依赖出生点，所以放在 `spawn` 判断之外：没有出生点也该查得出坏接头。
   // 放在 `unreachable` **之后**：坏接头是"为什么到不了"的原因，先说结论再说原因。
   issues.push(...danglingJoints(level));
+  issues.push(...jointShadowed(level));
 
   return issues;
 }
@@ -245,6 +259,36 @@ function danglingJoints(level: Level): readonly LevelIssue[] {
         at: joint.wall,
       });
     }
+  }
+
+  return issues;
+}
+
+/**
+ * 接头的方向必须是那一格**本来就堵住**的方向（规则⑧，2026-09-19）。
+ *
+ * 判据用 `gridStep` —— 与 `step` 内部同一个函数。**不在这里重写"这一步能不能走"**：
+ * 那样就出现了第二个出处，两份迟早漂开（本仓库的老毛病，见 `rules/reach.ts` 的文件头）。
+ */
+function jointShadowed(level: Level): readonly LevelIssue[] {
+  const declared = new Set(level.deck.map((k) => deckKey(k)));
+  const issues: LevelIssue[] = [];
+
+  for (const joint of level.joints) {
+    // 甲板端不存在的接头由 `deckJointDangling` 报，这里不重复。
+    if (!declared.has(deckKey(joint.deck))) continue;
+
+    const grid = gridStep(level, { cell: joint.wall, mode: 'stand' }, joint.enterDir);
+    if (grid.kind === 'blocked') continue;
+
+    issues.push({
+      rule: 'jointNeverEntered',
+      detail:
+        `接头 ${where(joint.wall)} 声明用 \`${joint.enterDir}\` 上小道，可是那一格这个方向**走得通**` +
+        `（${grid.kind === 'fall' ? '会掉下去' : '是一步正常的移动'}）—— ` +
+        `接头只在网格走不通时才生效，所以它永远进不去，而且会**吃掉那条走法**（走廊会在这一格断开）`,
+      at: joint.wall,
+    });
   }
 
   return issues;

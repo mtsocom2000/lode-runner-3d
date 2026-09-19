@@ -4,6 +4,7 @@ import {
   DIRS,
   OPPOSITE_DIR,
   fallTo,
+  gridStep,
   stateAt,
   step,
   trail,
@@ -54,14 +55,19 @@ describe('movement：方向表', () => {
  * "小道砖正对着的那块墙砖"，概念关卡因此是 `A:3` / `B:14`（`fold = 9`、半格偏移 `+0.5`）。
  */
 /**
- * 接头的**键连续性**：进门的键必须和"进门后沿着小道继续走"的键是同一个 —— 否则玩家会
- * "按这个键进去、进去以后得换另一个键才继续"。2026-09-19 改键位（`DECK_DIR` 的 up/down 对调）
- * 时正是靠这条把 B 面接头的 `enterDir` 一起改掉的（`up` → `down`）。
+ * 接头的**两个性质**（2026-09-19，用户实测"沿走廊按 `d`，到中间那一格人却拐上小道"之后）。
  *
- * 判据：在**接头的甲板端**，唯一那个"走到另一格甲板"的方向（排除"退回墙面"的那个）应当
- * 等于接头声明的 `enterDir`。两个方向都是 `Dir`，而在输入层 `Dir ↔ 键` 是一一对应的。
+ * 老性质是"进门的键 = 沿小道继续的键"（键连续性）。它**被废掉了**：要满足它就必然让接头用上
+ * 一个**走得通**的方向，而那正是用户看到的 bug —— 接头**吃掉一条走廊走法**
+ *（实测 `A:7,1` 按 `d` 到不了 `col 8`，走廊在那儿断开）。键连续性让位给"不抢走廊"。
+ *
+ * 现在钉两条：
+ * ①**小道那侧照旧**：沿小道走到尽头，那个键仍然能上墙（否则"走得上来却上不去"，用户报过）。
+ * ②**墙面那侧不许抢**：`enterDir` 在那一格必须是**堵住**的（`gridStep` 判 `blocked`）——
+ *   所以接头只在"没别的路可走"时才生效。这条由 `validate.ts` 的 `jointNeverEntered`
+ *   对每张关卡常驻把关，这里对三张关卡再钉一遍。
  */
-describe('movement：每个接头的"进门键" = "沿小道继续的键"', () => {
+describe('movement：接头的两个性质（不抢走廊 / 小道那侧仍能上墙）', () => {
   for (const [name, def] of [
     ['L1', L1],
     ['L2', L2],
@@ -73,16 +79,20 @@ describe('movement：每个接头的"进门键" = "沿小道继续的键"', () =
       expect(joints.length).toBeGreaterThan(0);
       for (const joint of joints) {
         const deckCell: Cell = { face: 'I', col: joint.deck.x, row: joint.deck.z };
+
+        // ② 墙面那侧：那个方向必须堵住，而且按下去确实进得了小道。
+        expect(gridStep(lv, { cell: joint.wall, mode: 'stand' }, joint.enterDir).kind).toBe('blocked');
+        expect(step(lv, { cell: joint.wall, mode: 'stand' }, joint.enterDir)).toEqual({
+          kind: 'move',
+          state: { cell: deckCell, mode: 'stand' },
+        });
+
+        // ① 小道那侧：唯一那个"走到另一格甲板"的方向，其反向就是上墙的键。
         const inward = DIRS.filter((d) => {
           const r = step(lv, { cell: deckCell, mode: 'stand' }, d);
-          return r.kind === 'move' && r.state.cell.face === 'I'; // 走到另一格甲板（不是退回墙）
+          return r.kind === 'move' && r.state.cell.face === 'I';
         });
         expect(inward).toHaveLength(1); // 小道是 1 宽：尽头只有一个前进方向
-        expect(inward[0]).toBe(joint.enterDir);
-
-        // 另一半（2026-09-19 用户报的"按任何键都走不上去"）：**沿小道走来的那个键，也应该能上墙**。
-        // 也就是"往外" = 唯一那个甲板邻居的反向。以前这一侧是从世界坐标差猜的，B 面接头打平后
-        // 猜成了 `right`，于是按 `w` 沿小道过来的人在尽头被拒。
         const outward = OPPOSITE_DIR[inward[0] as Dir];
         const out = step(lv, { cell: deckCell, mode: 'stand' }, outward);
         expect(out).toEqual({ kind: 'move', state: { cell: joint.wall, mode: 'stand' } });
@@ -95,14 +105,16 @@ describe('movement：每个接头的"进门键" = "沿小道继续的键"', () =
 describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () => {
   const sim = load(CONCEPT_MINIMAL);
 
-  it('A 面接点：站在 A:4,1 按 right 拐上小道，落到 I:-7,-4', () => {
-    expect(shape(step(sim, at(sim, cellA(4, 1)), 'right'))).toBe('move:stand:I:-7,-4');
+  it('A 面接点：站在 A:4,1 按 `down` 拐上小道，落到 I:-7,-4', () => {
+    // 为什么是 `down` 而不是 `right`（2026-09-19 改）：`A:4,1` 那一格**往右是通的**（能走到
+    // `A:5,1`），接头要是占了 `right`，那条走廊就走不了了。`down` 在那一格是堵死的
+    //（脚下是砖不是梯），所以它谁都不抢 —— 见上面那条性质②。
+    expect(shape(step(sim, at(sim, cellA(4, 1)), 'down'))).toBe('move:stand:I:-7,-4');
   });
 
   it('B 面接点：站在 B:13,1 按 down 拐上小道，落到 I:-4,-7', () => {
-    // `down`（不是 `up`）：B 面小道沿 +z 伸出去，而甲板的 `down` 就是 +z
-    //（`DECK_DIR` 的 up/down 在 2026-09-19 对调过）—— 这样"进门的键"与"沿小道继续的键"
-    // 才是同一个（A 面是 `d` 进 `d` 继续，B 面是 `s` 进 `s` 继续）。
+    // B 面本来就是 `down`（小道沿 +z 伸出去，而甲板的 `down` 就是 +z）—— 它一直是"谁都不抢"的
+    // 那一侧，只是 A 面写错了。两处现在一致。
     expect(shape(step(sim, at(sim, cellB(13, 1)), 'down'))).toBe('move:stand:I:-4,-7');
   });
 
