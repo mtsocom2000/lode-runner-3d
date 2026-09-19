@@ -32,16 +32,16 @@ describe('T14 · L1 折角：结构校验', () => {
     expect(validateLevel(L1, L1_SPAWN)).toEqual([]);
   });
 
-  it('每面 7 列 × 10 行 → 5 层砖（用户要的"至少四层地形"）', () => {
+  it('每面 10 列 × 12 行 → 6 层砖（用户要的"做宽 + 再加一层"）', () => {
     const level = load(L1);
-    expect(level.cols).toBe(14);
-    expect(level.rows).toBe(10);
-    expect(level.fold).toBe(7);
-    // 砖行是 r0/r2/r4/r6/r8 —— 数一数：5 层。
+    expect(level.cols).toBe(20);
+    expect(level.rows).toBe(12);
+    expect(level.fold).toBe(10);
+    // 砖行是 r0/r2/r4/r6/r8/r10 —— 数一数：6 层。
     const brickRows = [...Array(level.rows).keys()].filter((row) =>
       [...Array(level.cols).keys()].some((col) => level.at(col, row) === 'dig'),
     );
-    expect(brickRows).toEqual([0, 2, 4, 6, 8]);
+    expect(brickRows).toEqual([0, 2, 4, 6, 8, 10]);
   });
 });
 
@@ -87,19 +87,19 @@ describe('T14 · L1 折角：按移动规则走得到', () => {
     }
   });
 
-  it('落水口正好 4 个，且关于折痕对称（col4 两侧 + col9 两侧）', () => {
+  it('落水口正好 4 个，且关于折痕对称（col6 两侧 + col13 两侧）', () => {
     const holes = reach.drownings
       .map((d) => `${d.cell.face}:${d.cell.col},${d.cell.row}--${d.dir}`)
       .sort();
-    expect(holes).toEqual(['A:3,1--right', 'A:5,1--left', 'B:10,1--left', 'B:8,1--right'].sort());
+    expect(holes).toEqual(
+      ['A:5,1--right', 'A:7,1--left', 'B:12,1--right', 'B:14,1--left'].sort(),
+    );
   });
 
   it('出生点**不在**缺口旁边：从出生点走到最近的水要横穿好几格（概念场景吃过这个亏）', () => {
-    // 出生点右侧的落水口在 col4，出生点在 col0 —— 中间隔着 col1/col2/col3。
-    const firstHole = Math.min(
-      ...reach.drownings.filter((d) => d.cell.face === 'A').map((d) => d.cell.col + 1),
-    );
-    expect(firstHole - 0).toBeGreaterThanOrEqual(4);
+    // 出生点在 col0；两个缺口在 col6 / col13 —— 中间隔着 6 格与好几把梯子。
+    const firstHole = Math.min(...reach.drownings.map((d) => d.cell.col + 1));
+    expect(firstHole).toBeGreaterThanOrEqual(4);
   });
 });
 
@@ -109,8 +109,8 @@ describe('T14 · L1 折角：闸门封住了出口', () => {
 
   it('两个出口都站得住，且**取宝前都走不到**', () => {
     const exits: readonly Cell[] = [
-      { face: 'A', col: 3, row: 9 },
-      { face: 'B', col: 10, row: 9 },
+      { face: 'A', col: 1, row: 11 },
+      { face: 'B', col: 18, row: 11 },
     ];
     for (const exit of exits) {
       expect(reach.cells.has(cellKey(exit))).toBe(false);

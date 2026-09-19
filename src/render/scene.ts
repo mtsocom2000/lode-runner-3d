@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
 import { BRICK_FACE, BRICK_N, CUBE, DECK_TOP_Y, HEADROOM, ISLAND_HALF, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
 
@@ -364,6 +365,15 @@ export interface Stage {
   /** 各类立体件的数量 —— 给探针与日志一份"到底摆了些什么"的凭据。 */
   readonly counts: Readonly<Record<string, number>>;
   /**
+   * 关卡内容的**世界包围盒**（取景用，见 `camera.ts` 的 `fitCamera`）。
+   *
+   * **为什么显式算、不用 `Box3.setFromObject(scene)`**：砖层是 `InstancedMesh`，
+   * 而 three 的 `Box3.expandByObject` 只拿**几何体本身**（一个原点处的单位立方体）去撑，
+   * 看不到逐实例矩阵 —— 算出来会是个贴在原点的小盒子，比不设还糟。
+   * 所以这里按"两面墙 + 砖块进深 + 水面外沿 + 顶部余量"直接给数。
+   */
+  readonly bounds: Bounds;
+  /**
    * 把新的瓦片表贴上墙，返回**改动格数**。这是 state→mesh 的差分入口：
    * 挖开一格、回填一格，代价都只有那一格 —— 而不是重建整面墙。
    */
@@ -377,6 +387,13 @@ export function createStage(level: Level): Stage {
   const half = halfExtent(level.fold);
   const wallTop = level.rows + HEADROOM;
   const span = level.cols + 2;
+
+  // 内容包围盒（取景用，见 `Stage.bounds` 的说明）。x/z 从墙背板外侧到水面外沿，
+  // y 从水底到"墙顶 + HEADROOM"。留一点余量，宁可多留半格也别把墙沿切掉。
+  const bounds: Bounds = {
+    min: [-half - 0.8, -0.2, -half - 0.8],
+    max: [1.2, wallTop, 1.2],
+  };
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(PALETTE.bg);
@@ -567,6 +584,7 @@ export function createStage(level: Level): Stage {
 
   return {
     scene,
+    bounds,
     counts: {
       // `brick` 是**画出来的**砖（关卡里的 + 岛台/小道的）；`brickSlots` 是分配出的槽位数。
       // 两者不相等是正常的（空格也占槽）—— 分开报，才看得出"差分容器有没有给够"。

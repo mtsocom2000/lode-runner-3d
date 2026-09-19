@@ -3,7 +3,7 @@ import { L1, L1_SPAWN } from '../core/level/levels/l1';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel } from '../core/world/tiles';
-import { createCamera, frameCamera } from '../render/camera';
+import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
 import { PLAYER_SIZE, playerAnchor } from '../render/metrics';
 import { probePixels } from '../render/probe';
@@ -234,7 +234,9 @@ function resize(): void {
   renderer.setSize(w, h);
   // 两个 composer 的缓冲尺寸也要跟：漏掉它，泛光会按旧尺寸采样（换窗口后糊掉）。
   bloom.setSize(w, h);
-  frameCamera(camera, w / h);
+  // 视锥跟着**关卡内容**走（`stage.bounds`）—— 写死过一个 6.5 的半径，
+  // 关卡放大到 20×12 时顶行的出口直接跑到画面外（`probe` 报的）。
+  fitCamera(camera, stage.bounds, w / h);
 }
 
 /**

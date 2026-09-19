@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 
+/** `YYYY-MM-DD HH:mm`，**本地时间**。 */
+function stamp(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // `npm run pack` → dist-single/index.html
 // JS/CSS 全部内联成**单个 HTML**：双击即玩，也能直接发给别人（不需要"部署"）。
 // 这是"打包 ≠ 必须部署"的落地方式，见架构文档 §5.2。
@@ -15,10 +21,11 @@ export default defineConfig({
    * 却以为"改动没生效"。把它印在 HUD 上，一眼就能回答"我现在跑的是哪个构建"。
    *
    * 只放时间、不放 git 哈希：让打包**不依赖 git**（导出目录、CI 里也能构建）。
+   * 用**本地时间**：`toISOString()` 给的是 UTC，会让人对着"现在几点"以为戳印坏了。
    * 类型声明见 `src/build-stamp.d.ts`。
    */
   define: {
-    __BUILD_STAMP__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')),
+    __BUILD_STAMP__: JSON.stringify(stamp(new Date())),
   },
   build: {
     outDir: 'dist-single',
