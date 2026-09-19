@@ -3,9 +3,9 @@ import { decideDrone } from '../src/core/ai/drone';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { stateAt, type MoveState } from '../src/core/rules/movement';
 import { buildGraph } from '../src/core/world/graph';
-import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
+import { parseLevel, withGrid, type Level, type LevelDef } from '../src/core/world/tiles';
 import { cellA, cellB } from './fixtures';
-import { cellKey, type Cell } from '../src/core/types';
+import type { Cell } from '../src/core/types';
 
 /**
  * T12-b：巡逻无人机 = **巡逻段 + 追击段**（用户裁定的"两段式"，= 原版守卫）。
@@ -130,38 +130,39 @@ describe('T12-b 只在墙面内（用户裁定）：玩家上岛台就追不到'
  * > 就不会沿着会掉进坑里的路线移动了，这样的话挖坑就失去了意义
  *
  * 这是一个真 bug，而且是"判据用错了地方"：追击拿**当前地形**建图，坑那一格不是节点，
- * 于是 `findPath` 精确地绕开它。原版守卫是照着**记忆里的地形**走的 —— 它不会躲洞，它会掉进去。
- * 修法就是本文件 `plannedGrid`：规划时把正在回填的坑当成还是砖。
+ * 于是 `findPath` 精确地绕开它。原版守卫是照着**记忆里的地形**走的 —— 它不会躲洞，它会掉进去
+ * （归档原型的注释：`AI is "blind" to pits; classic dumb guards`）。
+ * 修法就是 `plannedGrid`：规划时把坑（`'pit'`）当成还是砖。
  */
 describe('T12-e：追击按"地形还完整"规划 → 守卫会走进玩家挖的坑', () => {
-  /** `r0` 硬底 / `r1` 可挖砖 / `r2` 行走行：挖掉 `r1` 的砖，走在 `r2` 那一格就会**掉进有底的坑**。
-   *  `r1` 中间那格（`X.XXXX`）**已经是坑** —— 等价于"玩家刚把它挖开"，这才测得出规划口径的差别
-   *  （地形里没有坑、只有 `pits` 说有，是自相矛盾的夹具）。 */
+  /**
+   * `r0` 硬底 / `r1` 空 / `r2` 可挖砖（col 1 稍后会变成坑）/ `r3` 行走行。
+   *
+   * **`r1` 为什么必须是空的**：那正是这个夹具能分辨对错的地方。坑在 `r2`，若下面是实心，
+   * "穿到下层"和"停在坑里"算出来是同一格（都落在 `r1`），测不出区别 —— 就像 `PIT` 夹具那样。
+   * 多层楼（`r1` 是走廊）才逼出用户报的那个 bug：坑在 `r2`，穿下去会落到 `r1`。
+   */
   const TIERED: LevelDef = {
     id: 'TIERED',
-    name: '有底的坑夹具',
+    name: '多层楼里的坑夹具',
     fold: 3,
-    tiles: ['======', 'X.XXXX', '......'],
+    tiles: ['======', '......', 'XXXXXX', '......'],
   };
   const level = load(TIERED);
-  /** `A:1,1` 正在回填 —— 无人机在 `A:2,2`，玩家在 `A:0,2`。 */
-  const pits = new Set([cellKey({ face: 'A', col: 1, row: 1 })]);
+  /** 把 `A:1,2` 变成**坑**（`'pit'`）= "玩家刚把它挖开"。下标 = row*cols + col = 2*6+1。 */
+  const withPit = withGrid(
+    level,
+    level.grid.map((kind, i) => (i === 2 * (TIERED.fold * 2) + 1 ? ('pit' as const) : kind)),
+  );
 
-  it('对照：不提"有坑"→ 坑不是节点 → 精确绕开（这正是 bug 本身）', () => {
-    const at = standOn(level, cellA(2, 2));
-    // `A:1,2`（坑上方那格）不可站立 → 图里没有 → 追击放弃 → 落回巡逻（朝 right 直走）
-    expect(decideDrone({ level, at, facing: 'right', playerCell: cellA(0, 2) })).toBe('right');
+  it('没有坑时：正常追击（第一步 left）—— 对照组，免得这条修法顺手改了别的东西', () => {
+    const at = standOn(level, cellA(2, 3));
+    expect(decideDrone({ level, at, facing: 'right', playerCell: cellA(0, 3) })).toBe('left');
   });
 
-  it('按"地形还完整"规划 → 朝坑走一步（玩家挖的坑这才成为陷阱）', () => {
-    const at = standOn(level, cellA(2, 2));
-    expect(decideDrone({ level, at, facing: 'right', playerCell: cellA(0, 2), pits })).toBe('left');
-  });
-
-  it('坑修好（不在 `pits` 里）时两种口径一致：不该因为这条修法而改变正常追击', () => {
-    const at = standOn(level, cellA(2, 2));
-    expect(decideDrone({ level, at, facing: 'right', playerCell: cellA(0, 2), pits: new Set() })).toBe(
-      'right',
-    );
+  it('有坑时**照样**朝坑走（守卫对坑是瞎的）—— 玩家挖的坑这才成为陷阱', () => {
+    const at = standOn(withPit, cellA(2, 3));
+    // 拿当前地形规划的话，`A:1,3`（坑口那格）不是节点 → 只能绕/放弃 → 那是修之前的 bug。
+    expect(decideDrone({ level: withPit, at, facing: 'right', playerCell: cellA(0, 3) })).toBe('left');
   });
 });

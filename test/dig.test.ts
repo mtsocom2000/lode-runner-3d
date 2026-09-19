@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { applyBackfill, applyDig, canDig, digTarget } from '../src/core/rules/dig';
+import { applyBackfill, applyDig, canDig, digTarget, PIT } from '../src/core/rules/dig';
+import { fallTo, step } from '../src/core/rules/movement';
 import type { Cell } from '../src/core/types';
-import { parseLevel } from '../src/core/world/tiles';
+import { supportOf } from '../src/core/world/graph';
+import { parseLevel, withGrid } from '../src/core/world/tiles';
 
 /** 造一张小关卡。`tiles[0]` 是**最底行**。 */
 function level(tiles: readonly string[], fold = 1) {
@@ -70,7 +72,7 @@ describe('dig：挖开与回填', () => {
 
     expect(result).not.toBeNull();
     expect(result!.index).toBe(0); // (col 0, row 0) → 0 * cols + 0
-    expect(result!.grid[0]).toBe('empty');
+    expect(result!.grid[0]).toBe(PIT);
     expect(diggable.grid).toEqual(before); // 不可变：原数组一个字节都没改
     expect(result!.grid).not.toBe(diggable.grid);
   });
@@ -86,7 +88,7 @@ describe('dig：挖开与回填', () => {
 
     const filled = applyBackfill(dug!.grid, dug!.index);
     expect(filled[0]).toBe('dig');
-    expect(dug!.grid[0]).toBe('empty'); // 原网格仍是挖开的状态
+    expect(dug!.grid[0]).toBe(PIT); // 原网格仍是挖开的状态
   });
 
   it('挖开 → 回填 走一圈回到最初', () => {
@@ -117,5 +119,64 @@ describe('护绳：只保护「杆下」，**不**保护「梯子上方」', () 
   it('梯子格本身挖不动（由 `DIGGABLE` 判据覆盖，不需要额外规则）', () => {
     const targetIsLadder = level(['XX', 'H.', '..']);
     expect(canDig(targetIsLadder, DIGGER, 'left')).toBe(false);
+  });
+});
+
+/**
+ * 坑是**一格深的口袋**，不是通往下一层的竖井（用户 2026-09-19 报的 bug）。
+ *
+ * 依据是归档原型 `legacy/canyon.html:92` 的 `hAt`：`h = Math.max(1, h-1)` —— 挖出来的坑
+ * **永远不会挖穿世界**，坑底那一格留着。所以掉进去的人停在坑里、出不来，直到土长回来
+ * （同文件 127-129 行的 `buriedPlayer` / `buriedEnemy`）。
+ */
+describe('坑是口袋：掉进去停在坑里、出不来（不穿到下一层）', () => {
+  /**
+   * 多层楼：`r0` 硬底 / `r1` **空的走廊** / `r2` 平台（col 1 挖成了坑）/ `r3` 行走行。
+   *
+   * `r1` 空是这条测试能成立的关键：若坑下面就是实心，"穿到下层"与"停在坑里"落在同一格，
+   * 两种语义就分不开了。
+   */
+  const tiered = level(['======', '......', 'XXXXXX', '......'], 3);
+  const withPit = withGrid(
+    tiered,
+    tiered.grid.map((kind, i) => (i === 2 * 6 + 1 ? PIT : kind)), // (row 2, col 1)
+  );
+  const abovePit: Cell = { face: 'A', col: 1, row: 3 };
+  const inPit: Cell = { face: 'A', col: 1, row: 2 };
+
+  it('对照组：那一格若只是**空的洞**（修之前的语义）→ 一路穿到**下一层的走廊** `A:1,1`', () => {
+    // 这正是用户报的现象："机器人会从掉入坑中，然后直接掉落在下层地板上。"
+    const justHole = withGrid(
+      tiered,
+      tiered.grid.map((kind, i) => (i === 2 * 6 + 1 ? 'empty' : kind)),
+    );
+    expect(fallTo(justHole, abovePit)).toEqual({
+      kind: 'landed',
+      cell: { face: 'A', col: 1, row: 1 },
+    });
+  });
+
+  it('有坑时：同一列掉下去**停在坑里**（`A:1,2`）—— 这就是修好的那条', () => {
+    expect(fallTo(withPit, abovePit)).toEqual({ kind: 'landed', cell: inPit });
+  });
+
+  it('坑口上方那一格**站不住** —— 走在上面的人会掉进去（口袋的另一半）', () => {
+    expect(supportOf(withPit, abovePit)).toBeNull();
+    expect(supportOf(withPit, inPit)).toBe('brick');
+  });
+
+  it('掉进坑里就出不来了：左右是砖、上下没有梯', () => {
+    const at = { cell: inPit, mode: 'stand' as const };
+    expect(step(withPit, at, 'left')).toEqual({ kind: 'blocked', reason: 'solid' });
+    expect(step(withPit, at, 'right')).toEqual({ kind: 'blocked', reason: 'solid' });
+    expect(step(withPit, at, 'up')).toEqual({ kind: 'blocked', reason: 'not-ladder' });
+    expect(step(withPit, at, 'down')).toEqual({ kind: 'blocked', reason: 'not-ladder' });
+  });
+
+  it('回填之后坑就"合上"了：那一格变回砖，支撑回来了', () => {
+    const filled = withGrid(withPit, applyBackfill(withPit.grid, 2 * 6 + 1));
+    expect(filled.at(1, 2)).toBe('dig');
+    expect(supportOf(filled, inPit)).toBeNull(); // 砖里不能站人
+    expect(supportOf(filled, abovePit)).toBe('brick'); // 站在砖面上
   });
 });

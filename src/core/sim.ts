@@ -437,8 +437,6 @@ function decide(entity: Entity, intents: Intents, level: Level, ctx: AdvanceCont
     at: { cell: entity.cell, mode: entity.mode },
     facing: entity.facing,
     playerCell: ctx.playerCell,
-    // 坑：追击**规划**用"地形还完整"的图（守卫会掉进坑里 —— 见 `ai/drone.ts`）。
-    pits: ctx.pits,
   });
 }
 
@@ -590,6 +588,22 @@ function tickFill(
 }
 
 /**
+ * 网格里所有 `'pit'` 格（行主序扫一遍，`O(cols×rows)` ≈ 几百次）。
+ *
+ * 坑是**瓦片事实**，所以出处只能是瓦片表 —— 这条与"回填倒计时在 `fills` 里"并不冲突：
+ * 那是两件不同的事（地形形状 vs 还要几 tick 长回来）。
+ */
+function pitCells(grid: readonly TileKind[], cols: number, fold: number): ReadonlySet<string> {
+  const pits = new Set<string>();
+  for (let index = 0; index < grid.length; index++) {
+    if (grid[index] !== 'pit') continue;
+    const { col, row } = indexToColRow(index, cols);
+    pits.add(cellKey({ face: faceOf(col, fold), col, row }));
+  }
+  return pits;
+}
+
+/**
  * 一帧。纯函数：同一个 (state, intents) 永远给同一帧。
  *
  * 一个 tick 里的顺序是**规则的一部分**，不是实现细节：
@@ -636,13 +650,11 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   // 无人机的追击要问"玩家在哪"。取**本 tick 开始时**的位置（`prev.entities`），
   // 于是与实体遍历顺序无关 —— 顺序依赖是回放里最难查的一类 bug。
   const player = prev.entities.find((e) => e.kind === 'player');
-  // 坑的格键集合：由**最终**的 `fills`（①回填 + ②新挖之后）推出来，与回填到期的判据同源。
-  const pits = new Set(
-    fills.map((fill) => {
-      const { col, row } = indexToColRow(fill.index, prev.cols);
-      return cellKey({ face: faceOf(col, prev.fold), col, row });
-    }),
-  );
+  // 坑的格键集合：**从瓦片表读**（`grid` 里 `'pit'` 的那些格），不另推一份。
+  // 坑这个事实的出处只有一个（见 `world/tiles.ts` 的 `TileKind`）：瓦片表说"这是坑"，
+  // 于是"谁在坑里"也必须问它 —— 从 `fills` 反推就是同一件事的第二个出处，
+  // 而两个出处必然会在某一天漂成"回填说坑没了、AI 说还在坑里"。
+  const pits = pitCells(grid, prev.cols, prev.fold);
   // ①里已经"被埋"的实体，本 tick 不再参与移动（见 `AdvanceContext.buried`）。
   const buriedIds = new Set(
     events.filter((e) => e.kind === 'buried').map((e) => e.entity),

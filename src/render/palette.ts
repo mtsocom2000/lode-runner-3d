@@ -141,6 +141,13 @@ export const PALETTE = {
    * 对 5 条探针色相规则全部安全（中灰低饱和，撞不上任何一个色相）。
    */
   ink: 0x8a8478,
+  /**
+   * 挖出来的坑（T11）。**全表最暗的一档**，故意比 `hard`（0x5f5a4f，约 95）再暗一半 ——
+   * 一个洞应该读成"没有光"，而不是"另一块深色砖"。
+   *
+   * 对 5 条探针色相规则安全（近乎无彩色、明度远低于任何锚点），也不会把 `whiteRatio` 推高。
+   */
+  pit: 0x3b3833,
 } as const;
 
 export type PaletteKey = keyof typeof PALETTE;

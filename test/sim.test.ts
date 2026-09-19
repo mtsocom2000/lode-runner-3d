@@ -105,10 +105,10 @@ describe('sim：viewOf（把纯数据 state 拼成 Level 查询视图）', () =>
     const state = createSim(UPPER, spawnUpper);
     const dug: SimState = {
       ...state,
-      grid: state.grid.map((kind, index) => (index === 0 ? 'empty' : kind)),
+      grid: state.grid.map((kind, index) => (index === 0 ? 'pit' : kind)),
     };
     expect(viewOf(state).at(0, 0)).toBe('dig');
-    expect(viewOf(dug).at(0, 0)).toBe('empty');
+    expect(viewOf(dug).at(0, 0)).toBe('pit');
   });
 });
 

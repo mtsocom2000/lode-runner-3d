@@ -45,6 +45,15 @@ export const DIG_OCCUPIED_ACCEL = 4;
 const DIGGABLE: TileKind = 'dig';
 
 /**
+ * 挖出来那一格是什么：**坑**（`'pit'`），不是空。
+ *
+ * 这一格是"一格深、有底的口袋"这个**地形事实**的载体 —— 掉进去的人停在坑里（`supportOf`
+ * 对 `'pit'` 返回 `'brick'`），而不是穿到下面那层去。理由与依据见 `world/tiles.ts` 的
+ * `TileKind` 注释（原型的 `hAt` 是 `Math.max(1, h-1)`：坑永远不会挖穿世界）。
+ */
+export const PIT: TileKind = 'pit';
+
+/**
  * 「护绳」：这些瓦片**正上方**的那一格不可挖。
  *
  * 手册原文是"杆下/梯井不可挖（护绳）"。这两半的出处不同，所以各自按依据处理：
@@ -132,7 +141,7 @@ export function applyDig(level: Level, cell: Cell, dir: Dir): DigResult | null {
 
   const index = target.row * level.cols + target.col;
   const grid = level.grid.slice();
-  grid[index] = 'empty';
+  grid[index] = PIT;
   return { grid, index, cell: target };
 }
 

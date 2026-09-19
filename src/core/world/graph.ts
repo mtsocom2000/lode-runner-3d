@@ -105,8 +105,7 @@ export function isSolid(k: TileKind | undefined): boolean {
   return k === 'dig' || k === 'hard';
 }
 
-/**
- * 支撑类型。决定了玩家停在这一格时**怎么停**（见 rules/movement.ts）：
+/** 支撑类型。决定了玩家停在这一格时**怎么停**（见 rules/movement.ts）：
  * 砖面是站在顶上，梯是攀着，杆是**吊在下面** —— 三者的动作集不同。
  */
 export type Support = 'brick' | 'ladder' | 'bar';
@@ -144,11 +143,26 @@ export function isDeckCell(level: Level, c: Cell): boolean {
  *
  * 四条：①甲板格（面 'I'）单独一条路 —— 岛台本身就是实心地面，踩上去就是站在砖面上；
  * ②这一格本身得是可通行的（砖块内部不是停的地方）；③是梯/杆就直接算数
- * （梯能攀、杆能吊，都不需要下方有砖）；④否则要看**正下方**是不是实心 —— 那是站在砖面顶上的情形。
+ * （梯能攀、杆能吊，都不需要下方有砖）；④**坑（`'pit'`）也是一个落脚点** —— 见下；
+ * ⑤否则要看**正下方**是不是实心 —— 那是站在砖面顶上的情形。
  * 最底行（row 0）下方越界 → 不是实心 → 停不住（网格下面没有地板，只有水）。
  *
  * ① 必须在 `isConsistentCell` **之前**分支：那个函数按折面的列范围校验，对 'I' 一律 false。
  * 而甲板"下方"是水、没有"下一格砖"可言，所以墙的那条支撑判据对它根本不适用。
+ *
+ * ## ④ 坑是"口袋"，不是"洞"（用户报的 bug 的修法）
+ *
+ * 挖开的坑**自己就是落脚点**：掉进去的人停**在坑里**，而不是一路穿到下面那层地板。
+ * 这条不是随手定的 —— 原版挖出来的坑就是**一格深的口袋**（归档原型 `legacy/canyon.html:92`
+ * 的 `hAt` 是 `Math.max(1, h-1)`：坑底永远留着那一格），所以掉进坑里 = 受困，
+ * 土长回来 = 活埋（同文件 127-129 行的 `buriedPlayer` / `buriedEnemy`）。
+ *
+ * 用户报的原话（2026-09-19）：*"机器人会从掉入坑中，然后直接掉落在下层地板上。看上去机器人
+ * 落坑的逻辑延用了玩家角色的逻辑，这是不对的。"* —— 他是对的：以前 `'pit'` 是 `'empty'`，
+ * 于是 `supportOf` 只看"正下方实心"，坑在多层楼里就成了一条**穿到下一层的竖井**。
+ *
+ * 注意"坑是落脚点"只影响**坑自己那一格**：坑上方那一格照旧停不住（`isSolid('pit')` 为假），
+ * 于是走在坑口上的人**会掉进去** —— 这正是我们要的。两条合起来就是"口袋"的全部语义。
  */
 export function supportOf(level: Level, c: Cell): Support | null {
   if (c.face === 'I') return isDeckCell(level, c) ? 'brick' : null;
@@ -157,6 +171,7 @@ export function supportOf(level: Level, c: Cell): Support | null {
   if (!isPassable(here)) return null;
   if (isLadder(here)) return 'ladder';
   if (isBar(here)) return 'bar';
+  if (here === 'pit') return 'brick'; // ④ 口袋：坑底就在坑自己这一格
   return isSolid(level.at(c.col, c.row - 1)) ? 'brick' : null;
 }
 

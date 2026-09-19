@@ -73,7 +73,7 @@ describe('挖（T11）：接进 tick 之后', () => {
     const frame = tick(state, digLeft);
 
     expect(eventsOf(frame)).toContain('dug');
-    expect(tileAt(frame.state, HOLE_LEFT)).toBe('empty');
+    expect(tileAt(frame.state, HOLE_LEFT)).toBe('pit'); // 挖出来的是「坑」（一格深的口袋），不是空
     expect(frame.state.fills).toHaveLength(1);
     expect(frame.state.fills[0]).toEqual({ index: 1 * 4 + 0, remaining: DIG_BACKFILL_TICKS });
   });
@@ -164,7 +164,7 @@ describe('回填（T11）', () => {
     const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [digRight, ...wait(DIG_BACKFILL_TICKS - 1)]);
     const frame = last(frames);
 
-    expect(tileAt(frame.state, HOLE_RIGHT)).toBe('empty');
+    expect(tileAt(frame.state, HOLE_RIGHT)).toBe('pit');
     expect(frame.state.fills).toHaveLength(1);
     expect(frame.state.fills[0]?.remaining).toBe(1);
   });

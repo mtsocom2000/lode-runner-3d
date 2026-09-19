@@ -14,10 +14,29 @@ import type { DeckCell, DeckJoint } from './deck';
  * T1 的装载、T8 的关卡校验（validator 要把所有问题一次列全，不是遇到第一个就停）。
  */
 
-/** 瓦片语义。字形与它的对应关系见 TILE_CHARS，与架构文档 §四 的关卡格式一致。 */
-export type TileKind = 'dig' | 'hard' | 'empty' | 'ladder' | 'bar' | 'treasure' | 'exit';
+/**
+ * 瓦片语义。字形与它的对应关系见 TILE_CHARS，与架构文档 §四 的关卡格式一致。
+ *
+ * `'pit'` **没有字形、也不在 `TILE_CHARS` 里** —— 它不是关卡作者能画的东西，而是**挖的结果**：
+ * `rules/dig.ts` 的 `applyDig` 把一格 `'dig'` 变成 `'pit'`，回填时变回来。
+ *
+ * ## 为什么坑要是一个**瓦片**，而不是"空 + 一张待回填清单"
+ *
+ * 因为"坑"是一个**地形事实**（一个一格深、有底的口袋），而不是记账：`world/graph.ts` 的
+ * `supportOf` 要能只拿 `(level, cell)` 就回答"这一格站得住吗"，`rules/reach.ts` 的可达性、
+ * 移动、以及渲染层的砖块层**都只认瓦片表**。把"这里其实是坑"另存一份在 `SimState.fills` 里，
+ * 就是同一件事有两个出处 —— 那正是本仓库反复栽过的那类 bug（红线：判据只能有一个出处）。
+ *
+ * `fills` 仍然存在，但它现在只说一件**不同**的事：**这个坑还有几个 tick 会自己长回来**
+ * （以及"有人占着它 → 加速"用的那个倒计时）。地形形状归瓦片表，回填进度归 `fills`。
+ *
+ * 依据是归档原型 `legacy/canyon.html:92-93` 的 `hAt(x,y)`：`h = Math.max(1, h-1)` ——
+ * **挖出来的坑永远不会挖穿世界**，坑底永远留着一格。所以坑是"口袋"，掉进去就出不来了
+ * （除非土长回来；那正是原版的 `buriedPlayer()` / `buriedEnemy()`，见同文件 127-129 行）。
+ */
+export type TileKind = 'dig' | 'hard' | 'empty' | 'ladder' | 'bar' | 'treasure' | 'exit' | 'pit';
 
-/** 7 种字形，一个不多一个不少。 */
+/** 7 种字形，一个不多一个不少。`'pit'` 刻意**不在其中**（它是挖出来的，不是画出来的）。 */
 export const TILE_CHARS: Readonly<Record<string, TileKind>> = {
   X: 'dig', // 可挖砖
   '=': 'hard', // 硬砖（不可挖）

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -72,6 +72,9 @@ function place(level: Level, col: number, row: number): Anchor {
 /**
  * 某格的砖块实例。`kind` 由**调用方给出**（而不是从 level 读）—— 这样差分时写的是
  * "改过之后"的瓦片，而不是关卡文件里的原始值。非砖格给零缩放：槽位仍在，只是看不见。
+ *
+ * `'pit'`（挖出来的坑）走一条自己的路：不是"砖没了"，而是一口**往墙里缩进去的深色凹槽** ——
+ * 理由与那两个数见 `metrics.ts` 的 `PIT_DEPTH`。
  */
 function brickSlot(
   level: Level,
@@ -79,7 +82,16 @@ function brickSlot(
   row: number,
   kind: TileKind | undefined,
 ): Piece & { readonly color: number } {
-  const { p } = place(level, col, row);
+  const { p, alongZ } = place(level, col, row);
+
+  if (kind === 'pit') {
+    const [x, y, z] = p;
+    // 凹槽沿该面的法线方向（A 面是 x，B 面是 z）后缩、并只在那一个轴上变浅。
+    return alongZ
+      ? { p: [x - PIT_RECESS, y, z], s: [PIT_DEPTH, CUBE, CUBE], color: PALETTE.pit }
+      : { p: [x, y, z - PIT_RECESS], s: [CUBE, CUBE, PIT_DEPTH], color: PALETTE.pit };
+  }
+
   const color = brickColor(kind);
   return { p, s: color === null ? [0, 0, 0] : [CUBE, CUBE, CUBE], color: color ?? PALETTE.brick };
 }

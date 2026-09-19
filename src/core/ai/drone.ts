@@ -1,5 +1,5 @@
 import { DIRS, step, type Dir, type MoveState } from '../rules/movement';
-import { parseCell, type Cell } from '../types';
+import type { Cell } from '../types';
 import { buildGraph, findPath } from '../world/graph';
 import { withGrid, type Level, type TileKind } from '../world/tiles';
 
@@ -62,11 +62,6 @@ export interface DroneInput {
   readonly facing: Dir;
   /** 玩家本 tick 开始时在哪；没有玩家（终局）是 `null`。 */
   readonly playerCell: Cell | null;
-  /**
-   * 正在回填的坑（`cellKey`，T11）。**只影响"怎么规划"，不影响"走到会怎样"** ——
-   * 见 `chaseDir` 里那段"守卫为什么应该掉进坑里"。省略 = 没有坑。
-   */
-  readonly pits?: ReadonlySet<string>;
 }
 
 /** 本 tick 该朝哪走；`null` = 不动（到不了玩家，而且四个方向都走不通）。 */
@@ -75,23 +70,19 @@ export function decideDrone(input: DroneInput): Dir | null {
 }
 
 /**
- * "**地形还完整**"的网格：把正在回填的坑当成还是可挖砖。没有坑时原样返回（不做无谓的拷贝）。
+ * "**地形还完整**"的网格：把坑（瓦片 `'pit'`）当成还是可挖砖。没有坑时原样返回（不做无谓的拷贝）。
  *
- * 为什么不直接拿当前地形去规划：那样图里没有坑那一格，`findPath` 会**精确地绕开它** ——
+ * 为什么不直接拿当前地形去规划：坑那一格在图上不是节点，`findPath` 会**精确地绕开它** ——
  * 玩家辛苦挖的坑对守卫毫无作用（用户报的原话："机器人似乎检测到了这个坑，就不会沿着会掉进
  * 坑里的路线移动了，这样的话挖坑就失去了意义"）。
+ *
+ * 归档原型把这条写在注释里（`legacy/canyon.html:103`）：
+ * `// exits from pit treated as normal (AI is "blind" to pits; classic dumb guards)` ——
+ * **守卫对坑是"瞎"的**，它照记忆里的地形走，脚下没了才掉下去。
  */
-function plannedGrid(input: DroneInput): readonly TileKind[] {
-  const pits = input.pits;
-  if (pits === undefined || pits.size === 0) return input.level.grid;
-  const grid = [...input.level.grid];
-  for (const key of pits) {
-    const cell = parseCell(key);
-    if (cell === null) continue;
-    const index = cell.row * input.level.cols + cell.col;
-    if (index >= 0 && index < grid.length) grid[index] = 'dig';
-  }
-  return grid;
+function plannedGrid(level: Level): readonly TileKind[] {
+  if (!level.grid.includes('pit')) return level.grid;
+  return level.grid.map((kind) => (kind === 'pit' ? 'dig' : kind));
 }
 
 /**
@@ -112,7 +103,7 @@ function chaseDir(input: DroneInput): Dir | null {
   if (playerCell === null) return null;
 
   // `decks: false` —— 见文件头"为什么只在墙面内要写成图的开关"。
-  const graph = buildGraph(withGrid(level, plannedGrid(input)), { decks: false });
+  const graph = buildGraph(withGrid(level, plannedGrid(level)), { decks: false });
   if (!graph.has(at.cell) || !graph.has(playerCell)) return null;
 
   const path = findPath(graph, at.cell, playerCell);

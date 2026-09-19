@@ -8,6 +8,7 @@ import {
   DRONE_MOVE_TICKS,
   MOVE_TICKS,
   RESPAWN_TICKS,
+  type SimState,
 } from '../src/core/sim';
 import { validateLevel } from '../src/core/level/validate';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
@@ -140,7 +141,10 @@ describe('T12-d：敌人溺水/被埋 → **延时重生**（§八-2 裁定）',
   };
   const DRONE = 1;
 
-  /** 把某一格改成空 —— 等价于"玩家把它脚下的砖挖掉了"。 */
+  /** 把某一格改成空 —— 相当于**地形上本来就有个洞**（像 L1 `r0` 的落水缺口）。
+   *
+   * 注意它**不是**"玩家把砖挖掉"：挖掉会得到 `'pit'`（一格深的口袋），掉进去是受困而不是落水
+   * （见 `world/tiles.ts`）。落水要的是**直通水面**的洞，所以这里写 `'empty'`。 */
   function hollow(base: ReturnType<typeof createSim>, index: number) {
     return { ...base, grid: base.grid.map((kind, i) => (i === index ? ('empty' as const) : kind)) };
   }
@@ -201,10 +205,23 @@ describe('T12-c：落坑受困 + 踩其头顶的前提', () => {
   };
   const DRONE = 1;
 
+  /**
+   * 把某一格变成**坑**。两件事都要做，缺一就不是坑：
+   * ① 瓦片 `'pit'`（地形：一格深的口袋，`supportOf` 靠它）；② `fills`（回填倒计时）。
+   * 以前这里只写 `fills` —— 那时"是不是坑"只有一个出处（`fills`），现在地形形状归瓦片表。
+   */
+  function pitAt(base: ReturnType<typeof createSim>, index: number): SimState {
+    return {
+      ...base,
+      grid: base.grid.map((kind, i) => (i === index ? ('pit' as const) : kind)),
+      fills: [{ index, remaining: 120 }],
+    };
+  }
+
   it('站在坑里的无人机**动不了**（这是"落坑受困"，不是冷却）', () => {
     const start = createSim(PIT_DEF, cellA(0, 1));
     // `A:1,1` 变成坑（等着回填）：无人机就在那一格上
-    const withPit = { ...start, fills: [{ index: PIT_DEF.fold * 2 * 1 + 1, remaining: 120 }] };
+    const withPit = pitAt(start, PIT_DEF.fold * 2 * 1 + 1);
     const frames = replay(withPit, wait(20));
     for (const frame of frames) {
       expect(frame.state.entities[DRONE]?.cell).toEqual(cellA(1, 1));
@@ -216,8 +233,7 @@ describe('T12-c：落坑受困 + 踩其头顶的前提', () => {
     const start = createSim(PIT_DEF, cellA(0, 1));
     // 无人机与玩家同格、而且它在坑里
     const stacked = {
-      ...start,
-      fills: [{ index: PIT_DEF.fold * 2 * 1 + 0, remaining: 120 }],
+      ...pitAt(start, PIT_DEF.fold * 2 * 1 + 0),
       entities: start.entities.map((e) => (e.id === DRONE ? { ...e, cell: cellA(0, 1) } : e)),
     };
     const frame = tick(stacked, { move: null, dig: null });
@@ -226,39 +242,56 @@ describe('T12-c：落坑受困 + 踩其头顶的前提', () => {
   });
 });
 
-describe('T12-e：挖坑反制（用户报的 bug）—— 守卫会**走进**玩家挖的坑', () => {
-  /** `r0` 硬底 / `r1` 可挖砖 / `r2` 行走行。`r1` 中间那格**已经是坑**（`X.XXXX`）= "玩家刚挖开它"。 */
+describe('T12-e：挖坑反制（用户报的 bug）—— 守卫会**走进**玩家挖的坑，并且**停在坑里**', () => {
+  /**
+   * `r0` 硬底 / `r1` 空 / `r2` 可挖砖（col 1 稍后会变成坑）/ `r3` 行走行。
+   *
+   * `r1` 空是**关键**：用户报的 bug 正是"掉进坑里之后直接落到下层地板上"。
+   * 若坑下面就是实心（像 `PIT` 夹具），两种语义算出来是同一格，这条 bug 根本测不出来。
+   */
   const TIERED: LevelDef = {
     id: 'TIERED',
-    name: '有底的坑夹具',
+    name: '多层楼里的坑夹具',
     fold: 3,
-    tiles: ['======', 'X.XXXX', '......'],
-    enemies: [{ kind: 'drone', cell: cellA(2, 2) }],
+    tiles: ['======', '......', 'XXXXXX', '......'],
+    enemies: [{ kind: 'drone', cell: cellA(2, 3) }],
   };
   const DRONE = 1;
 
-  /** 那个坑"正在回填" —— 缺了这条记录就只是个洞，不是坑（T11）。 */
-  function withBackfill(base: ReturnType<typeof createSim>) {
-    const index = 1 * (TIERED.fold * 2) + 1; // row * cols + col
-    return { ...base, fills: [{ index, remaining: 120 }] };
+  /** 玩家把 `A:1,2` 挖开：**地形**多一个坑（`'pit'`）+ **回填**登记一条。两者都要，缺一就不是坑。 */
+  function withPit(base: ReturnType<typeof createSim>): SimState {
+    const index = 2 * (TIERED.fold * 2) + 1; // row * cols + col
+    return {
+      ...base,
+      grid: base.grid.map((kind, i) => (i === index ? ('pit' as const) : kind)),
+      fills: [{ index, remaining: 120 }],
+    };
   }
 
-  it('它**不再绕开**：下一步就走进坑、掉进去、落在坑底（= 受困的前一步）', () => {
-    const start = withBackfill(createSim(TIERED, cellA(0, 2)));
+  it('它**不再绕开**：下一步就走进坑', () => {
+    const start = withPit(createSim(TIERED, cellA(0, 3)));
     const frame = tick(start, { move: null, dig: null });
     const drone = frame.state.entities[DRONE];
-    // 修复前它拿当前地形建图 → 坑不是节点 → 精确绕开（留在 A:2,2 上巡逻）。
-    expect(drone?.cell).toEqual(cellA(1, 1));
-    expect(drone?.down).toBe(0); // 有底 → 不是溺水
+    expect(drone?.cell).toEqual(cellA(1, 2)); // 走进坑口那一格 → 开始坠落
     expect(frame.events.some((e) => e.kind === 'fell')).toBe(true);
   });
 
+  it('落点在**坑里**（`A:1,2`），不是穿到下层地板（`A:1,1`）—— 用户报的那条', () => {
+    // 同一条链再走一 tick：坠落结算完成，人停在坑里
+    let state = withPit(createSim(TIERED, cellA(0, 3)));
+    state = tick(state, { move: null, dig: null }).state; // 走进坑口 + 起坠
+    state = tick(state, { move: null, dig: null }).state; // 落到坑里
+    expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 2));
+  });
+
   it('掉进去之后就走不动了 —— 接上 T12-c 的"落坑受困"，回填会把它埋掉', () => {
-    let state = tick(withBackfill(createSim(TIERED, cellA(0, 2))), { move: null, dig: null }).state;
-    expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 1));
+    let state = withPit(createSim(TIERED, cellA(0, 3)));
+    state = tick(state, { move: null, dig: null }).state;
+    state = tick(state, { move: null, dig: null }).state;
+    expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 2));
     // 困在坑里：连走 20 tick 一步没动（不追人、也不自己爬出来）
     state = replay(state, wait(20))[19]?.state ?? state;
-    expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 1));
+    expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 2));
   });
 });
 
