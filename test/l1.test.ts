@@ -32,11 +32,11 @@ describe('T14 · L1 折角：结构校验', () => {
     expect(validateLevel(L1, L1_SPAWN)).toEqual([]);
   });
 
-  it('每面 10 列 × 12 行 → 6 层砖（用户要的"做宽 + 再加一层"）', () => {
+  it('每面 14 列 × 12 行 → 6 层砖（用户要的"再宽一点"）', () => {
     const level = load(L1);
-    expect(level.cols).toBe(20);
+    expect(level.cols).toBe(28);
     expect(level.rows).toBe(12);
-    expect(level.fold).toBe(10);
+    expect(level.fold).toBe(14);
     // 砖行是 r0/r2/r4/r6/r8/r10 —— 数一数：6 层。
     const brickRows = [...Array(level.rows).keys()].filter((row) =>
       [...Array(level.cols).keys()].some((col) => level.at(col, row) === 'dig'),
@@ -68,9 +68,9 @@ describe('T14 · L1 折角：按移动规则走得到', () => {
     expect(stranded.map(cellKey)).toEqual([]);
   });
 
-  it('甲板 29/29（岛台 5×5 + 两条 2 格小道）与宝物格都在可达集里', () => {
+  it('甲板 31/31（岛台 5×5 + 两条 3 格小道）与宝物格都在可达集里', () => {
     const deck = L1.deck ?? [];
-    expect(deck).toHaveLength(29);
+    expect(deck).toHaveLength(31);
     for (const cell of deck) {
       expect(reach.cells.has(cellKey({ face: 'I', col: cell.x, row: cell.z }))).toBe(true);
     }
@@ -87,21 +87,23 @@ describe('T14 · L1 折角：按移动规则走得到', () => {
     }
   });
 
-  it('落水口正好 4 个，且关于折痕对称（col3 两侧 + col16 两侧）', () => {
+  it('落水口正好 4 个，且关于折痕对称（col5 两侧 + col22 两侧）', () => {
     const holes = reach.drownings
       .map((d) => `${d.cell.face}:${d.cell.col},${d.cell.row}--${d.dir}`)
       .sort();
     expect(holes).toEqual(
-      ['A:2,1--right', 'A:4,1--left', 'B:15,1--right', 'B:17,1--left'].sort(),
+      ['A:4,1--right', 'A:6,1--left', 'B:21,1--right', 'B:23,1--left'].sort(),
     );
   });
 
   it('出生点到最近的水之间**夹着一把梯子**（不是"出门就掉"）', () => {
-    // 缺口在 col3、出生点在 col0，中间 col2 是梯子 —— 玩家有落点可抓。
-    // 概念场景那次的教训是"缺口离出生点 2 格、还没有垫脚处"，不是"距离"本身。
+    // 缺口在 col5、出生点在 col0 —— 中间有梯子（数据驱动地找出来，不写死列号）。
     const firstHole = Math.min(...reach.drownings.map((d) => d.cell.col + 1));
-    expect(firstHole).toBeGreaterThanOrEqual(3);
-    expect(L1.tiles[1]?.[2]).toBe('H'); // col2 确实是梯子
+    expect(firstHole).toBeGreaterThanOrEqual(4);
+    const laddersBetween = [...Array(firstHole).keys()].filter(
+      (col) => L1.tiles[1]?.[col] === 'H',
+    );
+    expect(laddersBetween.length).toBeGreaterThan(0);
   });
 });
 
@@ -112,7 +114,7 @@ describe('T14 · L1 折角：闸门封住了出口', () => {
   it('两个出口都站得住，且**取宝前都走不到**', () => {
     const exits: readonly Cell[] = [
       { face: 'A', col: 1, row: 11 },
-      { face: 'B', col: 18, row: 11 },
+      { face: 'B', col: 26, row: 11 },
     ];
     for (const exit of exits) {
       expect(reach.cells.has(cellKey(exit))).toBe(false);
