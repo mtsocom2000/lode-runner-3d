@@ -433,10 +433,15 @@ export function createStage(level: Level): Stage {
 
   // ── 两片墙（背板）+ 折痕线 ──
   //
-  // 背板的**内表面** = `-half + INK`：砖块从它往外凸出 `CUBE`（1.0），而砖的内表面正好落在
-  // 甲板砖的面上（见 `metrics.ts` 的 `INK` —— 那个常量同时决定"小道能不能与墙贴合"）。
-  put(mat.shell, [-half + INK, wallTop / 2, faceCentre], [1, wallTop, faceSpan]);
-  put(mat.shell, [faceCentre, wallTop / 2, -half + INK], [faceSpan, wallTop, 1]);
+  // 背板的**内表面**必须落在 `-half + INK`（正是砖块的背面，两者相切），所以背板的**中心**
+  // 在 `-half + INK - CUBE/2`。⚠ 这里最容易写错的是"面"与"中心"：
+  // 曾经把中心写成 `-half + INK`，于是背板内表面跑到 `-12.5`，而砖的范围是 `-13.0 … -12.0`
+  // —— **背板把每块砖靠墙的一半吃掉了**（用户看到的是"顶面只剩一半、像嵌进墙里、
+  // 剖面中间一条白线"）。半个砖的错位，症状却是三条。
+  const panelCentre = -half + INK - CUBE / 2;
+  put(mat.shell, [panelCentre, wallTop / 2, faceCentre], [CUBE, wallTop, faceSpan]);
+  put(mat.shell, [faceCentre, wallTop / 2, panelCentre], [faceSpan, wallTop, CUBE]);
+  // 折痕线画在两片背板**内表面**相交的那条棱上。
   put(mat.seam, [-half + INK, wallTop / 2 - 0.5, -half + INK], [0.09, wallTop - 0.8, 0.09]);
 
   // ── 墙面轮廓线：没有这一圈，两片墙会整片隐进背景，"折面贴在墙角"就读不出来了 ──
