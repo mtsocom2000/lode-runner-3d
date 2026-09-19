@@ -342,6 +342,19 @@ let frames = 0;
  * 其余每一帧都原样沿用 `prev.grid`。所以"引用变了"⇔"内容变了"，比逐格 diff 便宜且精确。
  */
 let lastGrid = state.grid;
+/** 上一次贴给岛台的宝物表（T13）。引用比较的理由与 `lastGrid` 完全相同。 */
+let lastTreasures = state.treasures;
+
+/**
+ * 把关卡的**初始状态**推给渲染层。
+ *
+ * `createStage(level)` 只能读到**关卡原始数据**（`level.grid` / `level.treasures`），
+ * 而 `state` 才是真相：重开一局、将来的换关、以及任何"开局就不是原始状态"的场合
+ * （比如闸门已开）都可能与关卡文件不同。少了这一步，会看到"闸门开了却没有梯子"
+ * "宝物已经取走了却还画着" —— 两件都真实发生过（用户："取了宝物没有任何反应"。）
+ */
+stage.setGrid(state.grid);
+stage.setTreasures(state.treasures);
 
 function loop(now: number): void {
   if (last === 0) last = now;
@@ -404,6 +417,11 @@ function loop(now: number): void {
   if (state.grid !== lastGrid) {
     stage.setGrid(state.grid);
     lastGrid = state.grid;
+  }
+  // 宝物收走一颗就少一颗（T13）。与地形同一个道理：`state.treasures` 是事实，渲染层照着画。
+  if (state.treasures !== lastTreasures) {
+    stage.setTreasures(state.treasures);
+    lastTreasures = state.treasures;
   }
 
   stage.update(now / 1000);

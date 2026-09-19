@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
+import type { DeckCell } from '../core/world/deck';
 import type { Level, TileKind } from '../core/world/tiles';
 import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
@@ -111,8 +112,20 @@ function ladderParts(p: Vec3, alongZ: boolean): readonly Piece[] {
   return out;
 }
 
-/** 把一关里**除砖以外**的瓦片摊成立体件。砖走 `createBrickLayer` —— 它要能被差分更新。 */
-function collectProps(level: Level): {
+/**
+ * 把一关里**除砖以外**的瓦片摊成立体件。砖走 `createBrickLayer` —— 它要能被差分更新。
+ *
+ * `grid` 由调用方给（而不是读 `level.grid`）：闸门开启会把 `硬砖 → 梯子`（T13 的"通天梯"），
+ * 收走芯片会把 `宝物 → 空` —— 这两件事都发生在**游戏进行中**，所以道具层必须能按新网格重建
+ * （见 `createStage` 的 `setGrid`）。只读初始网格的话，闸门开了玩家会看到一条**看不见的梯子**。
+ *
+ * **导出**是为了让 `test/props.test.ts` 直接钉住这两件事（"折痕那一对只画一根"、
+ * "闸门开了真的会多出梯子"）—— 它们是纯数据，不需要 WebGL。
+ */
+export function collectProps(
+  level: Level,
+  grid: readonly TileKind[],
+): {
   readonly ladders: readonly Piece[];
   readonly bars: readonly Piece[];
   readonly chips: readonly Piece[];
@@ -125,8 +138,24 @@ function collectProps(level: Level): {
 
   for (let row = 0; row < level.rows; row++) {
     for (let col = 0; col < level.cols; col++) {
-      const kind = level.at(col, row);
+      const kind = grid[row * level.cols + col];
       if (!isProp(kind)) continue;
+
+      // 折痕两侧最内列落在**世界同一个位置**（见 `world/fold.ts` 的 `halfExtent`）。
+      // 横杆/梯子这类**有方向**的件在那儿会画成一对交叉 —— 两根各自沿自己那面墙的轴、
+      // 又都穿过同一个点（用户的原话："看到交接处有个粉红色的交叉，不知道有什么意思？"）。
+      // 所以同一对里只画**靠 A 面**的那一根：位置一模一样，少画一根就不再有十字。
+      //
+      // **只对"有方向"的道具去重**（梯 / 杆）。芯片与出口是对称体（八面体 / 立方体），
+      // 两个重叠也看不出来；而它们**各自都算数**（芯片是可捡的宝物、出口是终点）——
+      // 把其中一个藏起来是比"重叠"严重得多的错。
+      if (
+        (kind === 'ladder' || kind === 'bar') &&
+        col === level.fold &&
+        level.at(level.fold - 1, row) === kind
+      ) {
+        continue;
+      }
 
       const { p, alongZ } = place(level, col, row);
       switch (kind) {
@@ -174,7 +203,11 @@ function collectProps(level: Level): {
  */
 function islandAndJetties(level: Level): {
   readonly bricks: readonly (Piece & { readonly color: number })[];
-  readonly prize: Vec3;
+  /**
+   * 每一颗宝物的**位置与身份**（甲板格）。`createStage` 按它建实例，并在收走时把对应实例缩到 0
+   * （见 `applyTreasures`）—— 所以这里要的是**全部**宝物，不是一颗。
+   */
+  readonly prizes: readonly { readonly cell: DeckCell; readonly p: Vec3 }[];
   /** 甲板横向中心（x 与 z 同值 —— 折面本身关于对角线对称）。水面也读这个数，两处各算一次必然漂。 */
   readonly centre: number;
 } {
@@ -192,16 +225,17 @@ function islandAndJetties(level: Level): {
   const xs = level.deck.map((cell) => cell.x + DECK_SHIFT);
   const centre = xs.length === 0 ? 0 : (Math.min(...xs) + Math.max(...xs)) / 2;
 
-  // 宝物照 `level.treasures` 摆。**必须落在格心** —— core 的采集判定是"玩家所在格 == 宝物格"，
-  // 而玩家只能站在格心；画在别处（比如岛台的几何中心，那是砖缝）就是"看得见捡不到"。
-  const treasure = level.treasures[0];
-  const prize: Vec3 = [
-    (treasure?.x ?? centre) + DECK_SHIFT,
-    DECK_TOP_Y + 0.3,
-    (treasure?.z ?? centre) + DECK_SHIFT,
-  ];
+  // 宝物**逐颗**照 `level.treasures` 摆。**必须落在格心** —— core 的采集判定是"玩家所在格 ==
+  // 宝物格"，而玩家只能站在格心；画在别处（比如岛台的几何中心，那是砖缝）就是"看得见捡不到"。
+  //
+  // **以前这里只取 `treasures[0]`**：L2 有两颗，于是第一颗根本没画出来；而画出来那颗收走之后
+  // 也不会消失。两处都在用户那条"取了宝物没有任何反应、闸门没移走"的反馈里。
+  const prizes = level.treasures.map((t) => ({
+    cell: t,
+    p: [t.x + DECK_SHIFT, DECK_TOP_Y + 0.3, t.z + DECK_SHIFT] as Vec3,
+  }));
 
-  return { bricks, prize, centre };
+  return { bricks, prizes, centre };
 }
 
 interface BrickLayer {
@@ -301,7 +335,7 @@ function createBrickLayer(
 
 /** 建一个单色 InstancedMesh。 */
 function instanced(
-  scene: THREE.Scene,
+  parent: THREE.Object3D,
   geo: THREE.BufferGeometry,
   mat: THREE.Material,
   pieces: readonly Piece[],
@@ -323,7 +357,7 @@ function instanced(
   mesh.instanceMatrix.needsUpdate = true;
   mesh.castShadow = shadows;
   mesh.receiveShadow = shadows;
-  scene.add(mesh);
+  parent.add(mesh);
   return mesh;
 }
 
@@ -345,6 +379,13 @@ export interface Stage {
    * 挖开一格、回填一格，代价都只有那一格 —— 而不是重建整面墙。
    */
   setGrid(grid: readonly TileKind[]): number;
+  /**
+   * 更新"还剩哪几颗宝物"（收走一颗就少一颗）。
+   *
+   * 与 `setGrid` 同一类入口：渲染层不推演规则，只把 `SimState.treasures` 这个事实画出来。
+   * 缺了它，收走的宝物会一直留在岛上（用户报的"取了宝物没有任何反应"）。
+   */
+  setTreasures(remaining: readonly DeckCell[]): void;
   /** 每帧调用。逐实体的补间归 `meshSync.ts`（它有自己的 mesh，不在这里）。 */
   update(elapsed: number): void;
   dispose(): void;
@@ -547,22 +588,86 @@ const faceCentre = -half + level.fold / 2;
   }
 
   // ── 折面关卡本体 + 岛台/小道 ──
-  // 砖走 `createBrickLayer`（每格一个槽位，供 T11 的挖/回填差分）；其余道具建一次就不动。
+  // 砖走 `createBrickLayer`（每格一个槽位，供 T11 的挖/回填差分）。
   // `island` 在上面画水面时就已经取好了（水要用岛心）。
-  const props = collectProps(level);
-  // 岛台与小道这一版全是砖，没有连杆 —— 所以杆只来自关卡数据本身。
-  const bars = props.bars;
   const brickLayer = createBrickLayer(scene, level, box, mat.white, island.bricks);
   brickLayer.apply(level.grid);
 
-  const meshes = [
-    instanced(scene, box, mat.lad, props.ladders, true),
-    instanced(scene, box, mat.bar, bars, true),
-    instanced(scene, chipGeo, mat.chip, props.chips, false),
-    instanced(scene, box, mat.exit, props.exits, false),
-  ].filter((m): m is THREE.InstancedMesh => m !== null);
+  /**
+   * **道具层**（梯 / 杆 / 芯片 / 出口）—— 整层可重建。
+   *
+   * 为什么不能像以前那样"建一次就不动"：闸门开启会把 `硬砖 → 梯子`（T13 的"通天梯"），
+   * 收走芯片会把 `宝物 → 空` —— 都发生在**游戏进行中**。只建一次的话，玩家会看到
+   * "闸门开了、路也通了，可那一段是**看不见的梯子**"。
+   *
+   * 重建判据是**道具签名**（把非道具格统一记成 `.`）：挖坑/回填不会改签名（那是最频繁的改动，
+   * 归砖层的差分），只有"道具的种类或位置变了"才整层重建 —— 一共几十个实例，重建很便宜。
+   */
+  const propGroup = new THREE.Group();
+  scene.add(propGroup);
+  /**
+   * 当前道具层的**件数**（每种各几个 `Piece`）。`counts` 报它、探针拿它对账
+   * （"关卡声明了芯片 ⇒ 画面上就该有芯片"）。
+   *
+   * ⚠ 这里存**件数**而不是"网格数组的下标"：`instanced()` 对空列表返回 `null` 并被过滤掉，
+   * 于是数组会缩短、下标会错位（曾经 `propMeshes[2]` 指到了出口网格，探针报"有芯片但画面上没有"）。
+   */
+  const propCounts = { ladders: 0, bars: 0, chips: 0, exits: 0 };
+  let propMeshes: THREE.InstancedMesh[] = [];
+  let propSignature = '';
+  const propSig = (grid: readonly TileKind[]): string =>
+    grid.map((kind) => (isProp(kind) ? kind : '.')).join('');
 
-  put(mat.prize, island.prize, [0.6, 0.6, 0.6], false);
+  function buildProps(grid: readonly TileKind[]): void {
+    for (const mesh of propMeshes) {
+      propGroup.remove(mesh);
+      mesh.dispose();
+    }
+    const props = collectProps(level, grid);
+    propCounts.ladders = props.ladders.length;
+    propCounts.bars = props.bars.length;
+    propCounts.chips = props.chips.length;
+    propCounts.exits = props.exits.length;
+    propMeshes = [
+      instanced(propGroup, box, mat.lad, props.ladders, true),
+      instanced(propGroup, box, mat.bar, props.bars, true),
+      instanced(propGroup, chipGeo, mat.chip, props.chips, false),
+      instanced(propGroup, box, mat.exit, props.exits, false),
+    ].filter((m): m is THREE.InstancedMesh => m !== null);
+    propSignature = propSig(grid);
+  }
+  buildProps(level.grid);
+
+  /**
+   * 宝物实例：**每一颗**一个实例（`island.prizes`）。收走哪颗就把哪个实例缩到 0 ——
+   * 与砖层同一套"零缩放 = 不可见"的约定（这里没有差分，宝物最多几颗）。
+   *
+   * 为什么不能"建一次就不动"：收走之后那颗必须消失（用户："走到岛台取的宝物后，没有任何反应"）。
+   */
+  const PRIZE_SIZE = 0.6;
+  const prizeMesh = instanced(
+    scene,
+    box,
+    mat.prize,
+    island.prizes.map((spot) => ({ p: spot.p, s: [PRIZE_SIZE, PRIZE_SIZE, PRIZE_SIZE] })),
+    false,
+  );
+  function applyTreasures(remaining: readonly DeckCell[]): void {
+    if (prizeMesh === null) return;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const pos = new THREE.Vector3();
+    const scl = new THREE.Vector3();
+    island.prizes.forEach((spot, i) => {
+      const alive = remaining.some((t) => t.x === spot.cell.x && t.z === spot.cell.z);
+      const k = alive ? PRIZE_SIZE : 0;
+      pos.set(spot.p[0], spot.p[1], spot.p[2]);
+      scl.set(k, k, k);
+      prizeMesh.setMatrixAt(i, m.compose(pos, q, scl));
+    });
+    prizeMesh.instanceMatrix.needsUpdate = true;
+  }
+  applyTreasures(level.treasures);
 
   // 取景包围盒：从墙背板外侧到**水面外沿**，从水底到墙顶。用真实的量算（`waterNear` / `wallTop`）——
   // 写死数字（曾经是 1.2）会在关卡尺寸一变就立刻说谎，而那正是"看不见出口/画面不铺满"的来源。
@@ -579,14 +684,20 @@ const faceCentre = -half + level.fold / 2;
       // 两者不相等是正常的（空格也占槽）—— 分开报，才看得出"差分容器有没有给够"。
       brick: level.grid.filter((kind) => brickColor(kind) !== null).length + island.bricks.length,
       brickSlots: level.cols * level.rows,
-      ladder: props.ladders.length,
-      bar: bars.length,
-      chip: props.chips.length,
-      exit: props.exits.length,
-      prize: 1,
+      ladder: propCounts.ladders,
+      bar: propCounts.bars,
+      chip: propCounts.chips,
+      exit: propCounts.exits,
+      prize: island.prizes.length,
     },
     setGrid(grid: readonly TileKind[]): number {
-      return brickLayer.apply(grid);
+      const changed = brickLayer.apply(grid);
+      // 道具只在**签名变了**时重建（闸门开了 / 芯片被收走）。
+      if (propSig(grid) !== propSignature) buildProps(grid);
+      return changed;
+    },
+    setTreasures(remaining: readonly DeckCell[]): void {
+      applyTreasures(remaining);
     },
     update(_elapsed: number): void {
       // 逐实体的补间归 meshSync（它有自己的 mesh，不在这里）。
@@ -595,7 +706,8 @@ const faceCentre = -half + level.fold / 2;
       // InstancedMesh 与墙板共用 box / chipGeo 两个几何体 —— 下面统一释放，
       // 这里只释放每个实例网格自己的实例缓冲（dispose 不动几何体）。
       brickLayer.mesh.dispose();
-      for (const mesh of meshes) mesh.dispose();
+      for (const mesh of propMeshes) mesh.dispose();
+      prizeMesh?.dispose();
       for (const o of singles) scene.remove(o);
       chipGeo.dispose();
       box.dispose();
