@@ -375,18 +375,20 @@ describe('input：折痕对输入是透明的（拿真相机的轴钉住）', ()
 });
 
 describe('input：挖键（T11）', () => {
-  it('Z 往左挖、X 往右挖，大小写不敏感；别的键不认', () => {
-    expect(digOfKey('z')).toBe('left');
-    expect(digOfKey('Z')).toBe('left');
-    expect(digOfKey('x')).toBe('right');
-    expect(digOfKey('X')).toBe('right');
+  it('Q 往左挖、E 往右挖，大小写不敏感；别的键不认', () => {
+    // 键位从 `Z`/`X` 改成 `Q`/`E`（用户 2026-09-19）：`Q`/`E` 就在 `A`/`D` 上方，
+    // 左手不用离开 WASD 那一排。
+    expect(digOfKey('q')).toBe('left');
+    expect(digOfKey('Q')).toBe('left');
+    expect(digOfKey('e')).toBe('right');
+    expect(digOfKey('E')).toBe('right');
     // 关键：不能和移动键撞车，否则按方向键会顺手挖一铲
-    for (const key of ['ArrowLeft', 'a', 'd', 'w', 's', 'q', ' ']) {
+    for (const key of ['ArrowLeft', 'a', 'd', 'w', 's', 'z', 'x', ' ']) {
       expect(digOfKey(key)).toBeNull();
     }
   });
 
-  it('挖键与移动键**互不干扰**：按 Z 不会让角色开始走', () => {
+  it('挖键与移动键**互不干扰**：按 Q 不会让角色开始走', () => {
     const dug = digPress(NO_KEYS, 'left');
     expect(moveIntent(dug)).toBeNull(); // 没有移动意图
     expect(digIntent(dug)).toBe('left');

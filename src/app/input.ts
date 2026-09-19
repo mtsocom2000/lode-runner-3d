@@ -72,18 +72,21 @@ export function dirOfKey(key: string): Dir | null {
 }
 
 /**
- * 挖的方向键（T11）。与移动键**分开**:`Z` = 往左挖、`X` = 往右挖（原版那两个动作键的惯例）。
+ * 挖的方向键（T11）。与移动键**分开**:`Q` = 往左挖、`E` = 往右挖。
  *
  * 为什么不做成"方向键 + 修饰键":`Intents.dig` 要的信息只有"朝哪边挖"这一件事,
  * 两个独立键表达得最直白,也不必和方向键的锁存语义纠缠（见下）。
+ *
+ * 键位从 `Z`/`X` 改成 `Q`/`E`（用户 2026-09-19）：`Q`/`E` 就压在 `A`/`D` 上方，
+ * 左手不用离开 WASD 那一排 —— 挖与走是**同一条肌肉**。
  */
 export function digOfKey(key: string): Dir | null {
   switch (key) {
-    case 'z':
-    case 'Z':
+    case 'q':
+    case 'Q':
       return 'left';
-    case 'x':
-    case 'X':
+    case 'e':
+    case 'E':
       return 'right';
     default:
       return null;
