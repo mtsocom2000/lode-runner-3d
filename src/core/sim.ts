@@ -1,7 +1,7 @@
 import { cellKey, type Cell } from './types';
 import { decideDrone, DRONE_STEP } from './ai/drone';
 import type { DeckCell, DeckJoint } from './world/deck';
-import { faceOf } from './world/fold';
+import { faceOf, isSeamStep } from './world/fold';
 import {
   applyBackfill,
   applyDig,
@@ -512,7 +512,12 @@ function advance(
         mode: result.state.mode,
         // 移动成立才算"朝这边走"：撞墙不更新（否则贴着墙按住会把朝向刷成墙的方向）。
         facing: dir,
-        cooldown: moveTicks(entity.kind) - 1,
+        // **跨折痕那一步不扣冷却**：那两格在世界同一个位置，等于原地转 90°、一格都没走 ——
+        // 照常扣一格的冷却，角色会在墙角停一整个移动间隔
+        //（用户 2026-09-19："机器人经过转角的时候明显会停顿一下"）。见 `isSeamStep`。
+        cooldown: isSeamStep(entity.cell, result.state.cell, level.fold)
+          ? entity.cooldown
+          : moveTicks(entity.kind) - 1,
       };
 
     case 'fall':

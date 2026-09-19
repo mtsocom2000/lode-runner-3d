@@ -116,13 +116,23 @@ describe('挖（T11）：接进 tick 之后', () => {
 
   it('冷却中不许挖 —— 挖是一个动作，不是站姿', () => {
     const state = createSim(PIT, SPAWN, PLAYER_LIVES);
-    const moved = tick(state, { move: 'right', dig: null });
+    // 往**左**走一步（`A:0,2`）：这是普通的一格。**不能写 `right`** —— 出生点 `A:1,2` 是
+    // 最内列，往右就是跨折痕那一步，而那是**不扣冷却**的（原地转 90°，见 `isSeamStep`）。
+    const moved = tick(state, { move: 'left', dig: null });
     expect(eventsOf(moved)).toContain('entered');
     expect(moved.state.entities[0]?.cooldown).toBe(MOVE_TICKS - 1);
 
-    const tried = tick(moved.state, digLeft);
+    const tried = tick(moved.state, digRight);
     expect(eventsOf(tried)).not.toContain('dug');
     expect(tried.state.fills).toEqual([]);
+  });
+
+  it('跨折痕那一步**不扣冷却**：两格在世界同一个位置，等于原地转 90°', () => {
+    // 用户 2026-09-19："机器人经过转角的时候明显会停顿一下" —— 就是这一步以前照常扣冷却。
+    const state = createSim(PIT, SPAWN, PLAYER_LIVES);
+    const crossed = tick(state, { move: 'right', dig: null }); // A:1,2 → B:2,2（折痕）
+    expect(playerOf(crossed)).toEqual(cellB(2, 2));
+    expect(crossed.state.entities[0]?.cooldown).toBe(0); // 不占用移动间隔
   });
 
   it('重复按住挖同一个洞不会挖第二次（洞已经空了）', () => {

@@ -121,3 +121,20 @@ export function seamPairs(rows: number, fold: number): readonly SeamPair[] {
   }
   return out;
 }
+
+/**
+ * 这一步是不是**跨折痕**的那一步（`A: fold-1` ↔ `B: fold`，同一行）。
+ *
+ * 用途只有一个：**它不该占用一格的移动冷却**。折痕两侧最内列落在**世界同一个位置**
+ * （见 `metrics.BRICK_N` 的说明），所以跨折痕 = 原地转 90°、一格都没走 ——
+ * 照常扣一格的冷却，角色就会在墙角停一整个移动间隔
+ * （用户 2026-09-19："机器人经过转角的时候明显会停顿一下"）。
+ *
+ * 不扣冷却**不等于加速**：那一步位移是 0，所以"绕拐角"与"直走同样格数"所花的时间一致。
+ */
+export function isSeamStep(from: Cell, to: Cell, fold: number): boolean {
+  if (from.face === 'I' || to.face === 'I') return false; // 甲板不是折痕
+  if (from.face === to.face || from.row !== to.row) return false;
+  const inner = (c: Cell): boolean => c.col === (c.face === 'A' ? fold - 1 : fold);
+  return inner(from) && inner(to);
+}
