@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, BRICK_N, CUBE, DECK_TOP_Y, HEADROOM, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_TOP_Y, HEADROOM, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -340,14 +340,22 @@ export interface Stage {
 export function createStage(level: Level): Stage {
   const half = halfExtent(level.fold);
   const wallTop = level.rows + HEADROOM;
-  const span = level.cols + 2;
+  /**
+   * **一面墙**（折起来之后）在世界里占多宽。
+   *
+   * 曾经这里是 `level.cols + 2` —— 那是**摊平后两面的总列数**（20+2），而折起来之后
+   * 两片墙是**互相垂直**的，各自只摊到一个面（`fold` 格）。于是墙板比地形宽了**一倍多**：
+   * 地形缩在中间一块、四周全是空墙板。用户的原话："左右侧面扩大了，但是侧面上的场景没有铺满。"
+   *
+   * 概念场景里这个错被**写死的相机取景裁掉了**（`ORTHO = 6.5` 把空墙板切出画外），
+   * 所以一直没露出来；把取景改成"跟着内容走"之后它当场显形。这就是那句
+   * "判据只能有一个出处"的又一面：`cols` 与 `fold` 是两套坐标，混用必错。
+   */
+  const faceSpan = level.fold + 1; // 含两侧各 0.5 的余量
+  /** 一面墙在它那条轴上的中心（从折痕 `-half` 到最外一列 `-half + fold - 1`）。 */
+  const faceCentre = -half + (level.fold - 1) / 2;
 
-  // 内容包围盒（取景用，见 `Stage.bounds` 的说明）。x/z 从墙背板外侧到水面外沿，
-  // y 从水底到"墙顶 + HEADROOM"。留一点余量，宁可多留半格也别把墙沿切掉。
-  const bounds: Bounds = {
-    min: [-half - 0.8, -0.2, -half - 0.8],
-    max: [1.2, wallTop, 1.2],
-  };
+  // 内容包围盒（取景用，见 `Stage.bounds` 的说明）在函数末尾算 —— 它要用到水面外沿。
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(PALETTE.bg);
@@ -419,24 +427,25 @@ export function createStage(level: Level): Stage {
   }
 
   // ── 两片墙（背板）+ 折痕线 ──
-  put(mat.shell, [-half - 0.5, wallTop / 2, 0], [1, wallTop, span]);
-  put(mat.shell, [0, wallTop / 2, -half - 0.5], [span, wallTop, 1]);
+  put(mat.shell, [-half - 0.5, wallTop / 2, faceCentre], [1, wallTop, faceSpan]);
+  put(mat.shell, [faceCentre, wallTop / 2, -half - 0.5], [faceSpan, wallTop, 1]);
   put(mat.seam, [-half, wallTop / 2 - 0.5, -half], [0.09, wallTop - 0.8, 0.09]);
 
   // ── 墙面轮廓线：没有这一圈，两片墙会整片隐进背景，"折面贴在墙角"就读不出来了 ──
   {
     const e = -half + 0.06;
     const w = 0.05;
-    const z = span / 2;
+    const z0 = faceCentre - faceSpan / 2;
+    const z1 = faceCentre + faceSpan / 2;
     const t = wallTop;
-    put(mat.edge, [e, t / 2, -z], [w, t, w], false);
-    put(mat.edge, [e, t / 2, z], [w, t, w], false);
-    put(mat.edge, [e, 0.05, 0], [w, w, z * 2], false);
-    put(mat.edge, [e, t - 0.05, 0], [w, w, z * 2], false);
-    put(mat.edge, [-z, t / 2, e], [w, t, w], false);
-    put(mat.edge, [z, t / 2, e], [w, t, w], false);
-    put(mat.edge, [0, 0.05, e], [z * 2, w, w], false);
-    put(mat.edge, [0, t - 0.05, e], [z * 2, w, w], false);
+    put(mat.edge, [e, t / 2, z0], [w, t, w], false);
+    put(mat.edge, [e, t / 2, z1], [w, t, w], false);
+    put(mat.edge, [e, 0.05, faceCentre], [w, w, faceSpan], false);
+    put(mat.edge, [e, t - 0.05, faceCentre], [w, w, faceSpan], false);
+    put(mat.edge, [z0, t / 2, e], [w, t, w], false);
+    put(mat.edge, [z1, t / 2, e], [w, t, w], false);
+    put(mat.edge, [faceCentre, 0.05, e], [faceSpan, w, w], false);
+    put(mat.edge, [faceCentre, t - 0.05, e], [faceSpan, w, w], false);
   }
 
   // ── 水面：铺满"两片墙围起来的这一块"，岛台只是水里的一座台 ──
@@ -474,7 +483,7 @@ export function createStage(level: Level): Stage {
   // 这个值是**外观参数**，改它不牵连任何逻辑。
   const island = islandAndJetties(level);
   const islandCentre = island.centre;
-  const waterFar = -half + BRICK_N;
+  const waterFar = -half + 0.2;
   /** 墙口：最外一片砖（col 0）的格心在 -0.5，再加半个立方体就是它的外表面。 */
   const wallOuter = -0.5 + CUBE / 2;
   /** 水从墙口外沿再往开口侧铺出去多少格（观感参数，不参与任何规则）。 */
@@ -535,6 +544,13 @@ export function createStage(level: Level): Stage {
   ].filter((m): m is THREE.InstancedMesh => m !== null);
 
   put(mat.prize, island.prize, [0.6, 0.6, 0.6], false);
+
+  // 取景包围盒：从墙背板外侧到**水面外沿**，从水底到墙顶。用真实的量算（`waterNear` / `wallTop`）——
+  // 写死数字（曾经是 1.2）会在关卡尺寸一变就立刻说谎，而那正是"看不见出口/画面不铺满"的来源。
+  const bounds: Bounds = {
+    min: [-half - 0.8, -0.2, -half - 0.8],
+    max: [waterNear, wallTop, waterNear],
+  };
 
   return {
     scene,
