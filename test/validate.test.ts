@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONCEPT_MINIMAL, PLAYER_SPAWN } from '../src/core/level/levels/conceptMinimal';
+import { L2, L2_SPAWN } from '../src/core/level/levels/l2';
 import { validateLevel, type LevelIssue, type RuleId } from '../src/core/level/validate';
 import type { LevelDef } from '../src/core/world/tiles';
 import type { Cell } from '../src/core/types';
@@ -131,6 +132,37 @@ describe('validateLevel —— 反向：别把这些合法关卡拦下来', () =
     // 开在末端就不同了：剩下的 col0..col2 仍然连成一串，出口也落在实心砖上方。
     // 两条合起来才说明校验判的是**连通性**，而不是"地板必须满宽"。
     expect(validateLevel(def(2, ['XXX.', '..E.']), { face: 'A', col: 0, row: 1 })).toEqual([]);
+  });
+});
+
+/**
+ * 规则⑦：横杆下方不得为实心。这条**一直没有实现**（L1 里没有杆），而 L2 的"跨折痕横杆"
+ * 正是按它摆的 —— 补上它是为了让下一个改关卡的人不会悄悄把那两格空填回去，
+ * 直到玩家吊上去才发现卡在砖里。
+ */
+describe('validateLevel — 规则⑦：横杆下方不得为实心', () => {
+  /**
+   * `fold = 2`（col 0/1 = A、col 2/3 = B）、`r1` 是行走行、`r0` 是地板。
+   * 两根杆放 `r1` 的 col 1/2（= A:1,1 与 B:2,1），出口在 r1 col 3 —— 其余部分合法。
+   */
+  const withBars = (floor: string): LevelDef => def(2, [floor, '.--E']);
+
+  it('下方是空 → 合法（L2 的横杆就是这样摆的）', () => {
+    expect(validateLevel(withBars('X..X'), { face: 'A', col: 0, row: 1 })).toEqual([]);
+  });
+
+  it('下方是砖 → 报 `barHangable`，并指名是哪一根', () => {
+    const hits = validateLevel(withBars('XXXX'), { face: 'A', col: 0, row: 1 }).filter(
+      (i) => i.rule === 'barHangable',
+    );
+    expect(hits).toHaveLength(2);
+    expect(hits[0]?.detail).toContain('A:1,1');
+    expect(hits[1]?.detail).toContain('B:2,1'); // col 2 已经跨到 B 面了
+  });
+
+  it('L2 的横杆（跨折痕那两根）真的通过这条规则 —— 别只在夹具里绿', () => {
+    const issues = validateLevel(L2, L2_SPAWN).filter((i) => i.rule === 'barHangable');
+    expect(issues).toEqual([]);
   });
 });
 

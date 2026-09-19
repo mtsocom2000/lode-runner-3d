@@ -2,7 +2,7 @@ import { cellKey, type Cell } from '../types';
 import { openGates } from '../rules/goals';
 import { walkNeighbours, walkReachable } from '../rules/reach';
 import { asCell, deckKey } from '../world/deck';
-import { buildGraph, isLadder, isStandable } from '../world/graph';
+import { buildGraph, isBar, isLadder, isSolid, isStandable } from '../world/graph';
 import { parseLevel, withGrid, type Level, type LevelDef, type LoadError, type TileKind } from '../world/tiles';
 
 /**
@@ -49,6 +49,8 @@ export type RuleId =
   | 'exitStandable'
   /** 梯子不能断。 */
   | 'ladderContinuous'
+  /** 横杆下方不得为实心（规则⑦）：杆是拿来吊的，下方是砖就吊不住。 */
+  | 'barHangable'
   /** 每一格可站立处都要能从出生点走到。 */
   | 'unreachable'
   /** 至少有一个出口（否则这一关赢了也出不去）。 */
@@ -163,6 +165,9 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
   // 劈开之后未必立刻表现为"到不了"（下半截可能还够得着平台），所以这条要独立报 ——
   // 只靠 ⑤ 会漏掉"看起来断了但其实还能绕"的情形，而那种情形一样是作者手误。
   for (const issue of ladderGaps(level)) issues.push(issue);
+
+  // 规则⑦：横杆下方不得为实心（见 `unsupportedBars`）。与梯子一样是**逐格**结构检查。
+  for (const issue of unsupportedBars(level)) issues.push(issue);
 
   // ⑤ 每一格可站立处都要能从出生点走到。
   //
@@ -315,6 +320,36 @@ function ladderGaps(level: Level): readonly LevelIssue[] {
     }
   }
 
+  return issues;
+}
+
+/**
+ * 规则⑦（设计文档 §四）：**横杆下方不得为实心**。
+ *
+ * 为什么要有它：吊着的人**占的是杆下面那一格**（`playerAnchor` 的 `hang` 分支把身体中心
+ * 下移 `HANG_DROP`，见 `render/metrics.ts`）—— 杆下若是砖，那个人就悬在砖里。原版同样的道理
+ * （杆是用来吊的，不是用来站的），归档原型 `cargo` 那版也把这条当硬规则。
+ *
+ * 这条规则**一直没有实现**（L1 里没有杆，所以从没暴露）；L2 的"跨折痕横杆"正是按它摆的 ——
+ * 杆下面那两格 `r2` 特意挖空（见 `levels/l2.ts` 的图纸）。补上它是为了让**下一个人**改关卡时
+ * 不会悄悄把砖填回去，直到玩家吊上去才发现卡在砖里。
+ *
+ * "锚在砖面之上一层"那半句是**外观**（渲染把杆画在格心，上方有没有砖都不影响"吊"这个动作），
+ * 所以这里只判可判定的这一半。
+ */
+function unsupportedBars(level: Level): readonly LevelIssue[] {
+  const issues: LevelIssue[] = [];
+  for (let row = 1; row < level.rows; row++) {
+    for (let col = 0; col < level.cols; col++) {
+      if (!isBar(level.at(col, row))) continue;
+      if (!isSolid(level.at(col, row - 1))) continue; // 下方不是实心 → 吊得住
+      issues.push({
+        rule: 'barHangable',
+        detail: `横杆 ${where(cellOf(level, col, row))} 的正下方是实心砖：吊着的人会卡在砖里（规则⑦"连杆下方非实心"）`,
+        at: cellOf(level, col, row),
+      });
+    }
+  }
   return issues;
 }
 

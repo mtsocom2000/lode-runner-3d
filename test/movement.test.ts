@@ -14,6 +14,7 @@ import {
 import { BAROVER, BARSTUB, CLIFF, DROP, JETTY, UPPER, cellA, cellB, load } from './fixtures';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { L1 } from '../src/core/level/levels/l1';
+import { L2 } from '../src/core/level/levels/l2';
 import { DRONE_STEP } from '../src/core/ai/drone';
 
 /** 站在某格（模式由 supportOf 定：砖/梯 → stand，杆 → hang）。夹具非法时直接炸，不静默。 */
@@ -63,6 +64,7 @@ describe('movement：方向表', () => {
 describe('movement：每个接头的"进门键" = "沿小道继续的键"', () => {
   for (const [name, def] of [
     ['L1', L1],
+    ['L2', L2],
     ['概念关卡', CONCEPT_MINIMAL],
   ] as const) {
     it(`${name}：两处接头都满足`, () => {

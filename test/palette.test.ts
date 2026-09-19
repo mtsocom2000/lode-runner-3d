@@ -1,41 +1,71 @@
 import { describe, expect, it } from 'vitest';
-import { PALETTE } from '../src/render/palette';
+import { PALETTE, type PaletteKey } from '../src/render/palette';
 import { FEATURE_RULES } from '../src/render/probe';
 
 /**
  * **调色板 × 探针**的契约测试。
  *
  * `palette.ts` 的文件头写着"改这 5 个色相规则里的任何一个，都必须同步改 `probe.ts` 对应的那条，
- * 否则探针会开始误判" —— 但那条契约**一直只有注释在维护**：改色的人忘了改规则，
- * 探针不会报错，它只会**认错东西**（历史上有两次：换浅色版时 player 改色、
- * 加泛光之后身体像素不再等于材质色）。
+ * 否则探针会开始误判" —— 但那条契约**一直只有注释在维护**。它已经漂过三次，而且都是
+ * **只有探针到不了的关卡才掩盖住**的：
  *
- * 这条测试把契约变成可执行的：
+ * - `bar` 的规则还停在深色版的**品红**上，而横杆早已改成陶土红 —— L1 没有横杆，这条坏了整整一版，
+ *   直到 L2（第一关带横杆）接上探针才现形；
+ * - `cyan`（芯片）的旧门槛能把**水面**也算进去；
+ * - 新加的攀爬者第一版按"暗青"卡绝对明度，泛光一加就再也匹配不到。
  *
- * 1. 每个**实体**的颜色必须命中它自己那条规则（否则探针报"画面上没有它"）；
- * 2. 每个实体的颜色**不得**命中别人的规则（否则探针把 A 数成 B）；
- * 3. 规则的键与实体的键同名 —— 名字对不上时上面两条都是空转。
+ * 所以这里把契约变成**可执行的**：把 `PALETTE` 里**每一项**都过一遍规则，断言
+ *
+ * 1. 该命中某条规则的（`chip`/`prize`/`exit`/`bar`/`player`/`drone`/`stalker`）**只命中那一条**；
+ * 2. 其余每一项（砖、水、背板……）**一条都不命中** —— 否则探针会把它们数成别的东西，
+ *    于是"画面上有出口"这种断言会被一片水面喂饱。
+ *
+ * 判据只看**通道差**（对加法泛光不变），所以这条测试与"画面上真实渲出来什么"同口径。
  */
-const ENTITIES = ['player', 'drone', 'stalker'] as const;
+const CONTRACT: Readonly<Record<PaletteKey, string | null>> = {
+  // 场景本体：不该被认成任何特征
+  bg: null,
+  shell: null,
+  edge: null,
+  seam: null,
+  brick: null,
+  hard: null,
+  lad: null,
+  water: null,
+  bed: null,
+  rim: null,
+  glint: null,
+  ink: null,
+  pit: null,
+  // 道具与实体：各自那条
+  bar: 'bar',
+  chip: 'cyan',
+  prize: 'prize',
+  exit: 'exit',
+  player: 'player',
+  drone: 'drone',
+  stalker: 'stalker',
+};
 
 function rgb(hex: number): readonly [number, number, number] {
   return [(hex >> 16) & 0xff, (hex >> 8) & 0xff, hex & 0xff];
 }
 
-describe('palette × probe：实体的颜色与色相规则是同一份契约', () => {
-  for (const kind of ENTITIES) {
-    it(`${kind}：命中自己的规则，且只命中自己那一条`, () => {
-      const [r, g, b] = rgb(PALETTE[kind]);
-      const hits = Object.entries(FEATURE_RULES)
-        .filter(([, rule]) => rule(r, g, b))
-        .map(([name]) => name);
+function hitsOf(hex: number): readonly string[] {
+  const [r, g, b] = rgb(hex);
+  return Object.entries(FEATURE_RULES)
+    .filter(([, rule]) => rule(r, g, b))
+    .map(([name]) => name);
+}
 
-      expect(hits).toContain(kind); // 探针得认得出它
-      expect(hits).toEqual([kind]); // 也不能把它认成别的（或反过来）
+describe('palette × probe：颜色与色相规则是同一份契约', () => {
+  for (const [key, expected] of Object.entries(CONTRACT) as readonly [PaletteKey, string | null][]) {
+    it(`${key} → ${expected ?? '（不该命中任何规则）'}`, () => {
+      expect(hitsOf(PALETTE[key])).toEqual(expected === null ? [] : [expected]);
     });
   }
 
-  it('规则的键覆盖了三种实体（名字对不上时上面几条都是空转）', () => {
-    for (const kind of ENTITIES) expect(Object.keys(FEATURE_RULES)).toContain(kind);
+  it('契约表覆盖了调色板的每一项（新加颜色时别漏登记）', () => {
+    expect(Object.keys(CONTRACT).sort()).toEqual(Object.keys(PALETTE).sort());
   });
 });
