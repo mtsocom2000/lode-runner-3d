@@ -1,7 +1,9 @@
 import {
+  TURN_SECONDS,
   TWEEN_SECONDS,
   advance,
   aim,
+  aimAngle,
   isDone,
   retarget,
   samePoint,
@@ -109,6 +111,40 @@ describe('tween：中途换目标', () => {
       expect(x).toBeGreaterThanOrEqual(prevX);
       prevX = x;
     }
+  });
+});
+
+describe('tween：aimAngle（朝向的平滑，用户 2026-09-19）', () => {
+  it('走**最短路**：从 0 转到 -90°（等价 +270°）是往负方向走，不绕远', () => {
+    // 跨折痕那一步正好是 90°；`atan2` 给的角度会在 ±π 之间跳，取模必须归一化。
+    const target = -Math.PI / 2;
+    const step = aimAngle(0, target, TURN_SECONDS / 2);
+    expect(step).toBeLessThan(0); // 往负方向（近的那边）
+    expect(Math.abs(step)).toBeCloseTo(Math.PI / 2, 10);
+  });
+
+  it('π 附近不绕圈：从 +170° 到 -170° 只走 20°（不是 340°）', () => {
+    const from = (170 * Math.PI) / 180;
+    const to = (-170 * Math.PI) / 180;
+    // 一步的时间够转 180°，所以直接到位 —— 关键是它**到了目标**，而不是绕另一头慢慢转。
+    expect(aimAngle(from, to, TURN_SECONDS)).toBeCloseTo(to, 10);
+  });
+
+  it('时间按秒走：`TURN_SECONDS` 之内转完 90°，且帧率无关', () => {
+    const target = -Math.PI / 2;
+    expect(aimAngle(0, target, TURN_SECONDS * 2)).toBe(target); // 过冲也被夹在目标上
+
+    let fine = 0;
+    const frames = 8; // 8 帧 × TURN_SECONDS/8 = TURN_SECONDS
+    for (let i = 0; i < frames; i++) fine = aimAngle(fine, target, TURN_SECONDS / frames);
+    expect(fine).toBeCloseTo(target, 10);
+  });
+
+  it('已经对准就原样返回；没时间/`seconds <= 0` 时不动或直接到位', () => {
+    expect(aimAngle(1, 1, 1 / 60)).toBe(1);
+    expect(aimAngle(0, Math.PI * 2, 1 / 60)).toBe(Math.PI * 2); // 同一个方向的另一种写法
+    expect(aimAngle(0, 2, 0)).toBe(0); // dt = 0：一帧没过去，不该转
+    expect(aimAngle(0, 2, 1 / 60, 0)).toBe(2); // 不给时长 = 直接到位
   });
 });
 

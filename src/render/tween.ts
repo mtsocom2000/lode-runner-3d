@@ -83,6 +83,31 @@ export function samePoint(a: Vec3, b: Vec3): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
 
+/**
+ * 朝向的视觉补间时长（秒）。取 **0.08**（用户 2026-09-19 的建议）。
+ *
+ * 为什么需要它：**跨折痕那一步是"原地转 90°"**（位移为 0，见 `isSeamStep`）—— 逻辑上完全正确，
+ * 但朝向记号直接跳 90° 看起来就是"卡了一下"。90° 本身是瞬间发生的（不是走出来的），
+ * 所以给一个**比一步还短**的旋转补间：眼睛读到的是一次利落的"贴墙拐弯"，而不是停顿。
+ */
+export const TURN_SECONDS = 0.08;
+
+/**
+ * 把角度朝目标转一步，**走最短路**（`-π` 与 `+π` 是同一个方向）。
+ *
+ * 只做"每帧挪一点"，不做插值曲线：角度的起止每帧都可能变（玩家随时转身），
+ * 而这里要的只是"别跳"。`seconds <= 0` 时直接到位。
+ */
+export function aimAngle(current: number, target: number, dt: number, seconds = TURN_SECONDS): number {
+  if (seconds <= 0) return target;
+  const full = Math.PI * 2;
+  // 归一化到 (-π, π]：这样下面那句"走最短路"只需比较正负。
+  const delta = ((((target - current) % full) + full + Math.PI) % full) - Math.PI;
+  const step = ((dt > 0 ? dt : 0) / seconds) * Math.PI;
+  if (Math.abs(delta) <= step) return target;
+  return current + Math.sign(delta) * step;
+}
+
 function lerp(a: number, b: number, k: number): number {
   return a + (b - a) * k;
 }

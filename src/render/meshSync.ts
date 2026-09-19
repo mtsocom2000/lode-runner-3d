@@ -3,7 +3,7 @@ import { bridgesOf, type EntityKind, type SimState } from '../core/sim';
 import type { Level } from '../core/world/tiles';
 import { PLAYER_SIZE, playerAnchor, stepDelta } from './metrics';
 import { PALETTE } from './palette';
-import { advance, aim, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
+import { advance, aim, aimAngle, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
 
 /**
  * 实体层：把 `SimState.entities` 摆到墙上，并把"格到格"的跳变补成滑动（T6）。
@@ -110,6 +110,10 @@ interface Actor {
    * （用户 2026-09-19："看不出前进方向…或者在方块正下方画一个箭头，指示当前的面对方向"）。
    */
   readonly arrow: THREE.Mesh;
+  /** 身体正面的记号（两只"眼睛"）。跟朝向一起转，见 `spawn` 里那段。 */
+  readonly face: THREE.Group;
+  /** 当前**显示**的朝向角（弧度）。与 `entity.facing` 之间有一小段补间，见 `aimAngle`。 */
+  yaw: number | null;
   tween: Tween;
 }
 
@@ -178,6 +182,20 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     stalker: new THREE.MeshBasicMaterial({ color: PALETTE.stalker }),
   };
 
+  /**
+   * 身体**正面**的记号（"护目镜"）：两个高亮小方块，贴在面朝的那一面上（用户 2026-09-19）。
+   *
+   * 为什么需要它：45° 俯视下身体是个平顶方块，从上面看几乎就是一块菱形 —— 只靠贴地那个小三角，
+   * 在移动中或被砖挡住时很容易被忽略。正面记号把"我面朝哪边"变成**身体本身的形状**，
+   * 贴地三角则作为"与网格对齐的基准"一起保留（双重保证）。
+   *
+   * 颜色取 `PALETTE.bg`（纸色）：三种实体身上都能一眼看清，而且**不引入新色** ——
+   * `probe.ts` 的像素契约是按调色板分类的，多一个颜色就多一条要维护的规则。
+   */
+  const eyeSize = PLAYER_SIZE * 0.2;
+  const eyeGeo = new THREE.BoxGeometry(eyeSize, eyeSize, 0.05);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: PALETTE.bg });
+
   function spawn(id: number, kind: EntityKind, at: Vec3): Actor {
     const g = new THREE.Group();
 
@@ -196,11 +214,23 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     arrow.position.set(0, -PLAYER_SIZE / 2 + 0.01, 0);
     g.add(arrow);
 
+    // 正面记号挂在**自己的小 group** 上：它要跟朝向一起转，而身体**不转**（网格对齐是硬要求）。
+    // group 的原点就是身体中心，所以转动它等于让两只眼睛绕着身体表面转到面朝的那一面去。
+    const face = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(eyeGeo, eyeMat);
+      eye.position.set(side * eyeSize * 1.2, PLAYER_SIZE * 0.14, PLAYER_SIZE / 2 + 0.025);
+      // 画在光晕壳**之后**：不然半透明的壳会给它蒙上一层身体色，记号就不"高亮"了。
+      eye.renderOrder = GLOW_RENDER_ORDER + 1;
+      face.add(eye);
+    }
+    g.add(face);
+
     g.position.set(at[0], at[1], at[2]);
     group.add(g);
 
     // 首次出现**不滑入**：`from === to` 于是 `sample` 直接给目标点，人就地站好。
-    const actor: Actor = { kind, group: g, arrow, tween: tweenTo(at, at) };
+    const actor: Actor = { kind, group: g, arrow, face, yaw: null, tween: tweenTo(at, at) };
     actors.set(id, actor);
     return actor;
   }
@@ -237,7 +267,15 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
         // **同一个** `stepDelta`（跨折痕那一步在这里自动变成"转过弯之后"的方向）。
         // 走不动时（`null`）保持上一次的朝向，不要突然指回某个默认方向。
         const facing = stepDelta(level, entity.cell, entity.mode, entity.facing, bridges);
-        if (facing !== null) actor.arrow.rotation.y = Math.atan2(facing.delta[0], facing.delta[2]);
+        if (facing !== null) {
+          // 朝向**平滑**过去（用户 2026-09-19）：跨折痕那一步是"原地转 90°"，
+          // 记号直接跳会看起来像卡了一下；补一个比一步还短的旋转，读起来是利落的贴墙拐弯。
+          // 首次出现直接到位（`yaw === null`）—— 否则新实体一登场会先转半圈。
+          const target = Math.atan2(facing.delta[0], facing.delta[2]);
+          actor.yaw = actor.yaw === null ? target : aimAngle(actor.yaw, target, dt);
+          actor.arrow.rotation.y = actor.yaw;
+          actor.face.rotation.y = actor.yaw; // 正面记号一起转：朝向是**身体**的属性
+        }
 
         const p = sample(actor.tween);
         actor.group.position.set(p[0], p[1], p[2]);
@@ -274,6 +312,8 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     parent.remove(group);
     box.dispose();
     arrowGeo.dispose();
+    eyeGeo.dispose();
+    eyeMat.dispose();
     for (const m of Object.values(bodyMat)) m.dispose();
     for (const m of Object.values(glowMat)) m.dispose();
     for (const m of Object.values(arrowMat)) m.dispose();

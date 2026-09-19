@@ -188,7 +188,7 @@ function refreshHud(): void {
     // T13：目标状态。这两个数是玩家做决策要看的 —— "还剩几块"决定还有多远，
     // 闸门开没开决定现在能不能去出口。**刻意不显示宝物在哪**：那是玩家该自己找的。
     `宝物 ${state.treasures.length === 0 ? '已集齐' : `还剩 ${state.treasures.length} 块`} ｜ 出口闸门 ${state.gatesOpen ? '已开' : '封着（集齐才开）'}`,
-    '方向键 / WASD（墙上 `w`/`s` 上下、`a`/`d` 沿墙；甲板 `w`↖ `e`↗ `s`↙ `d`↘） ｜ 丁字路口按 `S` 拐上小道 ｜ 甲板 `Z`/`X` 换层（塔） ｜ `Q` 后挖 / `R` 前挖 ｜ `Backspace` 重开',
+    '方向键 / WASD（墙上 `w`/`s` 上下、`a`/`d` 沿墙；甲板 `w`↖ `s`↘ 纵深、`a`↙ `d`↗ 横向） ｜ 丁字路口按 `S` 拐上小道 ｜ 甲板 `Z`/`X` 换层（塔） ｜ `Q` 后下方挖 / `E` 前下方挖 ｜ `R` 重开',
     // 用户反复反馈"WASD 在拐角与岛台上完全不准"。**不换映射** —— 实测在这个相机下
     // 无解（甲板是水平面、方位角又是 45°，两个轴在屏幕上都投成 (±0.7,∓0.3)）；
     // 能做的是把每个键实际会往屏幕哪边走如实报出来。推导见 render/hints.ts。
@@ -280,14 +280,14 @@ function restart(): void {
 }
 
 /**
- * 重开的键。**从 `R` 挪到 `Backspace`**（2026-09-19）：`R` 被"前挖"拿走了。
- * 选 `Backspace` 是因为它在本作里没有别的用途，语义上也对（"退回去重来"）。
+ * 重开的键（`R`，用户 2026-09-19 定稿）。`R` 一度让给"前挖"，甲板改用经典等轴测映射之后
+ * `E` 空出来、"前挖"回到 `E`，`R` 于是回到它通用的位置。
  */
-const RESTART_KEY = 'Backspace';
+const RESTART_KEY = 'r';
 
 window.addEventListener('keydown', (e) => {
-  if (e.key !== RESTART_KEY) return;
-  e.preventDefault(); // 免得浏览器把它当成"后退"
+  if (e.key.toLowerCase() !== RESTART_KEY) return;
+  e.preventDefault();
   restart();
 });
 

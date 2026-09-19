@@ -85,9 +85,10 @@ describe('hints：屏幕方向（用户反馈"WASD 在拐角与岛台上完全�
     expect(line).toContain('Z/X 只在甲板上换层');
   });
 
-  it('甲板那行列的是四个屏幕斜向键 `w`/`e`/`s`/`d`（各自正对一个象限）', () => {
+  it('甲板那行列的是经典等轴测四键 `w`/`s`/`a`/`d`，并点名 `Z`/`X` 换层', () => {
     const line = formatDirHints(hintsAt('I', -3, -3), 'deck', keyLabel);
-    for (const k of ['w=', 'e=', 's=', 'd=']) expect(line).toContain(k);
-    expect(line).not.toContain('a=');
+    for (const k of ['w=', 's=', 'a=', 'd=']) expect(line).toContain(k);
+    expect(line).not.toContain('e='); // `e` 归挖
+    expect(line).toContain('Z/X 上下一层');
   });
 });

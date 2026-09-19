@@ -108,13 +108,13 @@ describe('input：按键 → 方向（**按面分**）', () => {
     expect(dirOfKey('e', 'wall')).toBeNull(); // 墙面上没有斜向可言
   });
 
-  it('甲板：四个屏幕斜向 `w`↖ `e`↗ `s`↙ `d`↘（各自正对一个象限）', () => {
-    // ↖ = -x = `left`；↗ = -z = `up`；↙ = +z = `down`；↘ = +x = `right`（见 `DECK_DIR`）。
+  it('甲板：经典等轴测（菱形）映射 —— `w`↖ `s`↘ 纵深轴、`a`↙ `d`↗ 横向轴', () => {
+    // ↖ = -x = `left`；↘ = +x = `right`；↙ = +z = `down`；↗ = -z = `up`（见 `DECK_DIR`）。
     expect(dirOfKey('w', 'deck')).toBe('left');
-    expect(dirOfKey('e', 'deck')).toBe('up');
-    expect(dirOfKey('s', 'deck')).toBe('down');
-    expect(dirOfKey('d', 'deck')).toBe('right');
-    expect(dirOfKey('A', 'deck')).toBeNull(); // 用户给的四个键里没有 `a`
+    expect(dirOfKey('s', 'deck')).toBe('right');
+    expect(dirOfKey('a', 'deck')).toBe('down');
+    expect(dirOfKey('d', 'deck')).toBe('up');
+    expect(dirOfKey('e', 'deck')).toBeNull(); // `e` 归挖（`E` 前下方挖）
   });
 
   it('方向键是 WASD 的**别名**（完全等价，不另立含义）', () => {
@@ -141,14 +141,13 @@ describe('input：按键 → 方向（**按面分**）', () => {
  * 因为"按键怎么发出来"和"走法合不合法"是两件事，只有后者被 `movement.step` 管着。
  */
 describe('input：同一个键在两个面上的含义', () => {
-  it('`moveAllowed` 跟着键位表走：墙上四个方向都有（只有 `e` 没有），甲板也没有 `a`', () => {
+  it('`moveAllowed` 跟着键位表走：两面都是四个方向（`e` 哪一面都不是移动键）', () => {
     for (const surface of ['wall', 'deck'] as const) {
       for (const dir of ['left', 'right', 'up', 'down'] as const) {
         expect(moveAllowed(dir, surface)).toBe(true);
       }
     }
-    expect(moveAllowed('up', 'wall')).toBe(true); // 墙面上的 `up` 就是爬梯
-    expect(dirOfKey('a', 'deck')).toBeNull();
+    expect(dirOfKey('e', 'deck')).toBeNull();
     expect(dirOfKey('e', 'wall')).toBeNull();
   });
 
@@ -168,7 +167,7 @@ describe('input：同一个键在两个面上的含义', () => {
     expect(input.intents().move).toBe('left');
   });
 
-  it('真的按 `a`：墙面上是 `left`；甲板上没有这个键', () => {
+  it('真的按 `a`：墙面上是 `left`（沿走廊），甲板上是 `down`（↙，次横向轴）', () => {
     const kb = keyboard();
     const input = createInput(kb.target, kb.at);
 
@@ -176,7 +175,7 @@ describe('input：同一个键在两个面上的含义', () => {
     expect(input.intents().move).toBe('left');
 
     kb.on('deck');
-    expect(input.intents().move).toBeNull();
+    expect(input.intents().move).toBe('down');
   });
 
   it('`Z`/`X` 在墙面上什么都不做 —— 墙上的上下**只有一个答案**（`w`/`s`）', () => {
@@ -196,8 +195,8 @@ describe('input：同一个键在两个面上的含义', () => {
 describe('input：键盘状态机', () => {
   it('按下就有方向；同一个键重复按（系统按键重复）不会在 held 里堆两份', () => {
     const once = pressDir(NO_KEYS, 'right');
-    expect(once.held).toEqual(['d']);
-    expect(pressDir(once, 'right').held).toEqual(['d']);
+    expect(once.held).toEqual(['s']);
+    expect(pressDir(once, 'right').held).toEqual(['s']);
   });
 
   it('按住时**最近按下的**那个方向优先', () => {
@@ -225,7 +224,7 @@ describe('input：键盘状态机', () => {
     // 按一下 d 走两格，而出生点右边第二格是落水缺口 → 落水 → 扣命（见本文件下方同名用例）。
     // 现在按住要等 `REPEAT_DELAY_TICKS`：`held` 本身没被动到，只是这一 tick 不放行。
     const holding = consumed(pressDir(NO_KEYS, 'right'));
-    expect(holding.held).toEqual(['d']); // 按住状态仍在（`consume` 不碰 `held`）
+    expect(holding.held).toEqual(['s']); // 按住状态仍在（`consume` 不碰 `held`）
     expect(intent(holding)).toBeNull(); // 但下一步要等延迟
     expect(intent(tickN(holding, REPEAT_DELAY_TICKS))).toBe('right'); // 到点就恢复
   });
@@ -498,10 +497,10 @@ describe('input：挖键（T11）', () => {
     // `E` 被甲板的 ↗ 拿走了；`R` 原本是"重开本局"，重开挪去了 `Backspace`。
     expect(digOfKey('q')).toBe('back');
     expect(digOfKey('Q')).toBe('back');
-    expect(digOfKey('r')).toBe('front');
-    expect(digOfKey('R')).toBe('front');
+    expect(digOfKey('e')).toBe('front');
+    expect(digOfKey('E')).toBe('front');
     // 关键：不能和移动键 / 升降键撞车，否则按方向键会顺手挖一铲
-    for (const key of ['ArrowLeft', 'a', 'd', 'w', 's', 'e', 'z', 'x', 'Backspace', ' ']) {
+    for (const key of ['ArrowLeft', 'a', 'd', 'w', 's', 'r', 'z', 'x', 'Backspace', ' ']) {
       expect(digOfKey(key)).toBeNull();
     }
   });
