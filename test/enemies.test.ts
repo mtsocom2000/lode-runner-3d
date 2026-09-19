@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tick, createSim, RESPAWN_TICKS } from '../src/core/sim';
+import { tick, createSim, replay, wait, ENEMY_DOWN_TICKS, RESPAWN_TICKS } from '../src/core/sim';
 import { validateLevel } from '../src/core/level/validate';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 import { cellA, cellB } from './fixtures';
@@ -117,6 +117,103 @@ describe('T12-c：接触即死（原版守卫，用户裁定）', () => {
       state = tick(state, { move: null, dig: null }).state;
     }
     expect(state.lives).toBe(2);
+  });
+});
+
+describe('T12-d：敌人溺水/被埋 → **延时重生**（§八-2 裁定）', () => {
+  /** 一条走廊：无人机在 `A:1,1`，它脚下 `r0` 是砖。`grid` 下标 = row*cols + col。 */
+  const CORRIDOR: LevelDef = {
+    id: 'DOWN',
+    name: '倒地夹具',
+    fold: 2,
+    tiles: ['XXXX', '....', 'XXXX', '....'],
+    enemies: [{ kind: 'drone', cell: cellA(1, 1) }],
+  };
+  const DRONE = 1;
+
+  /** 把某一格改成空 —— 等价于"玩家把它脚下的砖挖掉了"。 */
+  function hollow(base: ReturnType<typeof createSim>, index: number) {
+    return { ...base, grid: base.grid.map((kind, i) => (i === index ? ('empty' as const) : kind)) };
+  }
+
+  it('溺水：脚下支撑没了 → 掉进水里 → `drowned` + `downed`，并且**留在原地**（不是立刻回家）', () => {
+    const start = createSim(CORRIDOR, cellA(0, 1));
+    const frame = tick(hollow(start, 0 * CORRIDOR.fold * 2 + 1), { move: null, dig: null });
+    expect(frame.events.map((e) => e.kind)).toEqual(['drowned', 'downed']);
+    const drone = frame.state.entities[DRONE];
+    expect(drone?.down).toBe(ENEMY_DOWN_TICKS); // 原地倒下
+    expect(drone?.cell).toEqual(cellA(1, 1)); // 还没回家
+  });
+
+  it('倒下满 `ENEMY_DOWN_TICKS` 之后回 `home`，事件是 `returned`（渲染层据此瞬移）', () => {
+    const start = createSim(CORRIDOR, cellA(0, 1));
+    const state = tick(hollow(start, 1), { move: null, dig: null }).state;
+    expect(state.entities[DRONE]?.down).toBe(ENEMY_DOWN_TICKS);
+
+    const frames = replay(state, wait(ENEMY_DOWN_TICKS));
+    const home = frames[frames.length - 1]?.state.entities[DRONE];
+    expect(home?.down).toBe(0);
+    expect(home?.cell).toEqual(cellA(1, 1)); // 出生格 = 它的家
+    expect(frames.some((f) => f.events.some((e) => e.kind === 'returned'))).toBe(true);
+  });
+
+  it('被埋：站在坑里、土落回来 → `buried` + `downed`（与溺水走同一条延时重生）', () => {
+    const start = createSim(CORRIDOR, cellA(0, 1));
+    // 直接造一个"马上要回填、而且无人机正站在里面"的坑 —— 挖/回填的机器另有测试。
+    // 下标 = row * cols + col；无人机在 `A:1,1` → `1 * 4 + 1 = 5`。
+    const withPit = { ...start, fills: [{ index: 1 * CORRIDOR.fold * 2 + 1, remaining: 1 }] };
+    const frame = tick(withPit, { move: null, dig: null });
+    // 顺序是回填那一步的：先报"谁被埋"，再报"这一格长回来了"；`downed` 在 ⑤ 结算里补上。
+    expect(frame.events.map((e) => e.kind)).toEqual(['buried', 'filled', 'downed']);
+    expect(frame.state.entities[DRONE]?.down).toBe(ENEMY_DOWN_TICKS);
+  });
+
+  it('倒下期间它不动、也不撞人（尸体是安全的）', () => {
+    const start = createSim(CORRIDOR, cellA(0, 1));
+    const downed = tick(hollow(start, 1), { move: null, dig: null }).state;
+    // 把倒下的无人机挪到玩家那一格：仍然不该判被抓
+    const stacked = {
+      ...downed,
+      entities: downed.entities.map((e) => (e.id === DRONE ? { ...e, cell: cellA(0, 1) } : e)),
+    };
+    const frame = tick(stacked, { move: null, dig: null });
+    expect(frame.events.some((e) => e.kind === 'caught')).toBe(false);
+    expect(frame.state.lives).toBe(3);
+  });
+});
+
+describe('T12-c：落坑受困 + 踩其头顶的前提', () => {
+  const PIT_DEF: LevelDef = {
+    id: 'TRAP',
+    name: '受困夹具',
+    fold: 2,
+    tiles: ['XXXX', '....', 'XXXX', '....'],
+    enemies: [{ kind: 'drone', cell: cellA(1, 1) }],
+  };
+  const DRONE = 1;
+
+  it('站在坑里的无人机**动不了**（这是"落坑受困"，不是冷却）', () => {
+    const start = createSim(PIT_DEF, cellA(0, 1));
+    // `A:1,1` 变成坑（等着回填）：无人机就在那一格上
+    const withPit = { ...start, fills: [{ index: PIT_DEF.fold * 2 * 1 + 1, remaining: 120 }] };
+    const frames = replay(withPit, wait(20));
+    for (const frame of frames) {
+      expect(frame.state.entities[DRONE]?.cell).toEqual(cellA(1, 1));
+      expect(frame.events.some((e) => e.kind === 'entered')).toBe(false);
+    }
+  });
+
+  it('坑里的无人机碰到玩家**不算被抓**（"踩其头顶跨越"的前提）', () => {
+    const start = createSim(PIT_DEF, cellA(0, 1));
+    // 无人机与玩家同格、而且它在坑里
+    const stacked = {
+      ...start,
+      fills: [{ index: PIT_DEF.fold * 2 * 1 + 0, remaining: 120 }],
+      entities: start.entities.map((e) => (e.id === DRONE ? { ...e, cell: cellA(0, 1) } : e)),
+    };
+    const frame = tick(stacked, { move: null, dig: null });
+    expect(frame.events.some((e) => e.kind === 'caught')).toBe(false);
+    expect(frame.state.lives).toBe(3);
   });
 });
 

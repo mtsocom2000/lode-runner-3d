@@ -12,7 +12,8 @@ import {
 } from './rules/dig';
 import { drownPath, type DrownPath } from './rules/drown';
 import { openGates, treasureAt, withoutTreasure } from './rules/goals';
-import { stateAt, step, type Dir, type MoveMode } from './rules/movement';
+import { fallTo, stateAt, step, type Dir, type FallEnd, type MoveMode } from './rules/movement';
+import { supportOf } from './world/graph';
 import { parseLevel, type Level, type LevelDef, type TileKind } from './world/tiles';
 import { isWater } from './world/water';
 
@@ -65,6 +66,14 @@ export const PLAYER_LIVES = 3;
  */
 export const RESPAWN_TICKS = 30;
 
+/**
+ * 敌人**倒下**（溺水 / 被埋）到站起来要几个 tick（T12-d）。
+ *
+ * §八-2 的裁定是"溺水后**延时重生**"，理由写在决议里："保留追击压迫感，不白送玩家"。
+ * 取 1 秒（60）：短到不拖节奏，长到玩家看得见"它倒下了、还没回来"。
+ */
+export const ENEMY_DOWN_TICKS = 60;
+
 /** 实体种类。T12 加 `drone`、T15 加 `stalker` —— 那时只需在这里加一格并补上它的决策函数。 */
 export type EntityKind = 'player' | 'drone';
 
@@ -92,6 +101,16 @@ export interface Entity {
    * 先在这里落一个字段，免得将来再改一次实体形状。
    */
   readonly facing: Dir;
+  /**
+   * 还要倒几个 tick 才站起来（T12-d）。`0` = 站着、能动。
+   *
+   * 只有**敌人**会用到它：§八-2 裁定的"溺水/被埋后延时重生"。这段时间它既不动、
+   * 也不参与接触判定（尸体不撞人），到期由 `advance` 的倒计时送回 `home`。
+   *
+   * 玩家**不走**这条路：玩家的死亡反馈要的是"立刻回到起点"（扣命 → 重生 → 冻结
+   * `RESPAWN_TICKS`），而不是躺着等一秒。两者是不同的设计意图，共用一个字段只会把语义搅浑。
+   */
+  readonly down: number;
 }
 
 /**
@@ -208,6 +227,12 @@ export type SimEvent =
    * 挂在敌人身上没有意义（语义会立刻变味）。渲染那边两条都当"瞬移"处理。
    */
   | { readonly kind: 'returned'; readonly entity: number; readonly cell: Cell }
+  /**
+   * 敌人倒下了（T12-d）：溺水或被埋之后，先在地上躺 `ENEMY_DOWN_TICKS`，再回 `home`。
+   *
+   * 死因本身另有事件（`drowned` / `buried`）—— 这条只说"它现在倒了"，供渲染层做倒地表现。
+   */
+  | { readonly kind: 'downed'; readonly entity: number; readonly cell: Cell }
   /** 命数归零，这一局结束。 */
   | { readonly kind: 'gameover' }
   /**
@@ -281,6 +306,7 @@ function spawnEnemies(level: Level, def: LevelDef): readonly Entity[] {
       home: at.cell,
       facing: enemy.facing ?? 'right',
       cooldown: 0,
+      down: 0,
     };
   });
 }
@@ -331,6 +357,7 @@ export function createSim(def: LevelDef, spawn: Cell, lives: number = PLAYER_LIV
         // 开局朝右。朝向的表现（过折痕转 90°）是 T7/§八-4 的事，这里只落字段。
         facing: 'right',
         cooldown: 0,
+        down: 0,
       },
       ...spawnEnemies(level, def),
     ],
@@ -354,6 +381,22 @@ function describeCell(c: Cell): string {
  */
 interface AdvanceContext {
   readonly playerCell: Cell | null;
+  /**
+   * 还在等回填的坑（T11）的格键集合 —— "**落坑受困**"（T12-c）要问它。
+   *
+   * 为什么由外面算好递进来、而不是在这里读 `SimState`：`advance` 只该知道"动一步需要什么"，
+   * 而这个集合是从 `fills` 推出来的**同一份事实**（回填到期的判据也在用它）——
+   * 两处各推一遍就会漂成"回填说坑没了、AI 说还在坑里"。
+   */
+  readonly pits: ReadonlySet<string>;
+  /**
+   * 本 tick 已经**被埋**的实体 id（① 里判出来的）。
+   *
+   * 它们这一 tick 不再参与移动：那格已经变回砖，`supportOf` 会算出 null，于是 ③ 会让它
+   * **再坠一次、再溺一次水** —— 事件流变成"被埋 → 溺水 → 倒下"这种连死两次的荒唐样子
+   * （T12-d 的用例抓到的）。被埋就是这一 tick 的死因，不再接受第二次判定。
+   */
+  readonly buried: ReadonlySet<number>;
 }
 
 /**
@@ -364,7 +407,15 @@ interface AdvanceContext {
  */
 function decide(entity: Entity, intents: Intents, level: Level, ctx: AdvanceContext): Dir | null {
   if (entity.kind === 'player') return intents.move;
-  return decideDrone({ level, at: { cell: entity.cell, mode: entity.mode }, facing: entity.facing, playerCell: ctx.playerCell });
+  // **落坑受困**（T12-c，原版守卫的"落坑受困"）：站在坑里就别想动 —— 直到土长回来把它埋掉。
+  // 这不是冷却（冷却到期后是**原地继续走**），而是"被困住"：判据是脚下的格还是不是坑。
+  if (ctx.pits.has(cellKey(entity.cell))) return null;
+  return decideDrone({
+    level,
+    at: { cell: entity.cell, mode: entity.mode },
+    facing: entity.facing,
+    playerCell: ctx.playerCell,
+  });
 }
 
 /**
@@ -381,7 +432,29 @@ function advance(
   ctx: AdvanceContext,
   events: SimEvent[],
 ): Entity {
+  // 倒地倒计时（T12-d）：数到 0 就回 `home`。
+  // 用 `returned` 而不是 `respawned` —— 与"玩家死亡时追捕重置"同一条事件，于是渲染层的
+  // **瞬移**逻辑（`main.ts` 的 snap 集合）自动覆盖它：否则尸体会从倒下处滑过整张地图回家。
+  if (entity.down > 1) return { ...entity, down: entity.down - 1 };
+  if (entity.down === 1) {
+    const home = stateAt(level, entity.home);
+    events.push({ kind: 'returned', entity: entity.id, cell: entity.home });
+    return { ...entity, down: 0, cell: entity.home, mode: home?.mode ?? entity.mode, cooldown: 0 };
+  }
+
+  // 本 tick 已被埋：死因已定，不再接受移动/坠落判定（见 `AdvanceContext.buried`）。
+  if (ctx.buried.has(entity.id)) return entity;
+
   if (entity.cooldown > 0) return { ...entity, cooldown: entity.cooldown - 1 };
+
+  // **脚下的支撑没了就立刻开始坠** —— 在决定方向**之前**判。
+  //
+  // 不能只靠 `step` 内部那条同样的自检：`decide` 返回 `null` 时（玩家没按键、无人机被困在坑里、
+  // 敌人还没想好）根本走不到 `step` 那一步，于是"支撑被挖掉"会表现成**人悬在空中站着**。
+  // 这条是被 T12-d 的用例抓出来的（把无人机脚下的砖改成空，它却一动不动、一个事件都不报）。
+  if (supportOf(level, entity.cell) === null) {
+    return settleFall(level, entity, fallTo(level, entity.cell), 'fall', events);
+  }
 
   const dir = decide(entity, intents, level, ctx);
   if (dir === null) return entity; // 站着不动：不进入冷却，下一 tick 按方向立刻起步
@@ -409,33 +482,39 @@ function advance(
         cooldown: MOVE_TICKS - 1,
       };
 
-    case 'fall': {
-      if (isWater(result.end)) {
-        // 落水只报事件、不动实体。`isWater` 是**类型谓词**，所以这个分支之后
-        // `result.end` 一定收窄成 `landed` —— 下面读 `.cell` 不需要任何断言。
-        events.push({
-          kind: 'drowned',
-          entity: entity.id,
-          cell: result.end.from,
-          path: drownPath(entity.mode, dir),
-        });
-        return entity;
-      }
-      const landed = stateAt(level, result.end.cell);
-      events.push({
-        kind: 'fell',
-        entity: entity.id,
-        from: entity.cell,
-        cell: result.end.cell,
-      });
-      return {
-        ...entity,
-        cell: result.end.cell,
-        mode: landed === null ? entity.mode : landed.mode,
-        cooldown: MOVE_TICKS - 1,
-      };
-    }
+    case 'fall':
+      // 落水 / 落住的结算只有一份实现（`settleFall`）—— 上面"支撑没了立刻坠"那条也走它，
+      // 两处各写一遍必然漂（一处报 `drowned`、另一处忘了报，是这类 bug 的经典形状）。
+      return settleFall(level, entity, result.end, drownPath(entity.mode, dir), events);
   }
+}
+
+/**
+ * 坠落的结算：落水只报事件（扣命/重生归 `tick` 管），落住了就更新格子并进入冷却。
+ *
+ * `path` 由调用方给：站着走空是 `fall`，吊在杆上按"下"松手是 `bar-release` ——
+ * 这个区分只有在"动作发生前的状态"里才看得出（见 `rules/drown.ts` 的文件头）。
+ */
+function settleFall(
+  level: Level,
+  entity: Entity,
+  end: FallEnd,
+  path: DrownPath,
+  events: SimEvent[],
+): Entity {
+  if (isWater(end)) {
+    // `isWater` 是**类型谓词**：这个分支之后 `end` 一定收窄成 `landed`，读 `.cell` 不需要断言。
+    events.push({ kind: 'drowned', entity: entity.id, cell: end.from, path });
+    return entity;
+  }
+  const landed = stateAt(level, end.cell);
+  events.push({ kind: 'fell', entity: entity.id, from: entity.cell, cell: end.cell });
+  return {
+    ...entity,
+    cell: end.cell,
+    mode: landed === null ? entity.mode : landed.mode,
+    cooldown: MOVE_TICKS - 1,
+  };
 }
 
 /** 有没有实体正好站在这一格上。列行**必须连面一起比**：甲板格（面 `'I'`）与墙面格可以有相同的列行数字。 */
@@ -533,7 +612,18 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   // 无人机的追击要问"玩家在哪"。取**本 tick 开始时**的位置（`prev.entities`），
   // 于是与实体遍历顺序无关 —— 顺序依赖是回放里最难查的一类 bug。
   const player = prev.entities.find((e) => e.kind === 'player');
-  const ctx: AdvanceContext = { playerCell: player?.cell ?? null };
+  // 坑的格键集合：由**最终**的 `fills`（①回填 + ②新挖之后）推出来，与回填到期的判据同源。
+  const pits = new Set(
+    fills.map((fill) => {
+      const { col, row } = indexToColRow(fill.index, prev.cols);
+      return cellKey({ face: faceOf(col, prev.fold), col, row });
+    }),
+  );
+  // ①里已经"被埋"的实体，本 tick 不再参与移动（见 `AdvanceContext.buried`）。
+  const buriedIds = new Set(
+    events.filter((e) => e.kind === 'buried').map((e) => e.entity),
+  );
+  const ctx: AdvanceContext = { playerCell: player?.cell ?? null, pits, buried: buriedIds };
   const entities: Entity[] = [];
   for (const entity of prev.entities) {
     entities.push(advance(level, entity, intents, ctx, events));
@@ -602,7 +692,14 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   const activePlayer = entities.find((e) => e.kind === 'player');
   if (activePlayer !== undefined) {
     const enemy = entities.find(
-      (e) => e.kind !== 'player' && cellKey(e.cell) === cellKey(activePlayer.cell),
+      (e) =>
+        e.kind !== 'player' &&
+        // 已经倒下的不算（尸体不撞人）
+        e.down === 0 &&
+        // **坑里的不算**：这是"玩家可踩其头顶跨越"（T12-c）的前提 —— 原版里守卫落坑受困时，
+        // 玩家正是靠踩它过去；如果坑里也算被抓，这条经典玩法反而变成"靠近就死"。
+        !ctx.pits.has(cellKey(e.cell)) &&
+        cellKey(e.cell) === cellKey(activePlayer.cell),
     );
     if (enemy !== undefined) {
       events.push({ kind: 'caught', entity: activePlayer.id, by: enemy.id, cell: activePlayer.cell });
@@ -621,8 +718,21 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   // "无人机淹死了、玩家少一条命"。敌人的落水 / 被埋是 T12 的事（架构文档 §八-2），
   // 到时候在下面那个 early-return 的分支里长出来。
   const victim = prev.entities.find((e) => e.id === casualty.entity);
-  if (victim?.kind !== 'player') {
+  if (victim === undefined) {
     return { state: { ...prev, tick: nextTick, grid, fills, entities, treasures, gatesOpen }, events };
+  }
+  if (victim.kind !== 'player') {
+    // 敌人：§八-2 裁定的"**延时重生**" —— 先原地倒下 `ENEMY_DOWN_TICKS`（这段时间它不动、
+    // 也不撞人），到期由 `advance` 的倒计时送回 `home`。
+    // 走 `map` 而不是直接改某一项：将来多敌人时，别的敌人不该被连累。
+    const downed = entities.map((e) =>
+      e.id === casualty.entity ? { ...e, down: ENEMY_DOWN_TICKS } : e,
+    );
+    events.push({ kind: 'downed', entity: casualty.entity, cell: victim.cell });
+    return {
+      state: { ...prev, tick: nextTick, grid, fills, entities: downed, treasures, gatesOpen },
+      events,
+    };
   }
 
   const lives = prev.lives - 1;
