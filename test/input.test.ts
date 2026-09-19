@@ -7,6 +7,7 @@ import {
   digPress,
   digRelease,
   dirOfKey,
+  holdBroken,
   moveIntent,
   press,
   release,
@@ -284,6 +285,29 @@ describe('input：出生点按一下 d 不该死（用户报告的必现 bug）'
     // 不写死死几次：重生后键**还按着**，所以会反复走下去送命（60 tick 里死了两次 → 1 条命）。
     // 这条只钉"危险仍在"，不钉节奏 —— 节奏是上面那条短按用例的事。
     expect(state.lives).toBeLessThan(3);
+  });
+});
+
+describe('input：掐掉"按住不放"（跨接头的转折）', () => {
+  it('掐掉之后按住不再换下一步；**松手再按**才恢复', () => {
+    let k = press(NO_KEYS, 'left');
+    k = tickN(k, 1);
+    expect(moveIntent(k)).toBe('left'); // 按下的第一步立即兑现
+    k = consumed(k);
+    k = holdBroken(k); // main.ts 在"跨接头且世界方向改变"的那一步之后调它
+    k = tickN(k, 120); // 按住很久
+    expect(moveIntent(k)).toBeNull(); // 一直不出手（否则会被带着拐进另一条走廊）
+    k = release(k, 'left');
+    k = press(k, 'left');
+    expect(moveIntent(k)).toBe('left'); // 松手再按 → 立刻兑现
+  });
+
+  it('没掐的时候按住照旧连走（对照，免得这条规则把"按住"整个废掉）', () => {
+    let k = press(NO_KEYS, 'left');
+    k = tickN(k, 1);
+    k = consumed(k);
+    k = tickN(k, REPEAT_DELAY_TICKS);
+    expect(moveIntent(k)).toBe('left');
   });
 });
 

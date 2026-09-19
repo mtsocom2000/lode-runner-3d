@@ -179,6 +179,21 @@ export function consumed(state: KeyState): KeyState {
 }
 
 /**
+ * 掐掉"按住不放"：直到玩家**松手再按**为止，`held` 不再换下一步（`latched` 保持不动 ——
+ * 那一下仍然欠玩家）。
+ *
+ * 用在**跨接头的转折**上：门（甲板 ↔ 墙面）两侧的键含义不同，按住不放会被带着拐进另一条
+ * 走廊（用户 2026-09-19："按着 a 键会在到达墙面时自动转换方向，这是不对的"）。
+ * 折痕**不**掐 —— 那是同一条走廊折了一下，教学里就写着"沿走廊一直走就能过去"。
+ *
+ * 实现上把 `holdArmedAt` 顶到无穷：`press` 对已经按住的键是**原样返回**（系统重复不清延迟），
+ * 所以只有真正"松手再按"才会把它复位成 0。
+ */
+export function holdBroken(state: KeyState): KeyState {
+  return { ...state, holdArmedAt: Number.POSITIVE_INFINITY };
+}
+
+/**
  * 全部放开（切标签页 / 失焦时用）。**挖键也一起放** —— 卡住的挖键比卡住方向更糟：
  * 方向卡住只是自己走，挖键卡住会一路挖穿地板。锁存值保留（那一下仍然欠玩家一步）。
  */
@@ -207,6 +222,10 @@ export interface Input {
   intents(): Intents;
   /** 实体动过一次之后调一次，把锁存的那一下销账。 */
   consume(): void;
+  /**
+   * 掐掉"按住不放"（见 `holdBroken`）。`main.ts` 在**跨接头且世界方向改变**的那一步之后调它。
+   */
+  breakHold(): void;
   dispose(): void;
 }
 
@@ -270,6 +289,9 @@ export function createInput(target: Window = window): Input {
     },
     consume: (): void => {
       keys = consumed(keys);
+    },
+    breakHold: (): void => {
+      keys = holdBroken(keys);
     },
     dispose: (): void => {
       target.removeEventListener('keydown', onKeyDown);

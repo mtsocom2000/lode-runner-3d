@@ -1,9 +1,10 @@
 import { halfExtent } from '../src/core/world/fold';
 import { supportOf } from '../src/core/world/graph';
+import { OPPOSITE_DIR } from '../src/core/rules/movement';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor, stepDelta } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -247,5 +248,45 @@ describe('metrics：stepDelta —— 一步的世界位移（HUD 提示与朝向
   it('走不了的方向 → `null`（HUD 画 `×`，箭头保持上一次朝向）', () => {
     // 出生点左边就是网格外。
     expect(stepDelta(concept, { face: 'A', col: 0, row: 1 }, 'stand', 'left')).toBeNull();
+  });
+});
+
+/**
+ * "按住不放"要不要跨过这一步继续 —— `main.ts` 用它决定是否掐掉按住。
+ *
+ * **门**（甲板 ↔ 墙面）两侧的键含义不同 → 掐；**折痕**（A ↔ B）是同一条走廊折了一下 → 不掐
+ * （"沿走廊一直走就能过去"那条教学照旧）。
+ */
+describe('metrics：跨面的那一步之后，按住的键还有没有意义', () => {
+  it('门（甲板 → 墙面）：按住的键在新表面上**不再指向原方向** → 该掐', () => {
+    const lv = load(CONCEPT_MINIMAL);
+    for (const joint of lv.joints) {
+      const deckCell: Cell = { face: 'I', col: joint.deck.x, row: joint.deck.z };
+      // "沿小道走来的那个键" = 往外 = `enterDir` 的反向。
+      const outward = OPPOSITE_DIR[joint.enterDir];
+      const before = stepDelta(lv, deckCell, 'stand', outward);
+      const after = stepDelta(lv, joint.wall, 'stand', outward);
+      expect(before).not.toBeNull();
+      if (after === null) continue; // 那个键在墙面上根本走不动（B 面 `w` = 爬梯）→ 自然就停住
+      expect(sameWorldDirection(before!.delta, after.delta)).toBe(false);
+    }
+  });
+
+  it('折痕（A ↔ B）：两边给的是**同一个**世界方向 → 不掐', () => {
+    const lv = load(CONCEPT_MINIMAL);
+    const inner: Cell = { face: 'A', col: 8, row: 1 };
+    const partner: Cell = { face: 'B', col: 9, row: 1 };
+    const before = stepDelta(lv, inner, 'stand', 'right');
+    const after = stepDelta(lv, partner, 'stand', 'right');
+    expect(before).not.toBeNull();
+    expect(after).not.toBeNull();
+    expect(sameWorldDirection(before!.delta, after!.delta)).toBe(true);
+  });
+
+  it('`sameWorldDirection` 本体：同轴为真、垂直为假', () => {
+    expect(sameWorldDirection([1, 0, 0], [2, 0, 0.01])).toBe(true);
+    expect(sameWorldDirection([1, 0, 0], [0, 0, 1])).toBe(false);
+    expect(sameWorldDirection([1, 0, 0], [-1, 0, 0])).toBe(false);
+    expect(sameWorldDirection([0, 0, 0], [1, 0, 0])).toBe(false); // 零向量不算方向
   });
 });

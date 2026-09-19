@@ -5,7 +5,7 @@ import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } fro
 import { parseLevel } from '../core/world/tiles';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
-import { PLAYER_SIZE, playerAnchor } from '../render/metrics';
+import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
 import { createStage } from '../render/scene';
 import { createHud } from './hud';
@@ -358,7 +358,8 @@ function loop(now: number): void {
   // 玩家是谁 —— 死亡提示只该为**玩家**亮。见下面那段"必须看是谁"。
   const playerId = state.entities.find((e) => e.kind === 'player')?.id;
   while (acc >= STEP_MS) {
-    const frame = tick(state, input.intents());
+    const intents = input.intents();
+    const frame = tick(state, intents);
     state = frame.state;
     acc -= STEP_MS;
     if (actedOn(frame)) input.consume();
@@ -369,6 +370,19 @@ function loop(now: number): void {
         if (snapped === null) snapped = new Set<number>();
         snapped.add(event.entity);
         continue;
+      }
+      // **跨接头的转折要掐掉"按住不放"**（用户 2026-09-19："按着 a 键会在到达墙面时自动
+      // 转换方向，这是不对的"）。判据是世界方向：门两侧的键含义不同，按住不放会被带着拐进
+      // 另一条走廊；而**折痕**是同一条走廊折了一下（`stepDelta` 两边给同一个方向）→ 不掐，
+      // "沿走廊一直走就能过去"那条教学照旧成立。
+      //
+      // 高度（`bridges`）与方向无关，这里传 `undefined` 即可 —— 只看 x/z。
+      if (event.kind === 'entered' && intents.move !== null && event.from.face !== event.cell.face) {
+        const before = stepDelta(level, event.from, 'stand', intents.move);
+        const after = stepDelta(level, event.cell, 'stand', intents.move);
+        if (before !== null && after !== null && !sameWorldDirection(before.delta, after.delta)) {
+          input.breakHold();
+        }
       }
       // 死亡 / 终局的可见反馈。文案与"该不该亮"都在 `render/feedback.ts` 里（纯函数、可测）——
       // 那段映射以前写在这里，于是"机器人被活埋 → 提示玩家命 −1"这种 bug 没有测试能拦。

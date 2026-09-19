@@ -2,6 +2,7 @@ import { cellKey, type Cell } from '../src/core/types';
 import { buildGraph, findPath, supportOf } from '../src/core/world/graph';
 import {
   DIRS,
+  OPPOSITE_DIR,
   fallTo,
   stateAt,
   step,
@@ -76,6 +77,13 @@ describe('movement：每个接头的"进门键" = "沿小道继续的键"', () =
         });
         expect(inward).toHaveLength(1); // 小道是 1 宽：尽头只有一个前进方向
         expect(inward[0]).toBe(joint.enterDir);
+
+        // 另一半（2026-09-19 用户报的"按任何键都走不上去"）：**沿小道走来的那个键，也应该能上墙**。
+        // 也就是"往外" = 唯一那个甲板邻居的反向。以前这一侧是从世界坐标差猜的，B 面接头打平后
+        // 猜成了 `right`，于是按 `w` 沿小道过来的人在尽头被拒。
+        const outward = OPPOSITE_DIR[inward[0] as Dir];
+        const out = step(lv, { cell: deckCell, mode: 'stand' }, outward);
+        expect(out).toEqual({ kind: 'move', state: { cell: joint.wall, mode: 'stand' } });
       }
     });
   }

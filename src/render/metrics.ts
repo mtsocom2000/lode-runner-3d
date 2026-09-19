@@ -302,3 +302,20 @@ export function stepDelta(
   if (to === null) return null;
   return { delta: [to[0] - base[0], to[1] - base[1], to[2] - base[2]], danger };
 }
+
+/**
+ * 两个位移是不是**同一个世界方向**（只看 x/z；夹角小于约 25° 就算同一个）。
+ *
+ * 用途只有一个：**跨接头的转折**上判断"按住不放还有没有意义"。玩家沿小道按 `w` 走过来、
+ * 出门时 `w` 在墙面上指的是爬梯（另一回事）—— 那就该掐掉按住，让他重新按，而不是替他
+ * 拐进另一条走廊（用户 2026-09-19："按着 a 键会在到达墙面时自动转换方向，这是不对的"）。
+ *
+ * 折痕**不算**这种转折：那是同一条走廊折了一下，两边的世界方向一致（`stepDelta` 的
+ * "再看一步"口径下相同），按住不放继续走正是教学里那句"沿走廊一直走就能过去"。
+ */
+export function sameWorldDirection(a: Vec3, b: Vec3): boolean {
+  const la = Math.hypot(a[0], a[2]);
+  const lb = Math.hypot(b[0], b[2]);
+  if (la < NEGLIGIBLE || lb < NEGLIGIBLE) return false;
+  return (a[0] * b[0] + a[2] * b[2]) / (la * lb) > 0.9;
+}

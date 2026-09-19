@@ -152,6 +152,38 @@ const DECK_DIR: Readonly<Record<Dir, { readonly dx: number; readonly dz: number 
 };
 
 /**
+ * 反向。两处要用：这里的"小道往外"、以及 `ai/drone.ts` 巡逻时的"尽量不掉头"。
+ * 只此一份 —— 两份反向表迟早会有一份忘了改。
+ */
+export const OPPOSITE_DIR: Readonly<Record<Dir, Dir>> = {
+  left: 'right',
+  right: 'left',
+  up: 'down',
+  down: 'up',
+};
+
+/**
+ * 甲板格 `(x, z)` 上"**沿小道往外**"的方向（= 走向墙面那一侧）；`null` = 不是小道尽头。
+ *
+ * 判据只有一条：这一格在甲板上的邻居**恰好只有一个**（小道是 1 宽，尽头就一个来路），
+ * 那个方向就是"往里"，反向就是"往外"。**甲板数据是唯一出处**，不掺世界坐标。
+ *
+ * 为什么要这么算（用户 2026-09-19）：*"沿着岛台小道从岛台方向跑去右侧墙，…走到最后一格，
+ * 但是无法走到右侧墙面的格子上，按任何键都走不上去。"* —— 那时"往外"是从墙面格与甲板砖的
+ * 世界坐标差里取主导轴，而 **B 面接头上 dx 与 dz 正好是 ±0.5 的平手**，靠 `>=` 的先后把平
+ * 破给了 x，于是"沿小道按 `w` 过来、到尽头却必须按 `d` 才上得去"（`w` 被拒）。同一个 bug 的
+ * 另一半见 `DECK_DIR` 上方那段。
+ */
+function jettyOutward(level: Level, x: number, z: number): Dir | null {
+  const inward = DIRS.filter((d) => {
+    const s = DECK_DIR[d];
+    return level.deck.some((c) => c.x === x + s.dx && c.z === z + s.dz);
+  });
+  if (inward.length !== 1) return null; // 尽头之外（孤格 / 不规则形状）→ 由调用方回退
+  return OPPOSITE_DIR[inward[0] as Dir];
+}
+
+/**
  * 在甲板上走一步。
  *
  * 为什么不能复用下面那套算术：`cellAt` 用 `faceOf(col, fold)` 造格、`level.at` 读摊平网格 ——
@@ -178,26 +210,32 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
   }
 
   // ② 接头：甲板端 → 墙面端。
-  //    方向按**世界坐标差的主导轴**判定，不能按晶格相等比 ——
-  //    甲板格的两个下标是 `(x, z)` 晶格、墙面格在折后坐标里，两套坐标系天然差半格
-  //    （渲染层再各自加 `BRICK_N` / `DECK_SHIFT`）。这里只取**主导轴**，所以那半格不影响符号。
-  //
-  //    ⚠ 墙面格的世界坐标只能问 `toWorld`（唯一出处）。这里曾经自己重算一遍
-  //    `-half + u` —— 折痕线从 `fold - 0.5` 挪到 `fold - 1` 时它就成了漏网的那一处
-  //    （差半格、符号刚好没翻，测试碰巧还是绿的）。判据只能有一个出处。
+  //    **方向 = 沿小道"往外"**（`jettyOutward`：甲板自己的数据说了算）—— 也就是"玩家沿着小道
+  //    走过来时按的那个键"。这一条取代了原先"从世界坐标差取主导轴"的写法：B 面接头上
+  //    dx 与 dz 是 ±0.5 的平手，靠 `>=` 破给了 x，于是"按 `w` 沿小道过来、到尽头却必须按 `d`"
+  //    （用户报的"按任何键都走不上去"）。几何回退只在形状不规则（不是 1 宽的小道尽头）时用到。
+  const outward = jettyOutward(level, x, z);
   for (const joint of level.joints) {
     if (joint.deck.x !== x || joint.deck.z !== z) continue;
 
-    const w = joint.wall;
-    const wp = toWorld(toFold(w, level.fold), level.fold);
-    const dx = wp.x - x;
-    const dz = wp.z - z;
-    const toward: Dir = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 'right' : 'left') : dz > 0 ? 'up' : 'down';
-    if (toward !== dir) continue;
+    if (outward !== null) {
+      if (outward !== dir) continue;
+    } else {
+      // 回退：按世界坐标差的主导轴（墙面格的世界坐标只问 `toWorld` —— 唯一出处）。
+      const wp = toWorld(toFold(joint.wall, level.fold), level.fold);
+      const dx = wp.x - x;
+      const dz = wp.z - z;
+      const toward: Dir =
+        Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 'right' : 'left') : dz > 0 ? 'up' : 'down';
+      if (toward !== dir) continue;
+    }
 
-    const support: Support | null = supportOf(level, w);
+    const support: Support | null = supportOf(level, joint.wall);
     if (support === null) return blocked('out');
-    return { kind: 'move', state: { cell: w, mode: support === 'bar' ? 'hang' : 'stand' } };
+    return {
+      kind: 'move',
+      state: { cell: joint.wall, mode: support === 'bar' ? 'hang' : 'stand' },
+    };
   }
 
   // ③ 甲板边缘 —— 阻止（理由见上面那段"为什么是阻止"）。
