@@ -18,16 +18,27 @@ function load(def: LevelDef): Level {
 }
 
 describe('道具层：折痕那一对只画一根（那根"粉红十字"的回归）', () => {
-  it('L2 的跨折痕横杆：两个 `bar` 格在世界同一个位置 → 只出一个件', () => {
+  it('L2 的连杆**不在折痕附近** —— 用户裁定：那个位置不该有连杆（架构文档 §八-11）', () => {
     const level = load(L2);
-    // 关卡数据里确实是两根（col 13 与 col 14）。
-    expect(level.at(13, 3)).toBe('bar');
-    expect(level.at(14, 3)).toBe('bar');
-    // 但只画一根：两根各自沿自己那面墙的轴、又都穿过同一个点，画出来是个十字。
+    // 杆在落水缺口正上方（r1 的 col 5 / col 22），不在交界（col 13/14）。
+    expect(collectProps(level, level.grid).bars).toHaveLength(2);
+  });
+
+  it('夹具：折痕两侧同一种**有方向**的道具 → 只出一个件（"粉红十字"的直接回归）', () => {
+    // `fold = 3`（6 列）：`r1` 的 col 2（A 最内列）与 col 3（B 最内列）各一根杆。
+    // 它们在世界**同一个位置**，各自沿自己那面墙的轴 → 画两根就是一个十字。
+    const level = load({
+      id: 'FOLDBAR',
+      name: '折痕连杆夹具',
+      fold: 3,
+      tiles: ['XXXXXX', '..--.E'],
+    });
+    expect(level.at(2, 1)).toBe('bar');
+    expect(level.at(3, 1)).toBe('bar');
     expect(collectProps(level, level.grid).bars).toHaveLength(1);
   });
 
-  it('对照：L1 没有横杆 → 0 个件', () => {
+  it('对照：L1 没有连杆 → 0 个件', () => {
     const level = load(L1);
     expect(collectProps(level, level.grid).bars).toHaveLength(0);
   });

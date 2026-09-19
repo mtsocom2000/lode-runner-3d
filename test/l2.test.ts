@@ -6,7 +6,7 @@ import { stateAt, step, trail } from '../src/core/rules/movement';
 import { cellKey, type Cell } from '../src/core/types';
 import { buildGraph } from '../src/core/world/graph';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
-import { cellA, cellB } from './fixtures';
+import { cellA } from './fixtures';
 
 /**
  * T16 · **L2「织网」** 的机器可验收部分（对照 `l1.test.ts`）。
@@ -88,28 +88,44 @@ describe('T16 · L2 织网：第二座岛只能经岛间小道过去', () => {
   });
 });
 
-describe('T16 · L2 织网：跨折痕横杆', () => {
-  it('r3 的 col 13/14 是杆，且它下面（r2）是空的 —— 规则⑦"吊得住"', () => {
-    expect([level.at(13, 3), level.at(14, 3)]).toEqual(['bar', 'bar']);
-    expect([level.at(13, 2), level.at(14, 2)]).toEqual(['empty', 'empty']);
+describe('T16 · L2 织网：落水缺口上的连杆（用户裁定的位置，见架构文档 §八-11）', () => {
+  it('杆在 `r1` 的 `col 5 / col 22`，正好在落水缺口正上方；下面是空的（规则⑦"吊得住"）', () => {
+    expect([level.at(5, 1), level.at(22, 1)]).toEqual(['bar', 'bar']);
+    expect([level.at(5, 0), level.at(22, 0)]).toEqual(['empty', 'empty']);
+    // 缺口与杆是**同一列**：这才是"吊着跨过缺口"。
+    expect(level.at(5, 1)).toBe('bar');
   });
 
-  it('吊着跨过折痕：A:12,3 一路往右 → 中途两格都是杆、最后落回砖面 B:15,3', () => {
+  it('对照：L2 里**没有**杆在折痕附近（第一版把它摆在交界处，是错的）', () => {
+    const fold = L2.fold;
+    for (let row = 0; row < level.rows; row++) {
+      expect(level.at(fold - 1, row)).not.toBe('bar');
+      expect(level.at(fold, row)).not.toBe('bar');
+    }
+  });
+
+  it('吊着跨过缺口：A:4,1 一路往右 → 中间那格是杆、右边落回砖面', () => {
     const t = trail(
       level,
-      stateAt(level, cellA(12, 3)) ?? { cell: cellA(12, 3), mode: 'stand' },
-      ['right', 'right', 'right'],
+      stateAt(level, cellA(4, 1)) ?? { cell: cellA(4, 1), mode: 'stand' },
+      ['right', 'right'],
     );
     expect(t.steps.map((s) => (s.result.kind === 'move' ? s.result.state.mode : s.result.kind))).toEqual([
-      'hang', // A:13,3（杆）
-      'hang', // B:14,3（杆；这一步还是跨折痕 = 原地转 90°）
-      'stand', // B:15,3（砖面）
+      'hang', // A:5,1（杆）
+      'stand', // A:6,1（砖面）
     ]);
-    expect(t.end.cell).toEqual(cellB(15, 3));
+    expect(t.end.cell).toEqual(cellA(6, 1));
+  });
+
+  it('吊在杆上按 `s` 松手 → **掉进水里**（危险还在，只是不再是"必掉"）', () => {
+    const released = step(level, { cell: cellA(5, 1), mode: 'hang' }, 'down');
+    expect(released.kind).toBe('fall');
+    if (released.kind !== 'fall') throw new Error('松手必须是坠落');
+    expect(released.end.kind).toBe('water');
   });
 
   it('杆上不能向上 —— 吊着不是攀着（原版语义）', () => {
-    expect(step(level, { cell: cellA(13, 3), mode: 'hang' }, 'up')).toEqual({
+    expect(step(level, { cell: cellA(5, 1), mode: 'hang' }, 'up')).toEqual({
       kind: 'blocked',
       reason: 'not-hangable',
     });
