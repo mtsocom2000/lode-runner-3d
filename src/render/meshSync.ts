@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { EntityKind, SimState } from '../core/sim';
+import type { Cell } from '../core/types';
 import type { Level } from '../core/world/tiles';
-import { PLAYER_SIZE, playerAnchor } from './metrics';
+import { PLAYER_SIZE, playerAnchor, seamSwing } from './metrics';
 import { PALETTE } from './palette';
 import { advance, aim, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
 
@@ -91,6 +92,13 @@ interface Actor {
   readonly kind: EntityKind;
   readonly group: THREE.Group;
   tween: Tween;
+  /**
+   * 上一帧这个实体的**格子** —— 只用来判断"这一步是不是跨折痕"（`seamSwing` 要两端格）。
+   *
+   * 为什么不从补间的 `from` 反推：那是**世界坐标**，而"跨折痕"是**格**的性质
+   * （`A: fold-1` ↔ `B: fold`）。在渲染层从坐标反推格 = 又定义一遍关卡结构。
+   */
+  cell: Cell | null;
 }
 
 /**
@@ -150,7 +158,7 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     group.add(g);
 
     // 首次出现**不滑入**：`from === to` 于是 `sample` 直接给目标点，人就地站好。
-    const actor: Actor = { kind, group: g, tween: tweenTo(at, at) };
+    const actor: Actor = { kind, group: g, tween: tweenTo(at, at), cell: null };
     actors.set(id, actor);
     return actor;
   }
@@ -177,8 +185,17 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
 
         // 不连续的一帧：就地落位。否则 `aim` 会把这一跳铺成一条世界坐标直线 ——
         // 用户报的"跳过缺口回到起点"就是死亡+重生被画成了 3.0 格的横滑。
-        actor.tween =
-          snap?.has(entity.id) === true ? snapTo(target) : advance(aim(actor.tween, target), dt);
+        if (snap?.has(entity.id) === true) {
+          actor.tween = snapTo(target);
+        } else {
+          // 跨折痕那一步**绕折痕轴转 90°**：直线插值会让方块一角插进墙角
+          // （用户报的"经过两个侧面转角处路线很奇怪"，见 `metrics.seamSwing`）。
+          const swing = actor.cell === null ? null : seamSwing(level, actor.cell, entity.cell);
+          const via: Vec3 | null =
+            swing === null ? null : [swing.x, (actor.tween.to[1] + target[1]) / 2, swing.z];
+          actor.tween = advance(aim(actor.tween, target, via), dt);
+        }
+        actor.cell = entity.cell;
 
         const p = sample(actor.tween);
         actor.group.position.set(p[0], p[1], p[2]);

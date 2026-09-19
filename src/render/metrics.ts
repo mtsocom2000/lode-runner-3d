@@ -1,6 +1,6 @@
 import type { Cell } from '../core/types';
 import type { MoveMode } from '../core/rules/movement';
-import { toFold, toWorld } from '../core/world/fold';
+import { halfExtent, toFold, toWorld } from '../core/world/fold';
 import { supportOf } from '../core/world/graph';
 import type { Level } from '../core/world/tiles';
 import type { Vec3 } from './tween';
@@ -192,6 +192,46 @@ export interface Anchor {
  * > 墙面列（`A:6` / `B:21` —— 那是"小道正对的那块墙砖"）。
  */
 export const DECK_SHIFT = 0.5;
+
+/**
+ * 跨折痕那一步的**中途点**（45° 上那一点）；`null` = 这一步不跨折痕。
+ *
+ * ## 为什么必须有它（用户报的"机器人经过两个侧面转角处路线很奇怪"）
+ *
+ * 折痕两侧最内列的两格 —— `A: fold-1` 与 `B: fold` —— 在世界坐标里是**斜对角**的：
+ * 一个落在 A 墙的走行线上、一个落在 B 墙的走行线上，两格都紧贴折痕。于是"一格"的直线插值
+ * 会让角色**穿过墙角**。实测（L1，`fold=14`、`half=13.5`、`BRICK_N=1.0`）：
+ *
+ * ```
+ * A:13 → (-12.5, -13.5)      B:14 → (-13.5, -12.5)
+ * 中点   = (-13.0, -13.0)    ← 落在四格的对角交界上
+ * 方块一角 = (-13.25,-13.25) ← x<-13 且 z<-13：不属于任何可走格（插进墙角里）
+ * ```
+ *
+ * 真实的走位是**绕折痕轴转 90°**：半径 = 走行线到折痕的距离（`BRICK_N`），圆心在折痕线上。
+ * 这条弧整体落在可走格里 —— 45° 那一点 `(-12.79, -12.79)` 正好落在两格共用的那一格里。
+ *
+ * 所以补间走 `起点 → 本函数给的中途点 → 终点` 这条折线，看起来才是"转过拐角"，
+ * 而不是"斜着飘过去、方块一角埋进墙里"。
+ */
+export function seamSwing(
+  level: Level,
+  from: Cell,
+  to: Cell,
+): { readonly x: number; readonly z: number } | null {
+  if (from.row !== to.row) return null;
+  const fold = level.fold;
+  const isSeam =
+    (from.face === 'A' && from.col === fold - 1 && to.face === 'B' && to.col === fold) ||
+    (from.face === 'B' && from.col === fold && to.face === 'A' && to.col === fold - 1);
+  if (!isSeam) return null;
+
+  // 折痕轴在 `x = z = -halfExtent`；两端的锚点分别在半径 `BRICK_N` 的 0° 与 90° 上
+  // （都在房间那一侧），所以 45° 那点就是这条弧的中点。方向**与来去无关**。
+  const h = halfExtent(fold);
+  const s = Math.SQRT1_2;
+  return { x: -h + BRICK_N * s, z: -h + BRICK_N * s };
+}
 
 export function cellAnchor(level: Level, cell: Cell): Anchor {
   // 甲板格单独一条路。**必须在 `toFold`/`toWorld` 之前** —— 那两个函数只懂

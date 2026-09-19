@@ -5,7 +5,7 @@ import { parseLevel } from '../src/core/world/tiles';
 import type { Cell } from '../src/core/types';
 import { createSyncer, type ObjectParent } from '../src/render/meshSync';
 import { playerAnchor } from '../src/render/metrics';
-import { isDone, sample, snapTo, type Vec3 } from '../src/render/tween';
+import { isDone, sample, snapTo, TWEEN_SECONDS, type Vec3 } from '../src/render/tween';
 
 /**
  * 同步层：**位置不连续时不许插值**（用户报的"跳过缺口，回到起点处"）。
@@ -86,5 +86,45 @@ describe('tween：snapTo —— 不插值的那一档', () => {
     const t = snapTo(p);
     expect(sample(t)).toEqual(p);
     expect(isDone(t)).toBe(true);
+  });
+});
+
+/**
+ * 跨折痕的一步：**绕折痕轴转 90°**，不许直线插进墙角。
+ *
+ * 用户报的原话：*"机器人在经过两个侧面转角处的路线很奇怪，像是先走了转角，然后掉头，
+ * 然后再次掉头。"* —— 折痕两侧最内列的两格（`A: fold-1` / `B: fold`）在世界坐标里是
+ * **斜对角**的，直线插值会让方块一角插进 `x < -h && z < -h`（那块不属于任何可走格）。
+ *
+ * 这条断言判的就是那件事：**整个补间过程中，身体的角从不进入墙角**。
+ */
+describe('meshSync：跨折痕要绕折痕轴转（否则方块一角插进墙角）', () => {
+  const h = 8.5; // 概念关卡 fold=9 → halfExtent = 8.5
+  const A_INNER: Cell = { face: 'A', col: 8, row: 1 }; // 折痕两侧最内列
+  const B_INNER: Cell = { face: 'B', col: 9, row: 1 };
+  const HALF = 0.25; // PLAYER_SIZE / 2
+
+  /** 身体的角有没有伸进墙角（`x < -h` 且 `z < -h` = 两片墙背面之后，不属于任何格）。 */
+  function pokesIntoCorner(p: Vec3): boolean {
+    return p[0] - HALF < -h && p[2] - HALF < -h;
+  }
+
+  it('补间全程：身体的角都不进墙角', () => {
+    const syncer = createSyncer(parent, level);
+    syncer.update(withCell(base, A_INNER), 0.016);
+    syncer.update(withCell(base, B_INNER), 0.001);
+
+    for (let i = 0; i <= 40; i++) {
+      syncer.update(withCell(base, B_INNER), TWEEN_SECONDS / 40);
+      const p = syncer.positionOf(0);
+      if (p === null) throw new Error('实体必须在场');
+      expect(pokesIntoCorner(p)).toBe(false);
+    }
+  });
+
+  it('对照：把中途点去掉（直线插值）就**会**插进墙角 —— 说明这条断言真的在判东西', () => {
+    // 直线插值的中点就是四格的对角交界 (-h, -h)：身体的角到此必然越界。
+    const mid: Vec3 = [-h, 1.5, -h];
+    expect(pokesIntoCorner(mid)).toBe(true);
   });
 });

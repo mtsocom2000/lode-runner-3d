@@ -3,7 +3,7 @@ import { supportOf } from '../src/core/world/graph';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor, seamSwing } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -209,5 +209,43 @@ describe('metrics：甲板格（face I）—— 两个下标就是世界 x/z，�
       10,
     );
     expect([body[0], body[2]]).toEqual([-3 + DECK_SHIFT, -3 + DECK_SHIFT]);
+  });
+});
+
+/**
+ * 跨折痕那一步的中途点。用户报的"机器人经过两个侧面转角处路线很奇怪"就是它缺失时的样子：
+ * 折痕两侧最内列的两格在世界坐标里是**斜对角**，直线插值会让方块一角插进墙角。
+ */
+describe('metrics：seamSwing —— 跨折痕一步绕折痕轴转 90°', () => {
+  const concept = load(CONCEPT_MINIMAL); // fold = 9 → half = 8.5
+  const h = halfExtent(concept.fold);
+  const A_INNER: Cell = { face: 'A', col: 8, row: 1 };
+  const B_INNER: Cell = { face: 'B', col: 9, row: 1 };
+
+  it('折痕那一对 → 给出 45° 上的中途点（半径 = BRICK_N）', () => {
+    const swing = seamSwing(concept, A_INNER, B_INNER);
+    expect(swing).not.toBeNull();
+    const r = BRICK_N * Math.SQRT1_2;
+    expect(swing?.x).toBeCloseTo(-h + r, 10);
+    expect(swing?.z).toBeCloseTo(-h + r, 10);
+  });
+
+  it('**方向无关**：反过来走给同一点（弧还是那条弧，只是反向走）', () => {
+    expect(seamSwing(concept, B_INNER, A_INNER)).toEqual(seamSwing(concept, A_INNER, B_INNER));
+  });
+
+  it('中途点落在两格**共用的那一格**里（所以身体不会碰到墙角）', () => {
+    // 共用格 = 距折痕 1 格：A:7（u=1）/ B:10 是同一处世界坐标。
+    const shared = cellAnchor(concept, { face: 'A', col: 7, row: 1 }).p;
+    const swing = seamSwing(concept, A_INNER, B_INNER);
+    expect(swing).not.toBeNull();
+    expect(Math.abs((swing?.x ?? 0) - shared[0])).toBeLessThan(0.5);
+    expect(Math.abs((swing?.z ?? 0) - shared[2])).toBeLessThan(0.5);
+  });
+
+  it('普通一步 / 不是折痕对手 → `null`（绝大多数步都是直线）', () => {
+    expect(seamSwing(concept, { face: 'A', col: 8, row: 1 }, { face: 'A', col: 7, row: 1 })).toBeNull();
+    expect(seamSwing(concept, { face: 'A', col: 8, row: 1 }, { face: 'B', col: 10, row: 1 })).toBeNull();
+    expect(seamSwing(concept, { face: 'A', col: 8, row: 1 }, { face: 'B', col: 9, row: 2 })).toBeNull(); // 不同行
   });
 });

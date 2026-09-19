@@ -17,10 +17,18 @@ export interface Tween {
   readonly from: Vec3;
   readonly to: Vec3;
   readonly elapsed: number;
+  /**
+   * 中途点（可选）。**只有跨折痕那一步会用到**：折痕两侧最内列的两格在世界坐标里是
+   * **斜对角**的，直线插值会让方块的一角插进墙角（见 `metrics.seamSwing`）。
+   * 走这条折线 = 绕折痕轴转 90°，看起来才是"转过拐角"。
+   *
+   * `null` = 直着走（绝大多数步）。
+   */
+  readonly via: Vec3 | null;
 }
 
-export function tweenTo(from: Vec3, to: Vec3): Tween {
-  return { from, to, elapsed: 0 };
+export function tweenTo(from: Vec3, to: Vec3, via: Vec3 | null = null): Tween {
+  return { from, to, elapsed: 0, via };
 }
 
 /**
@@ -33,7 +41,7 @@ export function tweenTo(from: Vec3, to: Vec3): Tween {
  * 而且瞬移只发生一帧：下一帧 `aim` 会发现目标没变、原样返回，照常滑。
  */
 export function snapTo(to: Vec3): Tween {
-  return { from: to, to, elapsed: TWEEN_SECONDS };
+  return { from: to, to, elapsed: TWEEN_SECONDS, via: null };
 }
 
 /**
@@ -42,19 +50,20 @@ export function snapTo(to: Vec3): Tween {
  * 这是这类同步最典型的手感事故：一格走完之前 sim 又给出下一格，如果直接把 `from`
  * 换成旧起点，角色会先往后退一小段再前进 —— 看起来像卡了一下。
  */
-export function retarget(tween: Tween, to: Vec3): Tween {
-  return { from: sample(tween), to, elapsed: 0 };
+export function retarget(tween: Tween, to: Vec3, via: Vec3 | null = null): Tween {
+  return { from: sample(tween), to, elapsed: 0, via };
 }
 
 /**
- * 把补间对准新目标 —— **目标没变就原样返回**。
+ * 把补间对准新目标 —— **目标（与中途点）都没变就原样返回**。
  *
  * 同步层每帧都会调它，所以"没变就不动"这件事必须在这里保证：若每帧都重开补间，
  * `elapsed` 会被反复清零，角色看起来像被钉在原地 —— 一格也走不完。
  * 于是这个判断不是优化，是正确性的一部分。
  */
-export function aim(tween: Tween, to: Vec3): Tween {
-  return samePoint(tween.to, to) ? tween : retarget(tween, to);
+export function aim(tween: Tween, to: Vec3, via: Vec3 | null = null): Tween {
+  if (!samePoint(tween.to, to)) return retarget(tween, to, via);
+  return sameVia(tween.via, via) ? tween : retarget(tween, to, via);
 }
 
 /** 推进时钟。负数与超大 dt 都被夹住（标签页切回来时 dt 会很大，不该让它跳过补间）。 */
@@ -71,11 +80,14 @@ export function isDone(tween: Tween): boolean {
 export function sample(tween: Tween): Vec3 {
   const k = TWEEN_SECONDS <= 0 ? 1 : Math.min(1, tween.elapsed / TWEEN_SECONDS);
   const eased = 1 - (1 - k) ** 3; // ease-out cubic：起步快、收尾缓
-  return [
-    lerp(tween.from[0], tween.to[0], eased),
-    lerp(tween.from[1], tween.to[1], eased),
-    lerp(tween.from[2], tween.to[2], eased),
-  ];
+  const { via } = tween;
+  if (via === null) return lerp3(tween.from, tween.to, eased);
+
+  // 有中途点：按**总进度**决定走折线的哪一段。每段各自缓一次会在拐角处凭空多出一次
+  // 停顿（"走到转角站一下再转"），而整段缓一次才是"转过拐角"该有的连贯。
+  return eased < 0.5
+    ? lerp3(tween.from, via, eased * 2)
+    : lerp3(via, tween.to, (eased - 0.5) * 2);
 }
 
 /** 两个坐标是否同一个点。补间换目标前要先问这个 —— 否则每帧都会重开补间。 */
@@ -83,6 +95,16 @@ export function samePoint(a: Vec3, b: Vec3): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
 
+/** 中途点是否相同（两个都 `null` 也算）。`aim` 靠它判断"要不要重开补间"。 */
+export function sameVia(a: Vec3 | null, b: Vec3 | null): boolean {
+  if (a === null || b === null) return a === b;
+  return samePoint(a, b);
+}
+
 function lerp(a: number, b: number, k: number): number {
   return a + (b - a) * k;
+}
+
+function lerp3(a: Vec3, b: Vec3, k: number): Vec3 {
+  return [lerp(a[0], b[0], k), lerp(a[1], b[1], k), lerp(a[2], b[2], k)];
 }
