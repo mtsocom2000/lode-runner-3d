@@ -77,15 +77,11 @@ describe('hints：屏幕方向（用户反馈"WASD 在拐角与岛台上完全�
     expect(formatDirHints(hints, 'wall', keyLabel)).not.toContain('⚠');
   });
 
-  it('墙面那行只列 `a`/`d`（那里 `w`/`s`/`e` 都不是移动键，按了不走）', () => {
-    // 键位表是**按面分**的（`input.ts` 的 `KEY_DIRS`），HUD 从那里取键名 —— 不另抄一份。
+  it('墙面那行列四个键 `a`/`d`/`w`/`s`（键位表说这里有四个方向）', () => {
+    // 键名由 `keyLabel` 从**唯一那张键位表**取（`input.ts` 的 `KEY_DIRS`），HUD 不另抄一份。
     const line = formatDirHints(hintsAt('A', 5, 1), 'wall', keyLabel);
-    expect(line).not.toContain('w=');
-    expect(line).not.toContain('s=');
-    expect(line).not.toContain('e=');
-    expect(line).toContain('a=');
-    expect(line).toContain('d=');
-    expect(line).toContain('Z/X');
+    for (const k of ['a=', 'd=', 'w=', 's=']) expect(line).toContain(k);
+    expect(line).not.toContain('e='); // 墙面上没有斜向可言
   });
 
   it('甲板那行列的是四个屏幕斜向键 `w`/`e`/`s`/`d`（各自正对一个象限）', () => {

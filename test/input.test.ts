@@ -96,14 +96,16 @@ function keyboard(): {
 }
 
 describe('input：按键 → 方向（**按面分**）', () => {
-  it('墙面：只有 `a`/`d`（沿墙左右）。`w`/`s`/`e` 在这里没有走法', () => {
+  it('墙面：`a`/`d` 沿走廊左右，`w`/`s` 上下（爬梯）', () => {
     expect(dirOfKey('a', 'wall')).toBe('left');
     expect(dirOfKey('D', 'wall')).toBe('right');
     expect(dirOfKey('ArrowLeft', 'wall')).toBe('left');
     expect(dirOfKey('ArrowRight', 'wall')).toBe('right');
-    for (const key of ['w', 'W', 's', 'S', 'e', 'E', 'ArrowUp', 'ArrowDown']) {
-      expect(dirOfKey(key, 'wall')).toBeNull();
-    }
+    expect(dirOfKey('w', 'wall')).toBe('up');
+    expect(dirOfKey('S', 'wall')).toBe('down');
+    expect(dirOfKey('ArrowUp', 'wall')).toBe('up');
+    expect(dirOfKey('ArrowDown', 'wall')).toBe('down');
+    expect(dirOfKey('e', 'wall')).toBeNull(); // 墙面上没有斜向可言
   });
 
   it('甲板：四个屏幕斜向 `w`↖ `e`↗ `s`↙ `d`↘（各自正对一个象限）', () => {
@@ -126,7 +128,7 @@ describe('input：按键 → 方向（**按面分**）', () => {
 
   it('别的键一律 null —— 输入层不去猜玩家想干嘛', () => {
     for (const surface of ['wall', 'deck'] as const) {
-      for (const key of [' ', 'Enter', 'Shift', 'z', 'x', 'q', '1']) {
+      for (const key of [' ', 'Enter', 'Shift', 'z', 'x', 'q', 'r', '1']) {
         expect(dirOfKey(key, surface)).toBeNull();
       }
     }
@@ -134,23 +136,23 @@ describe('input：按键 → 方向（**按面分**）', () => {
 });
 
 /**
- * 键 → 方向按面分，所以**同一个键在两个面上可以是两件事**（`w` 在甲板是 ↖、在墙上不存在）。
+ * 键 → 方向按面分，所以**同一个键在两个面上可以是两件事**（`w` 在墙上 = 爬梯、在甲板 = ↖）。
  * 这条钉两层：①纯判据 `moveAllowed`；②接到**真的键盘事件**上跑一遍 ——
  * 因为"按键怎么发出来"和"走法合不合法"是两件事，只有后者被 `movement.step` 管着。
  */
 describe('input：同一个键在两个面上的含义', () => {
-  it('`moveAllowed` 跟着键位表走：墙上只有 left/right，甲板四个都有', () => {
-    expect(moveAllowed('up', 'deck')).toBe(true);
-    expect(moveAllowed('down', 'deck')).toBe(true);
-    expect(moveAllowed('up', 'wall')).toBe(false);
-    expect(moveAllowed('down', 'wall')).toBe(false);
-    for (const dir of ['left', 'right'] as const) {
-      expect(moveAllowed(dir, 'wall')).toBe(true);
-      expect(moveAllowed(dir, 'deck')).toBe(true);
+  it('`moveAllowed` 跟着键位表走：墙上四个方向都有（只有 `e` 没有），甲板也没有 `a`', () => {
+    for (const surface of ['wall', 'deck'] as const) {
+      for (const dir of ['left', 'right', 'up', 'down'] as const) {
+        expect(moveAllowed(dir, surface)).toBe(true);
+      }
     }
+    expect(moveAllowed('up', 'wall')).toBe(true); // 墙面上的 `up` 就是爬梯
+    expect(dirOfKey('a', 'deck')).toBeNull();
+    expect(dirOfKey('e', 'wall')).toBeNull();
   });
 
-  it('真的按 `w`：甲板上给出 `left`（↖ = -x），墙面上给 null', () => {
+  it('真的按 `w`：甲板上是 `left`（↖ = -x），墙面上是 `up`（爬梯）', () => {
     const kb = keyboard();
     const input = createInput(kb.target, kb.at);
 
@@ -158,35 +160,12 @@ describe('input：同一个键在两个面上的含义', () => {
     kb.send('keydown', 'w');
     expect(input.intents().move).toBe('left');
 
+    // 走上墙：**同一个键换了含义**（甲板的 ↖ → 墙面的爬梯）。这是按面分的本意。
     kb.on('wall');
-    expect(input.intents().move).toBeNull();
-    // 还**按着不放**：于是回到甲板时这个键重新有含义（"按住"就是按住）。
-    kb.on('deck');
-    expect(input.intents().move).toBe('left');
-  });
-
-  it('在墙上**轻点** `w`：这一下被作废 —— 之后走上甲板不会自己动一格', () => {
-    const kb = keyboard();
-    const input = createInput(kb.target, kb.at);
-
-    kb.send('keydown', 'w'); // 此刻在墙上
-    kb.send('keyup', 'w');
-
-    expect(input.intents().move).toBeNull(); // 墙面上没有这个走法 → 当没按过
-    kb.on('deck');
-    expect(input.intents().move).toBeNull(); // 那一下**不欠着**了
-  });
-
-  it('在甲板上按 `e`（= `up`）之后走上墙：那个 `up` 不能在墙上变成爬梯', () => {
-    const kb = keyboard();
-    const input = createInput(kb.target, kb.at);
-
-    kb.on('deck');
-    kb.send('keydown', 'e');
     expect(input.intents().move).toBe('up');
 
-    kb.on('wall');
-    expect(input.intents().move).toBeNull(); // `up` 在墙面上没有键 → 作废，不欠着
+    kb.on('deck');
+    expect(input.intents().move).toBe('left');
   });
 
   it('真的按 `a`：墙面上是 `left`；甲板上没有这个键', () => {

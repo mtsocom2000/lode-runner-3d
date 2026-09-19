@@ -83,19 +83,20 @@ export function dirHints(
  * 这里不另抄一份：抄一份的下场是"改了键位、HUD 还在报旧键"，而 HUD 那行正是玩家唯一能看到
  * "这个键现在会往哪走"的地方。
  *
- * `surface` 决定列哪些方向：墙面是竖直面，那里 `w`/`s`/`e` 都不是移动键（上下归 `Z`/`X`，
- * 见 `input.ts` 的 `KEY_DIRS`）—— 既然按了不走，就别列进"按下的键实际会往哪走"。
+ * 也因此**不需要**在这里筛掉"这个面上没有的方向"：`keyOf` 对那个面查不到键，返回 `?`，
+ * 那正是"这个面上没有这个键"。筛的规则写两遍必然和键位表漂开。
  */
 export function formatDirHints(
   hints: readonly DirHint[],
   surface: Surface,
   keyOf: (dir: Dir, surface: Surface) => string,
 ): string {
-  const live = surface === 'deck' ? hints : hints.filter((h) => h.dir !== 'up' && h.dir !== 'down');
   const name = (d: Dir): string => keyOf(d, surface);
-  const parts = live.map((h) => `${name(h.dir)}=${h.glyph}`);
-  const danger = live.filter((h) => h.danger).map((h) => name(h.dir));
+  const parts = hints.map((h) => `${name(h.dir)}=${h.glyph}`);
+  const danger = hints.filter((h) => h.danger).map((h) => name(h.dir));
   const tail = danger.length === 0 ? '' : ` ｜ ⚠ 会落水：${danger.join('/')}`;
-  const lift = surface === 'deck' ? 'Z/X 上下一层' : 'Z/X 上下爬梯（吊杆时 X = 松手、接头处 X 下到小道）';
-  return `屏幕方向（按下的键实际会往哪走）：${parts.join('  ')} ｜ ${lift}${tail}`;
+  // 墙面：`w`/`s` 就是上下（爬梯 / 吊杆松手 / 丁字路口拐上小道）。甲板：`w/e/s/d` 是四个
+  // 面内方向，上下另有其事 —— 那里是 `Z`/`X` 换层（塔）。
+  const extra = surface === 'deck' ? 'Z/X 上下一层' : 'Z/X 同 w/s（墙上没有"另一层"）';
+  return `屏幕方向（按下的键实际会往哪走）：${parts.join('  ')} ｜ ${extra}${tail}`;
 }

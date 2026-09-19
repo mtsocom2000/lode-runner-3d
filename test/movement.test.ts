@@ -118,6 +118,20 @@ describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () =>
     expect(shape(step(sim, at(sim, cellB(13, 1)), 'down'))).toBe('move:stand:I:-4,-7');
   });
 
+  it('**丁字路口的手感**（用户方案 A）：`a`/`d` 沿墙走，`s` 拐上小道', () => {
+    // 用户的原话："按 A/D：角色继续沿着左侧墙壁左右横穿（忽略路口）。按 S（向下/走向屏幕前方）：
+    // 角色直接拐弯转入岛台小路，脱离墙面！"
+    //
+    // 这不是特判 —— 是规则的自然结果：接口声明的方向就是 `down`，而那一格"往下"本来堵死
+    //（脚下是实心砖、不是梯子）。校验规则⑧保证这条前提对每张关卡都成立。
+    const at4 = at(sim, cellA(4, 1));
+    expect(shape(step(sim, at4, 'down'))).toBe('move:stand:I:-7,-4'); // `s`：拐出立面
+    expect(shape(step(sim, at4, 'left'))).toBe('move:stand:A:3,1'); // `a`：照旧沿墙
+    expect(shape(step(sim, at4, 'right'))).toBe('move:stand:A:5,1'); // `d`：照旧沿墙
+    // `w` 在那一格是"往上"—— 上面是实心平台、不是梯子，所以什么也不做（不会误触别的东西）。
+    expect(shape(step(sim, at4, 'up'))).toBe('blocked:not-ladder');
+  });
+
   it('`decks: false`（无人机）**不认接头**：同一步只走到隔壁墙格，走不上小道', () => {
     // 用户 2026-09-19 报的"机器人进入岛台后就变傻了"：巡逻到接头那一格、朝向正好是
     // `enterDir` 时它一步跨上了小道 —— 而甲板上没有它的图节点（`decks:false`），于是追不了人、
