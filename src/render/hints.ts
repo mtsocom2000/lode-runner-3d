@@ -1,7 +1,7 @@
-import { DIRS, stateAt, step, type Dir, type MoveMode } from '../core/rules/movement';
+import { DIRS, type Dir, type MoveMode } from '../core/rules/movement';
 import type { Cell } from '../core/types';
 import type { Level } from '../core/world/tiles';
-import { playerAnchor } from './metrics';
+import { NEGLIGIBLE, stepDelta } from './metrics';
 import type { Vec3 } from './tween';
 
 /**
@@ -48,12 +48,7 @@ export interface DirHint {
   readonly danger: boolean;
 }
 
-/**
- * 位移在某个轴上小于它就算"没有这个方向"。一格的世界位移约 `CUBE`(1.0)，
- * 所以 0.15 是"不足六分之一格"—— 肉眼在那个量级上分辨不出偏差。
- */
-const NEGLIGIBLE = 0.15;
-
+/** 位移小于 `NEGLIGIBLE` 就不画那个分量（常量与"跨折痕那一跳"的判据同在 `metrics.ts`）。 */
 const H = (sx: number): string => (sx > NEGLIGIBLE ? '→' : sx < -NEGLIGIBLE ? '←' : '');
 const V = (sy: number): string => (sy > NEGLIGIBLE ? '↑' : sy < -NEGLIGIBLE ? '↓' : '');
 
@@ -62,11 +57,6 @@ const KEY: Readonly<Record<Dir, string>> = { up: 'w', down: 's', left: 'a', righ
 
 function dot(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-/** 两点的距离（用来识别"这一步其实没动" —— 跨折痕那一跳）。 */
-function distance(a: Vec3, b: Vec3): number {
-  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
 /**
@@ -80,46 +70,12 @@ export function dirHints(
   axes: ScreenAxes,
   bridges?: ReadonlySet<string>,
 ): readonly DirHint[] {
-  const base = playerAnchor(level, at, mode, bridges);
-  const opts = { bridges };
-
   return DIRS.map((dir): DirHint => {
-    const result = step(level, { cell: at, mode }, dir, opts);
-
-    let to: Vec3 | null = null;
-    let danger = false;
-    if (result.kind === 'move') {
-      to = playerAnchor(level, result.state.cell, result.state.mode);
-      // **跨折痕那一步的位移是 0**（两格在世界同一个位置 —— 见 `metrics.BRICK_N`），
-      // 直接报方位会得到 `·`，对玩家等于没说。玩家要的是"按下去之后我会往屏幕的哪边走"，
-      // 所以这一步之后再走一步、报那一步的方位（那正是他松手再按时会看到的）。
-      if (distance(to, base) < NEGLIGIBLE) {
-        const next = step(level, result.state, dir, opts);
-        if (next.kind === 'move') {
-          to = playerAnchor(level, next.state.cell, next.state.mode);
-        } else if (next.kind === 'fall') {
-          if (next.end.kind === 'landed') {
-            to = playerAnchor(level, next.end.cell, stateAt(level, next.end.cell)?.mode ?? 'stand');
-          } else {
-            danger = true;
-            to = playerAnchor(level, next.end.from, result.state.mode);
-          }
-        }
-      }
-    } else if (result.kind === 'fall') {
-      if (result.end.kind === 'water') {
-        danger = true;
-        // 记号打在想踏进去的那一格（= 缺口本身），而不是水面上 —— 那才是玩家看着的目标。
-        to = playerAnchor(level, result.end.from, mode);
-      } else {
-        to = playerAnchor(level, result.end.cell, stateAt(level, result.end.cell)?.mode ?? 'stand');
-      }
-    }
-
-    if (to === null) return { dir, glyph: '×', danger: false };
-    const delta: Vec3 = [to[0] - base[0], to[1] - base[1], to[2] - base[2]];
-    const glyph = `${H(dot(delta, axes.right))}${V(dot(delta, axes.up))}` || '·';
-    return { dir, glyph, danger };
+    // 世界位移由 `stepDelta` 给（**与角色朝向箭头同一个函数**）—— 这里只负责把它投影到屏幕轴。
+    const r = stepDelta(level, at, mode, dir, bridges);
+    if (r === null) return { dir, glyph: '×', danger: false };
+    const glyph = `${H(dot(r.delta, axes.right))}${V(dot(r.delta, axes.up))}` || '·';
+    return { dir, glyph, danger: r.danger };
   });
 }
 

@@ -3,7 +3,7 @@ import { supportOf } from '../src/core/world/graph';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor, stepDelta } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -216,5 +216,36 @@ describe('metrics：甲板格（face I）—— 两个下标就是世界 x/z，�
       10,
     );
     expect([body[0], body[2]]).toEqual([-3 + DECK_SHIFT, -3 + DECK_SHIFT]);
+  });
+});
+
+/**
+ * `stepDelta`：**按某个方向走一步的世界位移**。两个消费者 —— HUD 的方向提示（投影成 `→↑`）
+ * 与角色的**朝向箭头**（转成 yaw）—— 共用它，所以"提示说往右、箭头却指别处"不可能发生。
+ */
+describe('metrics：stepDelta —— 一步的世界位移（HUD 提示与朝向箭头共用）', () => {
+  const concept = load(CONCEPT_MINIMAL);
+
+  it('甲板上：`up` 是 −z、`down` 是 +z（2026-09-19 对调过 —— 用户："按 w 往左下方走，反直觉"）', () => {
+    const island: Cell = { face: 'I', col: -3, row: -3 };
+    const up = stepDelta(concept, island, 'stand', 'up');
+    const down = stepDelta(concept, island, 'stand', 'down');
+    expect(up?.delta[0]).toBeCloseTo(0, 10);
+    expect(up?.delta[2]).toBeCloseTo(-1, 10);
+    expect(down?.delta[2]).toBeCloseTo(1, 10);
+  });
+
+  it('跨折痕那一步：位移**不是 0**，而是"转过弯之后"的方向（原地转 90°）', () => {
+    // 概念关卡的最内列 `A:8`：往 right 就是跨折痕。直接取那一步会得到零向量（两格同点），
+    // 所以 `stepDelta` 会再看一步 —— 这就是朝向箭头与 HUD 提示在拐角处的口径。
+    const foldCell: Cell = { face: 'A', col: 8, row: 1 };
+    const r = stepDelta(concept, foldCell, 'stand', 'right');
+    expect(r).not.toBeNull();
+    expect(Math.hypot(r?.delta[0] ?? 0, r?.delta[2] ?? 0)).toBeCloseTo(1, 10);
+  });
+
+  it('走不了的方向 → `null`（HUD 画 `×`，箭头保持上一次朝向）', () => {
+    // 出生点左边就是网格外。
+    expect(stepDelta(concept, { face: 'A', col: 0, row: 1 }, 'stand', 'left')).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { bridgesOf, type EntityKind, type SimState } from '../core/sim';
 import type { Level } from '../core/world/tiles';
-import { PLAYER_SIZE, playerAnchor } from './metrics';
+import { PLAYER_SIZE, playerAnchor, stepDelta } from './metrics';
 import { PALETTE } from './palette';
 import { advance, aim, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
 
@@ -49,6 +49,11 @@ const GLOW_OPACITY = 0.32;
 /** 发光壳的渲染序号：晚于全场不透明物 → 光晕压在砖上面（这就是"角色始终可见"）。 */
 const GLOW_RENDER_ORDER = 998;
 
+/** 朝向箭头：长度 / 宽度，以及"压扁"系数（不压扁看起来像一根钉在地上的锥）。 */
+const ARROW_LENGTH = 0.5;
+const ARROW_WIDTH = 0.13;
+const ARROW_FLAT = 0.25;
+
 export interface Syncer {
   readonly group: THREE.Group;
   /**
@@ -90,6 +95,11 @@ export interface ObjectParent {
 interface Actor {
   readonly kind: EntityKind;
   readonly group: THREE.Group;
+  /**
+   * 朝向箭头（躺在地面上的扁平三角）。角色是个**正方体**，自己看不出面朝哪边
+   * （用户 2026-09-19："看不出前进方向…或者在方块正下方画一个箭头，指示当前的面对方向"）。
+   */
+  readonly arrow: THREE.Mesh;
   tween: Tween;
 }
 
@@ -134,6 +144,25 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
 
   const actors = new Map<number, Actor>();
 
+  /**
+   * 朝向箭头：**躺在地面上的一个扁平三角**，尖端指向实体当前朝向的世界方向。
+   *
+   * 为什么需要它（用户 2026-09-19）：角色是个正方体，看不出面朝哪边 —— 于是"按键与前进方向
+   * 不统一"这件事无处可查，**过折痕时那 90° 的转身更是完全看不见**（架构文档 §八-4 要求
+   * "折痕处朝向跟随转 90°"，这条一直没有表现）。箭头把朝向变成看得见的事实。
+   *
+   * 几何与材质全实体共用（与身体同规格）：一个 `ConeGeometry` 三棱锥，躺平、压扁，尖端朝 +z
+   * —— 与 `Math.atan2(dx, dz)` 是同一口径（yaw = 0 就是 +z）。
+   */
+  const arrowGeo = new THREE.ConeGeometry(ARROW_WIDTH, ARROW_LENGTH, 3);
+  arrowGeo.rotateX(Math.PI / 2);
+  // 往前挪一点：尖端从身体前缘探出来（不然整个记号躺在身体底下，看不见）。
+  arrowGeo.translate(0, 0, 0.1);
+  const arrowMat: Readonly<Record<EntityKind, THREE.MeshBasicMaterial>> = {
+    player: new THREE.MeshBasicMaterial({ color: PALETTE.player }),
+    drone: new THREE.MeshBasicMaterial({ color: PALETTE.drone }),
+  };
+
   function spawn(id: number, kind: EntityKind, at: Vec3): Actor {
     const g = new THREE.Group();
 
@@ -146,11 +175,17 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     glow.renderOrder = GLOW_RENDER_ORDER;
     g.add(glow);
 
+    // 箭头贴在地面（脚）上：抬 0.01 避开与砖顶面的 z-fighting；压扁成"地上的记号"。
+    const arrow = new THREE.Mesh(arrowGeo, arrowMat[kind]);
+    arrow.scale.set(1, ARROW_FLAT, 1);
+    arrow.position.set(0, -PLAYER_SIZE / 2 + 0.01, 0);
+    g.add(arrow);
+
     g.position.set(at[0], at[1], at[2]);
     group.add(g);
 
     // 首次出现**不滑入**：`from === to` 于是 `sample` 直接给目标点，人就地站好。
-    const actor: Actor = { kind, group: g, tween: tweenTo(at, at) };
+    const actor: Actor = { kind, group: g, arrow, tween: tweenTo(at, at) };
     actors.set(id, actor);
     return actor;
   }
@@ -182,6 +217,12 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
         // 用户报的"跳过缺口回到起点"就是死亡+重生被画成了 3.0 格的横滑。
         actor.tween =
           snap?.has(entity.id) === true ? snapTo(target) : advance(aim(actor.tween, target), dt);
+
+        // 朝向箭头：把 `facing`（一个**格坐标**方向）换成世界方向 —— 用的是与 HUD 方向提示
+        // **同一个** `stepDelta`（跨折痕那一步在这里自动变成"转过弯之后"的方向）。
+        // 走不动时（`null`）保持上一次的朝向，不要突然指回某个默认方向。
+        const facing = stepDelta(level, entity.cell, entity.mode, entity.facing, bridges);
+        if (facing !== null) actor.arrow.rotation.y = Math.atan2(facing.delta[0], facing.delta[2]);
 
         const p = sample(actor.tween);
         actor.group.position.set(p[0], p[1], p[2]);
@@ -217,8 +258,10 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
   dispose(): void {
     parent.remove(group);
     box.dispose();
+    arrowGeo.dispose();
     for (const m of Object.values(bodyMat)) m.dispose();
     for (const m of Object.values(glowMat)) m.dispose();
+    for (const m of Object.values(arrowMat)) m.dispose();
     actors.clear();
   },
 };

@@ -1,5 +1,5 @@
 import type { Cell } from '../core/types';
-import type { MoveMode } from '../core/rules/movement';
+import { stateAt, step, type Dir, type MoveMode } from '../core/rules/movement';
 import { toFold, toWorld } from '../core/world/fold';
 import { supportOf } from '../core/world/graph';
 import type { Level } from '../core/world/tiles';
@@ -228,4 +228,77 @@ export function playerAnchor(
   if (support === 'brick') return [x, y - STAND_ON_BRICK_DROP, z];
   // 梯（以及万一说不清支撑方式时的兜底）：身体就占本格。
   return p;
+}
+
+/**
+ * 位移在某个轴上小于它就算"没有这个方向"。一格的世界位移约 `CUBE`(1.0)，
+ * 所以 0.15 是"不足六分之一格"—— 肉眼在那个量级上分辨不出偏差。
+ */
+export const NEGLIGIBLE = 0.15;
+
+/** 按某个方向走一步会落到哪、会不会落水 —— `stepDelta` 的结果。 */
+export interface StepDelta {
+  /** 世界位移（未归一化）。 */
+  readonly delta: Vec3;
+  /** 这一步会**落水**（扣命）。 */
+  readonly danger: boolean;
+}
+
+function distance(a: Vec3, b: Vec3): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
+/**
+ * 按 `dir` 走一步的**世界位移**（渲染口径：吃锚点）。`null` = 这一步走不了。
+ *
+ * 两个消费者：HUD 的方向提示（投影到屏幕轴变成 `→↑` 那种记号）与角色的**朝向箭头**
+ * （把位移转成 yaw）。两件事必须同源 —— 否则"提示说往右、箭头却指着别处"。
+ *
+ * **跨折痕那一步位移是 0**（两格落在世界同一个位置，见 `BRICK_N` 的说明）：直接返回就得到
+ * 一个零向量，所以再看一步 —— 那正是"按下去之后我会往哪边走"的答案。
+ */
+export function stepDelta(
+  level: Level,
+  cell: Cell,
+  mode: MoveMode,
+  dir: Dir,
+  bridges?: ReadonlySet<string>,
+): StepDelta | null {
+  const opts = { bridges };
+  const base = playerAnchor(level, cell, mode, bridges);
+
+  const result = step(level, { cell, mode }, dir, opts);
+  let to: Vec3 | null = null;
+  let danger = false;
+
+  if (result.kind === 'move') {
+    to = playerAnchor(level, result.state.cell, result.state.mode, bridges);
+    if (distance(to, base) < NEGLIGIBLE) {
+      // 跨折痕：原地转 90°，再看一步。
+      const next = step(level, result.state, dir, opts);
+      if (next.kind === 'move') {
+        to = playerAnchor(level, next.state.cell, next.state.mode, bridges);
+      } else if (next.kind === 'fall') {
+        if (next.end.kind === 'landed') {
+          to = playerAnchor(level, next.end.cell, stateAt(level, next.end.cell)?.mode ?? 'stand', bridges);
+        } else {
+          danger = true;
+          to = playerAnchor(level, next.end.from, result.state.mode, bridges);
+        }
+      } else {
+        to = null; // 转过去也走不动 → 没有可报的方向
+      }
+    }
+  } else if (result.kind === 'fall') {
+    if (result.end.kind === 'water') {
+      danger = true;
+      // 记号打在想踏进去的那一格（= 缺口本身），而不是水面上 —— 那才是玩家看着的目标。
+      to = playerAnchor(level, result.end.from, mode, bridges);
+    } else {
+      to = playerAnchor(level, result.end.cell, stateAt(level, result.end.cell)?.mode ?? 'stand', bridges);
+    }
+  }
+
+  if (to === null) return null;
+  return { delta: [to[0] - base[0], to[1] - base[1], to[2] - base[2]], danger };
 }
