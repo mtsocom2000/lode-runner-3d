@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyBackfill, applyDig, canDig, digTarget, PIT } from '../src/core/rules/dig';
+import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { fallTo, step } from '../src/core/rules/movement';
 import type { Cell } from '../src/core/types';
 import { supportOf } from '../src/core/world/graph';
@@ -44,6 +45,29 @@ describe('dig：挖的目标格', () => {
     expect(digTarget(diggable, { face: 'A', col: 1, row: 0 }, 'left')).toBeNull(); // row -1
     expect(digTarget(diggable, { face: 'A', col: 0, row: 1 }, 'left')).toBeNull(); // col -1
     expect(digTarget(diggable, { face: 'B', col: 3, row: 1 }, 'right')).toBeNull(); // col 4
+  });
+
+  it('甲板（岛台 / 小道）上没有可挖的砖 —— 站上去按挖，什么都不发生', () => {
+    // 甲板的 `(x, z)` 不是墙的 `(col, row)`（见 `core/world/deck.ts`）：不挡住的话，
+    // 算出来的"目标格"在正坐标布局里就是墙上另一块砖 —— 挖岛台却把墙挖了个洞。
+    const parsed = parseLevel(CONCEPT_MINIMAL);
+    if (!parsed.ok) throw new Error('概念关卡必须合法');
+    const onIsland: Cell = { face: 'I', col: -4, row: -4 };
+    const onJetty: Cell = { face: 'I', col: -6, row: -4 };
+    expect(digTarget(parsed.level, onIsland, 'left')).toBeNull();
+    expect(digTarget(parsed.level, onIsland, 'right')).toBeNull();
+    expect(canDig(parsed.level, onIsland, 'right')).toBe(false);
+    expect(canDig(parsed.level, onJetty, 'left')).toBe(false);
+  });
+
+  it('**站在小道接口那一格**（那是墙面格）照常能挖 —— 挖不动的只有甲板本身', () => {
+    const parsed = parseLevel(CONCEPT_MINIMAL);
+    if (!parsed.ok) throw new Error('概念关卡必须合法');
+    // 概念关卡的接头墙面端：`A:3,1`。它左右斜下方分别是 r0 的 col2（落水缺口，不是砖）
+    // 与 col4（可挖砖）—— 正好把"能挖 / 不能挖"两条都钉住。
+    const atJoint: Cell = { face: 'A', col: 3, row: 1 };
+    expect(canDig(parsed.level, atJoint, 'left')).toBe(false); // 目标是落水缺口：没砖可挖
+    expect(canDig(parsed.level, atJoint, 'right')).toBe(true); // 目标是可挖砖
   });
 });
 

@@ -12,6 +12,7 @@ import { createHud } from './hud';
 import { createInput } from './input';
 import { dirHints, formatDirHints, type ScreenAxes } from '../render/hints';
 import { createSelectiveBloom } from '../render/bloom';
+import { feedbackFor } from '../render/feedback';
 
 const host = document.getElementById('app');
 if (!host) throw new Error('找不到 #app 挂载点（index.html 被改坏了？）');
@@ -354,6 +355,8 @@ function loop(now: number): void {
   // 顺带把"本帧哪些实体瞬移了"收出来（目前只有重生这一种）。事件流现在有两个消费者：
   // 输入销账、同步层的就地落位（T20 的特效会是第三个）。
   let snapped: Set<number> | null = null;
+  // 玩家是谁 —— 死亡提示只该为**玩家**亮。见下面那段"必须看是谁"。
+  const playerId = state.entities.find((e) => e.kind === 'player')?.id;
   while (acc >= STEP_MS) {
     const frame = tick(state, input.intents());
     state = frame.state;
@@ -367,14 +370,12 @@ function loop(now: number): void {
         snapped.add(event.entity);
         continue;
       }
-      // 死亡 / 终局的可见反馈（见 `flash` 的注释）。注意 `drowned` 与 `gameover` 会在
-      // **同一个 tick** 里先后出现（前者在移动那步、后者在结算那步），所以"常驻"要写在后面 ——
-      // 否则终局那条会被"落水 −1 命"盖掉。
-      if (event.kind === 'drowned') flash('落 水 ｜ 命数 −1', DEATH_FLASH_MS);
-      else if (event.kind === 'buried') flash('被 活 埋 ｜ 命数 −1', DEATH_FLASH_MS);
-      else if (event.kind === 'caught') flash('被 抓 住 ｜ 命数 −1', DEATH_FLASH_MS);
-      else if (event.kind === 'gameover') flashForever('GAME OVER —— 按 R 重开');
-      else if (event.kind === 'won') flashForever('★ 过 关 ！');
+      // 死亡 / 终局的可见反馈。文案与"该不该亮"都在 `render/feedback.ts` 里（纯函数、可测）——
+      // 那段映射以前写在这里，于是"机器人被活埋 → 提示玩家命 −1"这种 bug 没有测试能拦。
+      const note = feedbackFor(event, playerId);
+      if (note === null) continue;
+      if (note.sticky) flashForever(note.text);
+      else flash(note.text, DEATH_FLASH_MS);
     }
   }
 

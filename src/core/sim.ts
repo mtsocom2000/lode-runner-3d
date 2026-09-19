@@ -1,5 +1,5 @@
 import { cellKey, type Cell } from './types';
-import { decideDrone } from './ai/drone';
+import { decideDrone, DRONE_STEP } from './ai/drone';
 import type { DeckCell, DeckJoint } from './world/deck';
 import { faceOf } from './world/fold';
 import {
@@ -12,7 +12,7 @@ import {
 } from './rules/dig';
 import { drownPath, type DrownPath } from './rules/drown';
 import { openGates, treasureAt, withoutTreasure } from './rules/goals';
-import { fallTo, stateAt, step, type Dir, type FallEnd, type MoveMode } from './rules/movement';
+import { fallTo, stateAt, step, type Dir, type FallEnd, type MoveMode, type StepOptions } from './rules/movement';
 import { supportOf } from './world/graph';
 import { parseLevel, type Level, type LevelDef, type TileKind } from './world/tiles';
 import { isWater } from './world/water';
@@ -422,6 +422,17 @@ interface AdvanceContext {
 }
 
 /**
+ * 这个实体走一步时，认不认甲板（岛台 / 小道）。
+ *
+ * 玩家 = 完整世界（默认）；无人机 = `DRONE_STEP`（**只在墙面内**，那份能力的唯一出处）。
+ * 与 AI 用同一份表，所以"图上到不了的地方，脚也走不到" —— 早先只有图那一半，
+ * 于是巡逻到接头格时会一步跨上小道（用户报的"机器人进入岛台后就变傻了"）。
+ */
+function stepOptions(entity: Entity): StepOptions {
+  return entity.kind === 'player' ? {} : DRONE_STEP;
+}
+
+/**
  * 这个实体本 tick 想往哪走。
  *
  * 玩家取输入方向；无人机交给 `ai/drone.ts`（巡逻段 + 追击段，用户裁定）。
@@ -481,7 +492,7 @@ function advance(
   const dir = decide(entity, intents, level, ctx);
   if (dir === null) return entity; // 站着不动：不进入冷却，下一 tick 按方向立刻起步
 
-  const result = step(level, { cell: entity.cell, mode: entity.mode }, dir);
+  const result = step(level, { cell: entity.cell, mode: entity.mode }, dir, stepOptions(entity));
 
   switch (result.kind) {
     case 'blocked':

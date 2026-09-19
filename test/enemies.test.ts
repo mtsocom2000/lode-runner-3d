@@ -11,6 +11,7 @@ import {
   type SimState,
 } from '../src/core/sim';
 import { validateLevel } from '../src/core/level/validate';
+import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 import { cellA, cellB } from './fixtures';
 import type { ObjectParent } from '../src/render/meshSync';
@@ -292,6 +293,19 @@ describe('T12-e：挖坑反制（用户报的 bug）—— 守卫会**走进**�
     // 困在坑里：连走 20 tick 一步没动（不追人、也不自己爬出来）
     state = replay(state, wait(20))[19]?.state ?? state;
     expect(state.entities[DRONE]?.cell).toEqual(cellA(1, 2));
+  });
+});
+
+describe('T12-b：无人机**走不上甲板**（用户报的"机器人进入岛台后就变傻了"）', () => {
+  it('站在接头格、朝向正好是 `enterDir` 时，它只走到隔壁墙格，不会跨上小道', () => {
+    const def: LevelDef = {
+      ...CONCEPT_MINIMAL,
+      enemies: [{ kind: 'drone', cell: cellA(3, 1), facing: 'right' }],
+    };
+    // 玩家放岛台上：追击段到不了甲板（`decks:false` 让它连节点都没有）→ 落到巡逻段，
+    // 而巡逻段**正是**出问题的那条（它会照着 `facing` 直走，`facing` 恰好等于 `enterDir`）。
+    const frame = tick(createSim(def, { face: 'I', col: -4, row: -4 }), { move: null, dig: null });
+    expect(frame.state.entities[1]?.cell).toEqual(cellA(4, 1));
   });
 });
 

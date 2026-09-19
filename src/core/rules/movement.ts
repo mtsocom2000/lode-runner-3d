@@ -43,6 +43,22 @@ export interface MoveState {
 }
 
 /**
+ * 这一次移动里，"这个世界的**甲板**（岛台 / 小道）算不算存在"。
+ *
+ * 与 `world/graph.ts` 的 `GraphOptions.decks` 是**同一件事的两半**：那边管"图上有没有甲板节点"，
+ * 这边管"走一步的时候认不认接头"。两边必须给同一个答案，所以 drone 的那一份只在
+ * `ai/drone.ts` 里写一次（`DRONE_STEP`），`sim` 与 AI 都从那里取。
+ *
+ * 为什么不能只在图上关掉：图说"追不到甲板上的玩家"（T12-b 的裁定），但**移动**仍然认接头 ——
+ * 于是巡逻到接头那一格、朝向正好是 `enterDir` 时，无人机一步就上了小道（用户 2026-09-19 报的
+ * "机器人进入岛台后就变傻了"：甲板上没有它的图节点，追不了人，只能在板上打转）。
+ */
+export interface StepOptions {
+  /** 默认 `true`。`false` = 这个行动者"只在墙面内"（无人机）。 */
+  readonly decks?: boolean;
+}
+
+/**
  * 方向非法时的**具体**原因。分开列而不是一个笼统的 false：
  * T7 要拿它给"为什么动不了"的反馈，测试也要能断言到底是撞墙了还是没梯。
  */
@@ -168,7 +184,7 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
  * 前置条件：`state` 只能由本函数的 `move` 结果、`stateAt`、或 `trail` 产生。
  * 万一传进来一个停不住的格子，按物理处理 —— 直接开始坠落（而不是抛异常）。
  */
-export function step(level: Level, state: MoveState, dir: Dir): StepResult {
+export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions = {}): StepResult {
   const cell = state.cell;
 
   // 甲板格单独走一条路。**必须放在 `fallTo` 之前**：那个函数内部会 `faceOf` 重造格，
@@ -193,14 +209,18 @@ export function step(level: Level, state: MoveState, dir: Dir): StepResult {
   // `stepOnDeck` 能把你从小道送回墙上，但你再也上不去（从墙这边按过去只会走到隔壁墙格，
   // 接头的墙面端两侧通常都有网格邻居）。图里 `buildGraph` 是从接头两端各连一条边的，
   // 移动层必须同样双向。
-  for (const joint of level.joints) {
-    const w = joint.wall;
-    if (w.face !== cell.face || w.col !== cell.col || w.row !== cell.row) continue;
-    if (joint.enterDir !== dir) continue;
-    return {
-      kind: 'move',
-      state: { cell: { face: 'I', col: joint.deck.x, row: joint.deck.z }, mode: 'stand' },
-    };
+  //
+  // `opts.decks === false` 的行动者（无人机）**不认接头**：它的世界里没有甲板（见 `StepOptions`）。
+  if (opts.decks !== false) {
+    for (const joint of level.joints) {
+      const w = joint.wall;
+      if (w.face !== cell.face || w.col !== cell.col || w.row !== cell.row) continue;
+      if (joint.enterDir !== dir) continue;
+      return {
+        kind: 'move',
+        state: { cell: { face: 'I', col: joint.deck.x, row: joint.deck.z }, mode: 'stand' },
+      };
+    }
   }
 
   if (dir === 'up' || dir === 'down') {

@@ -1,4 +1,4 @@
-import { DIRS, step, type Dir, type MoveState } from '../rules/movement';
+import { DIRS, step, type Dir, type MoveState, type StepOptions } from '../rules/movement';
 import type { Cell } from '../types';
 import { buildGraph, findPath } from '../world/graph';
 import { withGrid, type Level, type TileKind } from '../world/tiles';
@@ -36,9 +36,19 @@ import { withGrid, type Level, type TileKind } from '../world/tiles';
 /** 反向。转向时"尽量不掉头"要用它。 */
 const REVERSE: Readonly<Record<Dir, Dir>> = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
+/**
+ * 无人机的**移动能力**：只在墙面内 —— 它的世界里没有甲板（岛台 / 小道）。
+ *
+ * 这是"只在墙面内"这条裁定的**唯一一份**出处：`chaseDir` 用 `buildGraph(...,{decks:false})`
+ * 拿图上的那一半，`sim.advance` 拿这一份去走实际那一步。两处必须是同一个答案 ——
+ * 早先只有图那一半，于是巡逻到接头那一格、朝向正好是 `enterDir` 时，它**一步就上了小道**，
+ * 然后在小道上"变傻"（甲板上没有它的图节点，追不了人）。
+ */
+export const DRONE_STEP: StepOptions = { decks: false };
+
 /** 这一格朝这个方向走，**真能走一格**吗（坠落与撞墙都不算）。 */
 function canWalk(level: Level, at: MoveState, dir: Dir): boolean {
-  return step(level, at, dir).kind === 'move';
+  return step(level, at, dir, DRONE_STEP).kind === 'move';
 }
 
 /**

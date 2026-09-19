@@ -80,6 +80,14 @@ const PROTECTS_BELOW: readonly TileKind[] = ['bar'];
 export function digTarget(level: Level, cell: Cell, dir: Dir): Cell | null {
   if (dir === 'up' || dir === 'down') return null;
 
+  // 甲板格（面 'I'）没有可挖的砖：岛台 / 小道是**一整块板**，不是墙砖砌出来的。
+  //
+  // 这一条同时是"判据只有一个出处"的纪律：甲板的两个下标是 `(x, z)`，跟墙的 `(col, row)`
+  // 不是一套坐标系（见 `world/deck.ts`）。硬拿 `col ± 1, row - 1` 去算，会得到一个**看着像
+  // 墙格**的坐标 —— 在甲板位于正坐标的布局里，那正好是墙上的另一块砖：**挖岛台却把墙挖了个洞**。
+  // 本项目的甲板都在负坐标（`x,z < 0`），所以那个错至今没显形，但闸门要在这里关上。
+  if (cell.face === 'I') return null;
+
   const col = cell.col + (dir === 'left' ? -1 : 1);
   const row = cell.row - 1;
   if (col < 0 || col >= level.cols || row < 0) return null;
