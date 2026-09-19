@@ -39,8 +39,10 @@ describe('hints：屏幕方向（用户反馈"WASD 在拐角与岛台上完全�
     const hints = hintsAt('I', -3, -3);
     expect(get(hints, 'right').glyph).toBe('→↓');
     expect(get(hints, 'left').glyph).toBe('←↑');
-    expect(get(hints, 'up').glyph).toBe('←↓'); // 按 w 在屏幕上往**左下**，不是正上
-    expect(get(hints, 'down').glyph).toBe('→↑');
+    // 2026-09-19：`up`/`down` 对调过（`DECK_DIR`）—— 现在每个键落在**自己的屏幕象限**里：
+    // `d`↘ / `w`↗ / `a`↖ / `s`↙。以前 `w` 报的是 `←↓`（左下方），用户的原话是"更加反直觉"。
+    expect(get(hints, 'up').glyph).toBe('→↑');
+    expect(get(hints, 'down').glyph).toBe('←↓');
   });
 
   it('墙面上：col±1 就是屏幕水平（以 → / ← 开头）', () => {

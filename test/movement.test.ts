@@ -12,6 +12,7 @@ import {
 } from '../src/core/rules/movement';
 import { BAROVER, BARSTUB, CLIFF, DROP, JETTY, UPPER, cellA, cellB, load } from './fixtures';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
+import { L1 } from '../src/core/level/levels/l1';
 import { DRONE_STEP } from '../src/core/ai/drone';
 
 /** 站在某格（模式由 supportOf 定：砖/梯 → stand，杆 → hang）。夹具非法时直接炸，不静默。 */
@@ -50,6 +51,37 @@ describe('movement：方向表', () => {
  * 墙面端的位置随后跟着**半格对齐**（`metrics.ts` 的 `DECK_SHIFT`）挪过：接点列取的是
  * "小道砖正对着的那块墙砖"，概念关卡因此是 `A:3` / `B:14`（`fold = 9`、半格偏移 `+0.5`）。
  */
+/**
+ * 接头的**键连续性**：进门的键必须和"进门后沿着小道继续走"的键是同一个 —— 否则玩家会
+ * "按这个键进去、进去以后得换另一个键才继续"。2026-09-19 改键位（`DECK_DIR` 的 up/down 对调）
+ * 时正是靠这条把 B 面接头的 `enterDir` 一起改掉的（`up` → `down`）。
+ *
+ * 判据：在**接头的甲板端**，唯一那个"走到另一格甲板"的方向（排除"退回墙面"的那个）应当
+ * 等于接头声明的 `enterDir`。两个方向都是 `Dir`，而在输入层 `Dir ↔ 键` 是一一对应的。
+ */
+describe('movement：每个接头的"进门键" = "沿小道继续的键"', () => {
+  for (const [name, def] of [
+    ['L1', L1],
+    ['概念关卡', CONCEPT_MINIMAL],
+  ] as const) {
+    it(`${name}：两处接头都满足`, () => {
+      const lv = load(def);
+      const joints = lv.joints;
+      expect(joints.length).toBeGreaterThan(0);
+      for (const joint of joints) {
+        const deckCell: Cell = { face: 'I', col: joint.deck.x, row: joint.deck.z };
+        const inward = DIRS.filter((d) => {
+          const r = step(lv, { cell: deckCell, mode: 'stand' }, d);
+          return r.kind === 'move' && r.state.cell.face === 'I'; // 走到另一格甲板（不是退回墙）
+        });
+        expect(inward).toHaveLength(1); // 小道是 1 宽：尽头只有一个前进方向
+        expect(inward[0]).toBe(joint.enterDir);
+      }
+    });
+  }
+});
+
+/** 墙面 → 小道的接点本体（概念关卡的 2.1）。 */
 describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () => {
   const sim = load(CONCEPT_MINIMAL);
 
@@ -57,8 +89,11 @@ describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () =>
     expect(shape(step(sim, at(sim, cellA(4, 1)), 'right'))).toBe('move:stand:I:-7,-4');
   });
 
-  it('B 面接点：站在 B:13,1 按 up 拐上小道，落到 I:-4,-7', () => {
-    expect(shape(step(sim, at(sim, cellB(13, 1)), 'up'))).toBe('move:stand:I:-4,-7');
+  it('B 面接点：站在 B:13,1 按 down 拐上小道，落到 I:-4,-7', () => {
+    // `down`（不是 `up`）：B 面小道沿 +z 伸出去，而甲板的 `down` 就是 +z
+    //（`DECK_DIR` 的 up/down 在 2026-09-19 对调过）—— 这样"进门的键"与"沿小道继续的键"
+    // 才是同一个（A 面是 `d` 进 `d` 继续，B 面是 `s` 进 `s` 继续）。
+    expect(shape(step(sim, at(sim, cellB(13, 1)), 'down'))).toBe('move:stand:I:-4,-7');
   });
 
   it('`decks: false`（无人机）**不认接头**：同一步只走到隔壁墙格，走不上小道', () => {
@@ -67,8 +102,8 @@ describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () =>
     // 只能在板上打转。修法是让**移动**也知道这件事（`StepOptions.decks`），
     // 而不只是图那一半。
     expect(shape(step(sim, at(sim, cellA(4, 1)), 'right', DRONE_STEP))).toBe('move:stand:A:5,1');
-    // B 面接点的 `enterDir` 是 `up`：不允许接头之后，那里只是一段普通砖面 → 爬不了、走不动。
-    expect(shape(step(sim, at(sim, cellB(13, 1)), 'up', DRONE_STEP))).toBe('blocked:not-ladder');
+    // B 面接点的 `enterDir` 是 `down`：不允许接头之后，那里只是一段普通砖面 → 爬不了、走不动。
+    expect(shape(step(sim, at(sim, cellB(13, 1)), 'down', DRONE_STEP))).toBe('blocked:not-ladder');
   });
 });
 

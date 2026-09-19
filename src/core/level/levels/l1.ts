@@ -90,7 +90,7 @@ export const L1: LevelDef = {
    */
   joints: [
     { deck: { x: -12, z: -7 }, wall: { face: 'A', col: 7, row: 1 }, enterDir: 'right' },
-    { deck: { x: -7, z: -12 }, wall: { face: 'B', col: 20, row: 1 }, enterDir: 'up' },
+    { deck: { x: -7, z: -12 }, wall: { face: 'B', col: 20, row: 1 }, enterDir: 'down' },
   ],
   /** 出口闸门（T13）：`r11` 上封住两个出口的四块硬砖。取到宝物后变成梯子（= 通天梯）。 */
   gates: [
