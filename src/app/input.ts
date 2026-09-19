@@ -449,11 +449,18 @@ export function createInput(target: Window = window, at: () => Surface = () => '
       // 先走时钟：一次采样 = 一个 tick，重复延迟按它计。
       keys = ticked(keys);
       const dig = digIntent(keys);
-      const lift = liftIntent(keys);
       const surface = at();
+      // **墙上没有"另一层"**（用户 2026-09-19 裁定："关掉"）：`Z`/`X` 在墙面上什么都不做。
+      // 墙上的上下**只有一个答案** —— `w`/`s`（爬梯、吊杆松手、丁字路口拐上小道）。
+      // 于是 `Z`/`X` 的含义是"甲板换层（塔）"，不是"世界上下"的通用写法。
+      const lift = surface === 'deck' ? liftIntent(keys) : null;
+      if (lift === null && surface !== 'deck' && keys.liftLatched !== null) {
+        // 与移动键那条同理：这一下在这个面上没有对应的东西 → 当它没按过、别欠着。
+        keys = { ...keys, liftLatched: null };
+      }
       const move = moveIntent(keys, surface);
       if (move === null && keys.latched !== null && dirOfKey(keys.latched, surface) === null) {
-        // 这一下**在当前面上没有对应的键**（在墙上按 `w`、或在甲板上按 `a`）→ 当它没按过、别欠着，
+        // 这一下**在当前面上没有对应的键**（在墙上按 `e`、或在甲板上按 `a`）→ 当它没按过、别欠着，
         // 否则换个面之后它会被兑现成一步玩家没想要的走法。
         // `held` 不动：真按着不放的人，走回那个面时这个键就重新有含义了。
         keys = { ...keys, latched: null };

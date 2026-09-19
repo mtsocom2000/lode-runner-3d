@@ -178,6 +178,19 @@ describe('input：同一个键在两个面上的含义', () => {
     kb.on('deck');
     expect(input.intents().move).toBeNull();
   });
+
+  it('`Z`/`X` 在墙面上什么都不做 —— 墙上的上下**只有一个答案**（`w`/`s`）', () => {
+    // 用户 2026-09-19："关掉"。于是 `Z`/`X` 的含义是"甲板换层（塔）"，不是"世界上下"的通用写法。
+    const kb = keyboard();
+    const input = createInput(kb.target, kb.at);
+
+    kb.send('keydown', 'x'); // 想往下
+    kb.on('wall');
+    expect(input.intents().lift).toBeNull();
+
+    kb.on('deck'); // 走上塔下：同一个键这才有含义
+    expect(input.intents().lift).toBe('fall');
+  });
 });
 
 describe('input：键盘状态机', () => {

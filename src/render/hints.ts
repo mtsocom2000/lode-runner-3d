@@ -95,8 +95,8 @@ export function formatDirHints(
   const parts = hints.map((h) => `${name(h.dir)}=${h.glyph}`);
   const danger = hints.filter((h) => h.danger).map((h) => name(h.dir));
   const tail = danger.length === 0 ? '' : ` ｜ ⚠ 会落水：${danger.join('/')}`;
-  // 墙面：`w`/`s` 就是上下（爬梯 / 吊杆松手 / 丁字路口拐上小道）。甲板：`w/e/s/d` 是四个
-  // 面内方向，上下另有其事 —— 那里是 `Z`/`X` 换层（塔）。
-  const extra = surface === 'deck' ? 'Z/X 上下一层' : 'Z/X 同 w/s（墙上没有"另一层"）';
+  // 墙面：`w`/`s` 就是上下（爬梯 / 吊杆松手 / 丁字路口拐上小道），`Z`/`X` 在那里什么都不做
+  // —— 墙上的上下只有一个答案。甲板：`w/e/s/d` 是四个面内方向，`Z`/`X` 另管换层（塔）。
+  const extra = surface === 'deck' ? 'Z/X 上下一层（塔）' : '（墙上上下用 w/s；Z/X 只在甲板上换层）';
   return `屏幕方向（按下的键实际会往哪走）：${parts.join('  ')} ｜ ${extra}${tail}`;
 }
