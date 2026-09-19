@@ -68,9 +68,9 @@ describe('T14 · L1 折角：按移动规则走得到', () => {
     expect(stranded.map(cellKey)).toEqual([]);
   });
 
-  it('甲板 20/20（岛台 16 + 两条小道 4）与宝物格都在可达集里', () => {
+  it('甲板 29/29（岛台 5×5 + 两条 2 格小道）与宝物格都在可达集里', () => {
     const deck = L1.deck ?? [];
-    expect(deck).toHaveLength(20);
+    expect(deck).toHaveLength(29);
     for (const cell of deck) {
       expect(reach.cells.has(cellKey({ face: 'I', col: cell.x, row: cell.z }))).toBe(true);
     }
@@ -87,19 +87,21 @@ describe('T14 · L1 折角：按移动规则走得到', () => {
     }
   });
 
-  it('落水口正好 4 个，且关于折痕对称（col6 两侧 + col13 两侧）', () => {
+  it('落水口正好 4 个，且关于折痕对称（col3 两侧 + col16 两侧）', () => {
     const holes = reach.drownings
       .map((d) => `${d.cell.face}:${d.cell.col},${d.cell.row}--${d.dir}`)
       .sort();
     expect(holes).toEqual(
-      ['A:5,1--right', 'A:7,1--left', 'B:12,1--right', 'B:14,1--left'].sort(),
+      ['A:2,1--right', 'A:4,1--left', 'B:15,1--right', 'B:17,1--left'].sort(),
     );
   });
 
-  it('出生点**不在**缺口旁边：从出生点走到最近的水要横穿好几格（概念场景吃过这个亏）', () => {
-    // 出生点在 col0；两个缺口在 col6 / col13 —— 中间隔着 6 格与好几把梯子。
+  it('出生点到最近的水之间**夹着一把梯子**（不是"出门就掉"）', () => {
+    // 缺口在 col3、出生点在 col0，中间 col2 是梯子 —— 玩家有落点可抓。
+    // 概念场景那次的教训是"缺口离出生点 2 格、还没有垫脚处"，不是"距离"本身。
     const firstHole = Math.min(...reach.drownings.map((d) => d.cell.col + 1));
-    expect(firstHole).toBeGreaterThanOrEqual(4);
+    expect(firstHole).toBeGreaterThanOrEqual(3);
+    expect(L1.tiles[1]?.[2]).toBe('H'); // col2 确实是梯子
   });
 });
 

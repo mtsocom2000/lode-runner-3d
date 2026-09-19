@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, BRICK_N, CUBE, DECK_TOP_Y, HEADROOM, ISLAND_HALF, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, BRICK_N, CUBE, DECK_TOP_Y, HEADROOM, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -153,88 +153,42 @@ function collectProps(level: Level): {
  * 岛台与小道只有一层砖厚，于是砖心落在 y = 0.5、顶面正好 1.0，与墙上最底那层砖齐平。
  * 差半格就会变成"上不去"，或者"要先下沉一格才能攀" —— 用户之前抓到过同类的坑。
  *
- * ## 岛台**不摆在内区的几何正中**（这是量出来的第二条修正）
+ * ## 岛台 / 小道 / 宝物：**逐格照关卡数据画**（本轮的结构性改动）
  *
- * 第一版把岛台摆在两片墙围出区域的几何中心（`fold = 9` → -4.5）。用户看完说
- * "左右各有一条小道通向最底层的砖块"**读不出来** —— 那块内区只有 8×8，4×4 的岛
- * 占掉四分之一，岛缘离墙面砖只剩 **0.94 格**：一块砖的小道被岛吸进去了，
- * 水面也只剩一圈薄边。画面读起来是"水面上浮着一块大方台"，而不是
- * "水面中间有一块地台，两侧各有一条道接过去"。
+ * 这里原先是从 `halfExtent(fold)` 加几个写死的常量（`JETTY_U = 5`、`ISLAND_HALF = 2`）
+ * **算**出岛台与小道的：那套推导在概念场景里是对的（它让"两道各 2 块砖"读得出来），
+ * 代价是岛台永远 4×4、位置永远偏在某一侧。关卡一放大（每面 10 列 × 12 行）问题就来了：
+ * 房间大了，岛台与水面**纹丝不动** —— 用户的原话是"场景利用率变低了……地台和水面的面积也小了"。
  *
- * 所以岛心往**开口那侧**（远离折痕，`+x / +z`）挪：取 `JETTY_U = 5` → 岛心 -3.5，
- * 到墙面的空隙从 **0.94 格变成 1.94 格** —— `Math.round(1.94 / CUBE)` = **2 块砖**的小道，
- * 一眼能数出来（这个数是探针 `brick` 计数反查出来的：46 面墙 + 16 岛 + 2×2 道 = 66）。
- * 岛的另一侧（到墙口）还留着 2 格水。代价是岛不再严格居中，
- * 但"两道能被读出来"是用户明确的要求，优先级高于对称。
- *
- * ## 小道接在哪一列也是算出来的
- *
- * 小道必须**接在一列砖的正中**，否则会顶在两块砖的缝上（看着像"卡在缝里"）。
- * 墙面列心是 `-half + u`（`u` 来自 `toFold`），所以取整数 `JETTY_U`，
- * 岛心 = `-half + JETTY_U`。本关卡 `JETTY_U = 5` → 岛心 -3.5，
- * 对应面 A 的 col 3、面 B 的 col 14（都由 `fold` 反算，不写死）。
- *
- * ## 这些砖**不参与规则**（重要）
- *
- * `core` 的通行图只认识摊平后的关卡网格（`buildGraph` 只遍历 `level.rows × level.cols`），
- * 所以玩家**现在走不上岛台** —— 这一段是纯视觉。把岛台接进数据模型是 T10 的活
- * （`core/world/island.ts`）。**别在这里伪造可达性**：能在岛上走，必须先在 core 里成立。
+ * 现在渲染层**照 `level.deck` 逐格画**、宝物照 `level.treasures` 摆。关卡数据是唯一出处，
+ * 于是"看得见"与"走得到"**结构上不可能不一致**（那类事故本仓库栽过两次：甲板锚点、接头方向）。
+ * 想摆多大的岛、岛在哪，改关卡的 `deck` 就是。
  */
 function islandAndJetties(level: Level): {
   readonly bricks: readonly (Piece & { readonly color: number })[];
   readonly prize: Vec3;
-  /** 岛心横向坐标（x 与 z 同值）。水面也读这个数 —— 两处各算一次必然漂。 */
+  /** 甲板横向中心（x 与 z 同值 —— 折面本身关于对角线对称）。水面也读这个数，两处各算一次必然漂。 */
   readonly centre: number;
 } {
-  const half = halfExtent(level.fold);
   /** 一层砖厚：砖心落在**甲板顶面**下方半个立方体 —— 于是顶面正好与墙面最底那层砖齐平。 */
   const layerY = DECK_TOP_Y - CUBE / 2;
-  /** 墙砖朝内的那一面（A 面在 x 上、B 面在 z 上，数值一样）。 */
-  const wallFace = -half + BRICK_N + CUBE / 2;
-  /** 小道接在离折痕 `jettyU` 格的那一列上。取 5 → 面 A col 3、面 B col 14。 */
-  const jettyU = 5;
-  /** 岛心：与小道列心重合，于是天然偏向开口那侧（见上面那段"不摆在正中"）。 */
-  const centre = -half + jettyU;
-  /** 岛台靠近某一面墙的那条边。 */
-  const islandEdge = centre - ISLAND_HALF;
 
-  const bricks: (Piece & { color: number })[] = [];
-  const brick = (x: number, z: number): void => {
-    bricks.push({ p: [x, layerY, z], s: [CUBE, CUBE, CUBE], color: PALETTE.brick });
-  };
+  const bricks: (Piece & { color: number })[] = level.deck.map((cell) => ({
+    p: [cell.x, layerY, cell.z],
+    s: [CUBE, CUBE, CUBE],
+    color: PALETTE.brick,
+  }));
 
-  // 岛台 4×4：以 centre 为中心 → 四个位置偏移 -1.5 / -0.5 / +0.5 / +1.5
-  for (let i = 0; i < 4; i++) {
-    for (let j = 0; j < 4; j++) brick(centre - 1.5 + i, centre - 1.5 + j);
-  }
+  // 水面要读的"甲板中心"：按甲板格的实际范围算，不再由 `fold` 推。
+  const xs = level.deck.map((cell) => cell.x);
+  const centre = xs.length === 0 ? 0 : (Math.min(...xs) + Math.max(...xs)) / 2;
 
-  // 两条小道：从墙面砖块的外表面一路铺到岛台边缘，缝有多长就铺几块（至少一块）。
-  //
-  // **必须落在甲板晶格上**（T10）：小道是甲板的一部分，core 会把它们当成可行走格
-  // （见 `core/world/deck.ts`）。所以两个轴都吸附到整数格中心 ——
-  // 原来按 `(k+0.5)/count` 均匀铺满，得到的是任意分数坐标，那种位置在 core 里
-  // 表达不出来（`DeckCell` 的键要能往返 `parseCell`，而它只认整数）。
-  // 代价：小道不再"精确填满缝隙"，改为每一格一块砖。
-  const span = islandEdge - wallFace;
-  const count = Math.max(1, Math.round(span / CUBE));
-  // 小道所在的那一排岛台行。取两个中间行里靠外的那一排（`centre = -3.5` 是岛台几何中心，
-  // 而 4 宽是偶数，砖心只能落在整数格上，所以中心必然落在两排之间，必须选一边）。
-  const jettyRow = centre - 0.5;
-  for (let k = 0; k < count; k++) {
-    const along = Math.round(wallFace + ((k + 0.5) / count) * span);
-    brick(along, jettyRow); // 通向面 A（沿 x 走）
-    brick(jettyRow, along); // 通向面 B（沿 z 走）
-  }
+  // 宝物照 `level.treasures` 摆。**必须落在格心** —— core 的采集判定是"玩家所在格 == 宝物格"，
+  // 而玩家只能站在格心；画在别处（比如岛台的几何中心，那是砖缝）就是"看得见捡不到"。
+  const treasure = level.treasures[0];
+  const prize: Vec3 = [treasure?.x ?? centre, DECK_TOP_Y + 0.3, treasure?.z ?? centre];
 
-  // 宝物所在的甲板格。取 4 个中间格里 x/z 都靠 `+` 的那一格（`centre + 0.5` → `(-3, -3)`），
-  // 与 `conceptMinimal` 的 `treasures` 声明一致（那边写了为什么取这一格）。
-  //
-  // **必须落在格心，不能落在 `centre`**：core 的采集判定是"玩家所在格 == 宝物格"，而玩家只能
-  // 站在格心。原来画在 `centre`（= 四块中间砖的**接缝**上）会让宝物看起来在岛中央，实际
-  // 却捡不到 —— 那是"看得见摸不着"。顺带也让宝物从"浮在砖缝里"变成"摆在砖上"。
-  const prizeCell = centre + 0.5;
-
-  return { bricks, prize: [prizeCell, 1 + 0.3, prizeCell], centre };
+  return { bricks, prize, centre };
 }
 
 interface BrickLayer {
