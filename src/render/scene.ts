@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, CUBE, DECK_TOP_Y, HEADROOM, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -174,19 +174,24 @@ function islandAndJetties(level: Level): {
   const layerY = DECK_TOP_Y - CUBE / 2;
 
   const bricks: (Piece & { color: number })[] = level.deck.map((cell) => ({
-    p: [cell.x, layerY, cell.z],
+    // `DECK_SHIFT`：往折痕方向挪半格，小道才正对墙砖中心（两套晶格相差 0.5，见 metrics.ts）。
+    p: [cell.x + DECK_SHIFT, layerY, cell.z + DECK_SHIFT],
     s: [CUBE, CUBE, CUBE],
     color: PALETTE.brick,
   }));
 
   // 水面要读的"甲板中心"：按甲板格的实际范围算，不再由 `fold` 推。
-  const xs = level.deck.map((cell) => cell.x);
+  const xs = level.deck.map((cell) => cell.x + DECK_SHIFT);
   const centre = xs.length === 0 ? 0 : (Math.min(...xs) + Math.max(...xs)) / 2;
 
   // 宝物照 `level.treasures` 摆。**必须落在格心** —— core 的采集判定是"玩家所在格 == 宝物格"，
   // 而玩家只能站在格心；画在别处（比如岛台的几何中心，那是砖缝）就是"看得见捡不到"。
   const treasure = level.treasures[0];
-  const prize: Vec3 = [treasure?.x ?? centre, DECK_TOP_Y + 0.3, treasure?.z ?? centre];
+  const prize: Vec3 = [
+    (treasure?.x ?? centre) + DECK_SHIFT,
+    DECK_TOP_Y + 0.3,
+    (treasure?.z ?? centre) + DECK_SHIFT,
+  ];
 
   return { bricks, prize, centre };
 }

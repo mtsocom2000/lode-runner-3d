@@ -140,6 +140,26 @@ export interface Anchor {
  * 格子的锚点 = 格心 + 沿该面法线推出 `BRICK_N`。
  * 这是**砖心**的位置，也是**站在该格的角色的身体中心**（见文件头）。
  */
+/**
+ * 甲板（岛台 / 小道）相对**格心**的渲染偏移：往折痕方向挪**半格**。
+ *
+ * ## 为什么必须有这半格（两套晶格相差 0.5 的直接后果）
+ *
+ * 墙面砖心落在**半整数**上（`fold.ts` 的 `toWorld`：`z = -half + u`，`u` 是整数），
+ * 甲板格却是**整数**格（`DeckCell` 只认整数）。于是小道的砖正好**顶在两块墙砖的缝上** ——
+ * 用户的原话："小道…与侧面的砖块连接不是对齐的，看上去小道的砖块正对的是侧面两块砖的连接处。"
+ *
+ * 核心数据当初是让 `DeckJoint` **吸收**这半格偏移的（逻辑上走得通，见 `world/deck.ts`），
+ * 但那是"走得通"，不是"看得对"。渲染层补上这半格之后：小道的砖正对墙砖中心 ✓，
+ * 而甲板**内部**（岛台 ↔ 小道）仍然严丝合缝 —— 因为整块甲板一起平移。
+ *
+ * 岛台中心不会因此跑偏：5 格奇数宽的砖心平移后是 `-9.5 … -5.5`，中心 `-7.5`，
+ * 与围区中点 `-7` 差 0.5（肉眼不可辨）。这就是"奇数边长"那条判断的又一个红利。
+ *
+ * > 改这个值必须同时改 `scene.ts` 里甲板砖的摆放 —— 两边**共用**这个常量，不许各写一份。
+ */
+export const DECK_SHIFT = -0.5;
+
 export function cellAnchor(level: Level, cell: Cell): Anchor {
   // 甲板格单独一条路。**必须在 `toFold`/`toWorld` 之前** —— 那两个函数只懂
   // "沿墙 u × 高度 y"（`fold.ts` 的文件头），把甲板格送进去会得到房间外的坐标：
@@ -147,9 +167,12 @@ export function cellAnchor(level: Level, cell: Cell): Anchor {
   // 于是锚点成了 `(-24.5, -3.5, -8.5)`。用户看到的就是"角色从某处飞到另一处"
   // 与"走不进岛台"（模拟层一直是好的：`step` 的可达性 BFS 显示甲板 20/20 格可达）。
   if (cell.face === 'I') {
-    // 两个下标**就是**世界 x/z；高度取甲板顶面 + 半砖，与墙面格的"格心"同口径
-    // （`playerAnchor` 的"站砖面"会给回 `顶面 + PLAYER_SIZE/2`，即脚踩顶面、不悬空）。
-    return { p: [cell.col, DECK_TOP_Y + CUBE / 2, cell.row], alongZ: false };
+    // 两个下标**就是**世界 x/z（再加半格对齐偏移，见 `DECK_SHIFT`）；高度取甲板顶面 + 半砖，
+    // 与墙面格的"格心"同口径（`playerAnchor` 的"站砖面"会给回 顶面 + PLAYER_SIZE/2，脚踩顶面）。
+    return {
+      p: [cell.col + DECK_SHIFT, DECK_TOP_Y + CUBE / 2, cell.row + DECK_SHIFT],
+      alongZ: false,
+    };
   }
 
   const w = toWorld(toFold(cell, level.fold), level.fold);

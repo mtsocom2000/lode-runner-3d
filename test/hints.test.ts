@@ -43,10 +43,12 @@ describe('hints：屏幕方向（用户反馈"WASD 在拐角与岛台上完全�
     expect(get(hints, 'down').glyph).toBe('→↑');
   });
 
-  it('墙面上正常：A 面中段按 d 就是屏幕向右（那一丁点向上不影响读法）', () => {
-    const hints = hintsAt('A', 4, 1);
-    expect(get(hints, 'right').glyph).toBe('→↑');
-    expect(get(hints, 'left').glyph).toBe('←↓');
+  it('墙面上：col±1 就是屏幕水平（以 → / ← 开头）', () => {
+    // 只断言**水平分量**：垂直那一丁点会随"脚下是砖还是梯子"变（梯格锚点在格心、
+    // 比砖顶面高 0.25），那不是这条测试的主题 —— 主题是"墙面上横移在屏幕上确实是横的"。
+    // 取 `col 3`（右邻是普通砖格）与 `col 5`（左邻是普通砖格）避开梯格/接头格。
+    expect(get(hintsAt('A', 3, 1), 'right').glyph.startsWith('→')).toBe(true);
+    expect(get(hintsAt('A', 5, 1), 'left').glyph.startsWith('←')).toBe(true);
   });
 
   it('折痕最内列反向：A:8 按 d 在屏幕上往**左**（"拐角手感不对"的数字证据）', () => {

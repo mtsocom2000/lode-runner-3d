@@ -42,22 +42,22 @@ describe('movement：方向表', () => {
  *
  * 判据是双向的：**绿 ⇒ 接点没坏**，2.1 的成因是按键词表（方案 B 能治）；
  * **红 ⇒ 接点真坏**，那是另一条修法。两种结果都算进展。
+ *
+ * B 面那条曾经真的红过：`up` 在墙面上是**爬梯子**的语义，而接点分支当时排在梯子检查**之后**，
+ * 于是 `blocked:not-ladder` —— 修法是把接点循环提到梯子门之前（见 `movement.ts` 里那段说明）。
+ *
+ * 墙面端的位置随后又跟着**半格对齐**（`metrics.ts` 的 `DECK_SHIFT`）挪了半格：接点列取的是
+ * "小道砖正对着的那块墙砖"，所以概念关卡是 `A:4` / `B:13`（原先 `A:3` / `B:14` 会让画面与落点差半格）。
  */
 describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () => {
   const sim = load(CONCEPT_MINIMAL);
 
-  it('A 面接点：站在 A:3,1 按 right 拐上小道，落到 I:-7,-4', () => {
-    expect(shape(step(sim, at(sim, cellA(3, 1)), 'right'))).toBe('move:stand:I:-7,-4');
+  it('A 面接点：站在 A:4,1 按 right 拐上小道，落到 I:-7,-4', () => {
+    expect(shape(step(sim, at(sim, cellA(4, 1)), 'right'))).toBe('move:stand:I:-7,-4');
   });
 
-  // ⚠ **真 bug，已实测复现（B-1 期间发现）**：B 面接点的 `enterDir` 是 `up`
-  // （因为 dz = +1.5 > 0），但 `up` 在墙面上是**爬梯子**的语义 —— `B:14,1` 没有梯子，
-  // 于是"上"被更早的梯子检查先拒成 `blocked:not-ladder`，**永远走不到接点分支**。
-  // A 面那条是绿的（`right` 不与梯子冲突），所以接点机制本身没问题，坏的是**方向选择**。
-  // 待办：接点要么换一个不与梯子冲突的方向，要么把接点分支提到梯子检查之前。
-  // 在那之前这条**跳过**而不是改写期望 —— 改期望就等于把 bug 冻进数据。
-  it('B 面接点：站在 B:14,1 按 up 拐上小道，落到 I:-4,-7（已知失败：up 撞上梯子检查）', () => {
-    expect(shape(step(sim, at(sim, cellB(14, 1)), 'up'))).toBe('move:stand:I:-4,-7');
+  it('B 面接点：站在 B:13,1 按 up 拐上小道，落到 I:-4,-7', () => {
+    expect(shape(step(sim, at(sim, cellB(13, 1)), 'up'))).toBe('move:stand:I:-4,-7');
   });
 });
 

@@ -3,7 +3,7 @@ import { supportOf } from '../src/core/world/graph';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, PLAYER_SIZE, cellAnchor, playerAnchor } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -179,9 +179,10 @@ describe('metrics：甲板格（face I）—— 两个下标就是世界 x/z，�
   /** 面 A 那条小道的外侧一格（关卡 `deck` 里的 `{x:-7, z:-4}`）。 */
   const JETTY: Cell = { face: 'I', col: -7, row: -4 };
 
-  it('x/z 直接用格下标 —— 甲板不属于"沿墙 u × 高度 y"那套，绝不能过 toFold/toWorld', () => {
+  it('x/z 用格下标**加半格对齐偏移**（`DECK_SHIFT`）—— 甲板不属于"沿墙 u × 高度 y"那套，绝不能过 toFold/toWorld', () => {
     const p = cellAnchor(concept, JETTY).p;
-    expect([p[0], p[2]]).toEqual([-7, -4]);
+    // -7/-4 是格下标；-0.5 是"与墙砖半整数晶格对齐"的那半格（否则小道顶在两块砖的缝上）。
+    expect([p[0], p[2]]).toEqual([-7 + DECK_SHIFT, -4 + DECK_SHIFT]);
   });
 
   it('回归：锚点必须落在两片墙围出的房间里（旧 bug 给的是 -24.5 / -8.5）', () => {
@@ -207,6 +208,6 @@ describe('metrics：甲板格（face I）—— 两个下标就是世界 x/z，�
       playerAnchor(concept, { face: 'A', col: 0, row: 1 }, 'stand')[1] - PLAYER_SIZE / 2,
       10,
     );
-    expect([body[0], body[2]]).toEqual([-3, -3]);
+    expect([body[0], body[2]]).toEqual([-3 + DECK_SHIFT, -3 + DECK_SHIFT]);
   });
 });
