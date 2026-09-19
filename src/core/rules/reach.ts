@@ -1,4 +1,4 @@
-import { DIRS, stateAt, step, type Dir, type MoveState } from './movement';
+import { DIRS, LIFTS, stateAt, step, stepLift, type Dir, type MoveState } from './movement';
 import { cellKey, type Cell } from '../types';
 import type { Level } from '../world/tiles';
 
@@ -47,6 +47,11 @@ export function walkNeighbours(level: Level, cell: Cell): readonly Cell[] {
     const reached = tryStep(level, from, dir);
     if (reached !== null) out.push(reached);
   }
+  // **世界上下**（`Z`/`X`）也是"走得到"的一部分：塔的上层只靠这一步才连得上。
+  for (const lift of LIFTS) {
+    const r = stepLift(level, from, lift);
+    if (r.kind === 'move') out.push(r.state.cell);
+  }
   return out;
 }
 
@@ -92,6 +97,11 @@ function walkFrom(level: Level, start: MoveState): WalkReach {
       }
       const landed = stateAt(level, result.end.cell);
       if (landed !== null) push(landed);
+    }
+    // 世界上下（`Z`/`X`）：塔的上层靠它才连得上（`stepLift` 只会 move/blocked）。
+    for (const lift of LIFTS) {
+      const r = stepLift(level, cur, lift);
+      if (r.kind === 'move') push(r.state);
     }
   }
 

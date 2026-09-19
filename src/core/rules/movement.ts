@@ -1,6 +1,7 @@
 import type { Cell } from '../types';
 import { faceOf, toFold, toWorld } from '../world/fold';
-import { isSolid, supportOf, type Support } from '../world/graph';
+import { asCell } from '../world/deck';
+import { isDeckCell, isSolid, supportOf, type Support } from '../world/graph';
 import type { Level } from '../world/tiles';
 
 /**
@@ -33,6 +34,27 @@ import type { Level } from '../world/tiles';
 export type Dir = 'left' | 'right' | 'up' | 'down';
 
 export const DIRS = ['left', 'right', 'up', 'down'] as const satisfies readonly Dir[];
+
+/**
+ * **世界上下**（`Z`/`X`）—— 与 `Dir` 分开的第二组输入。
+ *
+ * 为什么不让 `up`/`down` 兼职：在**墙面**上 `up`/`down` 就是爬梯（那没问题，墙是竖直面）；
+ * 但在**甲板**上它们是水平轴（前后走）。如果升降也挤进 `up`/`down`，甲板上就再也说不清
+ * "我要上去"该按什么。用户 2026-09-19 的裁定正是这一条：
+ *
+ * > `awsd` 只控制方向，`Z`/`X` 控制上下；`awsd` 只控制方向，不会转意。
+ *
+ * 于是本作有三组动作：**面内四方向**（`Dir`）、**挖**（`Dir` 的左右两个）、**世界上下**（`Lift`）。
+ * `rise`/`fall` 在两种面上分别是：
+ *
+ * | 面 | `rise` / `fall` |
+ * |---|---|
+ * | 墙 A/B | 与 `up`/`down` 等价（爬梯 / 下梯）—— 冗余但无害 |
+ * | 甲板 'I' | **换一层**（塔的梯子）；没有那一层就走不动 |
+ */
+export type Lift = 'rise' | 'fall';
+
+export const LIFTS = ['rise', 'fall'] as const satisfies readonly Lift[];
 
 /** `hang` 只可能出现在杆格上；`stand` 覆盖砖面与梯。 */
 export type MoveMode = 'stand' | 'hang';
@@ -72,7 +94,8 @@ export type BlockReason =
   | 'solid' // 撞上砖
   | 'not-ladder' // 不在梯上，或目标不是梯 —— 原版没有跳跃
   | 'not-hangable' // 吊着却想向上；或杆下方是实心砖，根本吊不住
-  | 'nothing-there'; // 吊着横移，但杆的尽头之外是空中：得先松手
+  | 'nothing-there' // 吊着横移，但杆的尽头之外是空中：得先松手
+  | 'no-lift'; // 甲板上想换层，但上面/下面那一层不是甲板（没有"梯子"）
 
 export type FallEnd =
   | { readonly kind: 'landed'; readonly cell: Cell }
@@ -199,17 +222,19 @@ function jettyOutward(level: Level, x: number, z: number): Dir | null {
 function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
   const x = state.cell.col;
   const z = state.cell.row;
+  const myLevel = state.cell.level ?? 0;
   const step = DECK_DIR[dir];
 
-  // ① 甲板内部的四邻：目标必须在 `level.deck` 里。
-  if (level.deck.some((d) => d.x === x + step.dx && d.z === z + step.dz)) {
+  // ① 甲板内部的四邻：目标必须在**同一层**的 `level.deck` 里。
+  if (level.deck.some((d) => d.x === x + step.dx && d.z === z + step.dz && (d.level ?? 0) === myLevel)) {
     return {
       kind: 'move',
-      state: { cell: { face: 'I', col: x + step.dx, row: z + step.dz }, mode: 'stand' },
+      // `asCell` 负责"层 0 省略不写"这条约定（与 `parseCell` 同一个口径）。
+      state: { cell: asCell({ x: x + step.dx, z: z + step.dz, level: myLevel }), mode: 'stand' },
     };
   }
 
-  // ② 接头：甲板端 → 墙面端。
+  // ② 接头：甲板端 → 墙面端。接头只在**底层**（小道接的是水面上的那一层）。
   //    **方向 = 沿小道"往外"**（`jettyOutward`：甲板自己的数据说了算）—— 也就是"玩家沿着小道
   //    走过来时按的那个键"。这一条取代了原先"从世界坐标差取主导轴"的写法：B 面接头上
   //    dx 与 dz 是 ±0.5 的平手，靠 `>=` 破给了 x，于是"按 `w` 沿小道过来、到尽头却必须按 `d`"
@@ -217,6 +242,7 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
   const outward = jettyOutward(level, x, z);
   for (const joint of level.joints) {
     if (joint.deck.x !== x || joint.deck.z !== z) continue;
+    if ((joint.deck.level ?? 0) !== myLevel) continue; // 接头只在它声明的那一层
 
     if (outward !== null) {
       if (outward !== dir) continue;
@@ -240,6 +266,34 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
 
   // ③ 甲板边缘 —— 阻止（理由见上面那段"为什么是阻止"）。
   return blocked('out');
+}
+
+/**
+ * **世界上下**（`Z`/`X`）。与 `step` 并列的第二入口 —— 单独一个函数，因为它表达的是
+ * "沿**面的法线**走"，而 `step` 表达的是"在**面内**走"。
+ *
+ * | 面 | `rise` / `fall` |
+ * |---|---|
+ * | 墙 A/B | 等价于 `up`/`down`（爬梯 / 下梯）→ 直接转交给 `step` |
+ * | 甲板 'I' | 换一层：目标 = 同 `(x, z)` 的 `level ± 1`，**必须真是甲板格** |
+ *
+ * 甲板上"上面那一层是不是甲板"这个判断，就是"玩家心里的梯子"这件事的**唯一出处** ——
+ * 渲染层照它画梯子标记（见 `render/scene.ts` 的 `deckLadders`），不再有第二份数据。
+ */
+export function stepLift(level: Level, state: MoveState, lift: Lift, opts: StepOptions = {}): StepResult {
+  const cell = state.cell;
+  if (cell.face !== 'I') {
+    // 墙面：`rise`/`fall` 就是爬梯 / 下梯（`step` 里已有那套判据，别在这里重写）。
+    return step(level, state, lift === 'rise' ? 'up' : 'down', opts);
+  }
+
+  const target = asCell({
+    x: cell.col,
+    z: cell.row,
+    level: (cell.level ?? 0) + (lift === 'rise' ? 1 : -1),
+  });
+  if (!isDeckCell(level, target)) return blocked('no-lift');
+  return { kind: 'move', state: { cell: target, mode: 'stand' } };
 }
 
 /**

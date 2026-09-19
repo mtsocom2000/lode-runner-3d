@@ -13,7 +13,19 @@ import {
 } from './rules/dig';
 import { drownPath, type DrownPath } from './rules/drown';
 import { openGates, treasureAt, withoutTreasure } from './rules/goals';
-import { fallTo, stateAt, step, type Dir, type FallEnd, type MoveMode, type StepOptions } from './rules/movement';
+import {
+  fallTo,
+  stateAt,
+  step,
+  stepLift,
+  type Dir,
+  type FallEnd,
+  type Lift,
+  type MoveMode,
+  type MoveState,
+  type StepOptions,
+  type StepResult,
+} from './rules/movement';
 import { supportOf } from './world/graph';
 import { parseLevel, type Level, type LevelDef, type TileKind } from './world/tiles';
 import { isWater } from './world/water';
@@ -235,13 +247,18 @@ export interface SimState {
  * `dig` 从 T11 起有人消费了：非 `null` 就表示"本 tick 想朝这个方向挖"。
  * 与 `move` 一样是**电平**（按住 = 持续想挖）—— `applyDig` 对已经挖空的格子返回 `null`，
  * 所以按住不放不会重复触发，不需要在这里做边沿检测。
+ *
+ * `lift`（2026-09-19）是第三组输入：**世界上下**（`Z`/`X`）。用户裁定 `awsd` 只控制方向、
+ * `Z`/`X` 控制上下，两者不互相兼职 —— 于是甲板上"我要上塔"和"我要往前走"是两件互不干扰的事。
  */
 export interface Intents {
   readonly move: Dir | null;
   readonly dig: Dir | null;
+  /** 世界上下（`Z`/`X`）。**可选**：省略 = 没按（既有的 `{move, dig}` 字面量仍然合法）。 */
+  readonly lift?: Lift | null;
 }
 
-export const NO_INTENTS: Intents = { move: null, dig: null };
+export const NO_INTENTS: Intents = { move: null, dig: null, lift: null };
 
 /**
  * 本 tick 发生的**状态变化**（不是每 tick 都有的噪声）。
@@ -527,10 +544,27 @@ function advance(
     return settleFall(level, entity, fallTo(level, entity.cell, ctx.bridges), 'fall', events);
   }
 
-  const dir = decide(entity, intents, level, ctx);
-  if (dir === null) return entity; // 站着不动：不进入冷却，下一 tick 按方向立刻起步
+  const moveState: MoveState = { cell: entity.cell, mode: entity.mode };
+  const opts = stepOptions(entity, ctx.bridges);
+  // 玩家的**世界上下**（`Z`/`X`）与面内方向是两条独立输入；升降优先（同时按下时至少做一件），
+  // 而它走 `stepLift` 那条"沿面法线"的路。敌人没有 `lift`。
+  const lift: Lift | null = entity.kind === 'player' ? (intents.lift ?? null) : null;
 
-  const result = step(level, { cell: entity.cell, mode: entity.mode }, dir, stepOptions(entity, ctx.bridges));
+  let result: StepResult;
+  let facingDir: Dir | null;
+  /** 这一步的"方向"（`drownPath` 要它把"吊杆松手"与"走空坠落"分开）。升降走的是 up/down。 */
+  let stepDir: Dir;
+  if (lift !== null) {
+    stepDir = lift === 'rise' ? 'up' : 'down';
+    result = stepLift(level, moveState, lift, opts);
+    facingDir = null; // 升降不改朝向
+  } else {
+    const dir = decide(entity, intents, level, ctx);
+    if (dir === null) return entity; // 站着不动：不进入冷却，下一 tick 按方向立刻起步
+    stepDir = dir;
+    result = step(level, moveState, dir, opts);
+    facingDir = dir;
+  }
 
   switch (result.kind) {
     case 'blocked':
@@ -549,7 +583,8 @@ function advance(
         cell: result.state.cell,
         mode: result.state.mode,
         // 移动成立才算"朝这边走"：撞墙不更新（否则贴着墙按住会把朝向刷成墙的方向）。
-        facing: dir,
+        // 升降（`lift`）同样不更新朝向 —— 你不是"朝那边走"，你是往上/下。
+        facing: facingDir ?? entity.facing,
         // **跨折痕那一步不扣冷却**：那两格在世界同一个位置，等于原地转 90°、一格都没走 ——
         // 照常扣一格的冷却，角色会在墙角停一整个移动间隔
         //（用户 2026-09-19："机器人经过转角的时候明显会停顿一下"）。见 `isSeamStep`。
@@ -561,7 +596,7 @@ function advance(
     case 'fall':
       // 落水 / 落住的结算只有一份实现（`settleFall`）—— 上面"支撑没了立刻坠"那条也走它，
       // 两处各写一遍必然漂（一处报 `drowned`、另一处忘了报，是这类 bug 的经典形状）。
-      return settleFall(level, entity, result.end, drownPath(entity.mode, dir), events);
+      return settleFall(level, entity, result.end, drownPath(entity.mode, stepDir), events);
   }
 }
 

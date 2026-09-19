@@ -204,6 +204,14 @@ export function collectProps(
 function islandAndJetties(level: Level): {
   readonly bricks: readonly (Piece & { readonly color: number })[];
   /**
+   * **塔的梯子标记**：某一层甲板格的正上方还是甲板 → 那里画一段梯子。
+   *
+   * 它是"这里能按 `Z` 上去"的**视觉说明**，不是另一份规则数据 —— 判据（上面一层是不是甲板）
+   * 只有一个出处，core 的 `stepLift` 与这里读的是同一件事。梯子不给任何额外能力，
+   * 所以画错/漏画不会造成"看得见走不到"，只会难看。
+   */
+  readonly ladders: readonly Piece[];
+  /**
    * 每一颗宝物的**位置与身份**（甲板格）。`createStage` 按它建实例，并在收走时把对应实例缩到 0
    * （见 `applyTreasures`）—— 所以这里要的是**全部**宝物，不是一颗。
    */
@@ -216,10 +224,22 @@ function islandAndJetties(level: Level): {
 
   const bricks: (Piece & { color: number })[] = level.deck.map((cell) => ({
     // `DECK_SHIFT`：往折痕方向挪半格，小道才正对墙砖中心（两套晶格相差 0.5，见 metrics.ts）。
-    p: [cell.x + DECK_SHIFT, layerY, cell.z + DECK_SHIFT],
+    // `level`：每高一整格 —— 塔就是这条式子叠出来的。
+    p: [cell.x + DECK_SHIFT, layerY + (cell.level ?? 0) * CUBE, cell.z + DECK_SHIFT],
     s: [CUBE, CUBE, CUBE],
     color: PALETTE.brick,
   }));
+
+  // 塔的梯子标记：这一格的正上方也是甲板 → 画一段梯（rails 贯穿一格，rungs 落在下缘附近）。
+  const key = (x: number, z: number, level: number): string => `${x},${z}@${level}`;
+  const present = new Set(level.deck.map((c) => key(c.x, c.z, c.level ?? 0)));
+  const ladders: Piece[] = [];
+  for (const cell of level.deck) {
+    const level_ = cell.level ?? 0;
+    if (!present.has(key(cell.x, cell.z, level_ + 1))) continue;
+    const [x, y, z] = [cell.x + DECK_SHIFT, layerY + level_ * CUBE, cell.z + DECK_SHIFT];
+    ladders.push(...ladderParts([x, y, z], false));
+  }
 
   // 水面要读的"甲板中心"：按甲板格的实际范围算，不再由 `fold` 推。
   const xs = level.deck.map((cell) => cell.x + DECK_SHIFT);
@@ -235,7 +255,7 @@ function islandAndJetties(level: Level): {
     p: [t.x + DECK_SHIFT, DECK_TOP_Y + 0.3, t.z + DECK_SHIFT] as Vec3,
   }));
 
-  return { bricks, prizes, centre };
+  return { bricks, ladders, prizes, centre };
 }
 
 interface BrickLayer {
@@ -639,6 +659,12 @@ const faceCentre = -half + level.fold / 2;
   buildProps(level.grid);
 
   /**
+   * **塔的梯子标记**（甲板层与层之间）。建一次就够 —— 甲板是关卡数据，游戏进行中不变
+   * （会变的是瓦片，那是道具层的事）。用与墙梯同一个材质，读起来才是同一种东西。
+   */
+  const deckLadderMesh = instanced(scene, box, mat.lad, island.ladders, true);
+
+  /**
    * 宝物实例：**每一颗**一个实例（`island.prizes`）。收走哪颗就把哪个实例缩到 0 ——
    * 与砖层同一套"零缩放 = 不可见"的约定（这里没有差分，宝物最多几颗）。
    *
@@ -707,6 +733,7 @@ const faceCentre = -half + level.fold / 2;
       // 这里只释放每个实例网格自己的实例缓冲（dispose 不动几何体）。
       brickLayer.mesh.dispose();
       for (const mesh of propMeshes) mesh.dispose();
+      deckLadderMesh?.dispose();
       prizeMesh?.dispose();
       for (const o of singles) scene.remove(o);
       chipGeo.dispose();

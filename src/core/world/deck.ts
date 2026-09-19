@@ -19,16 +19,22 @@ import type { Cell } from '../types';
  *
  * ## 单位与坐标
  *
- * 坐标就是**世界 x / z 的格心**（与 `scene.ts` 的 `islandAndJetties` 同一套数），
- * 高度是固定的：甲板只有一层砖，砖心 y = 0.5、顶面 y = 1.0 —— 正好是墙上"行 1"的行走面。
- * 高度不放进 `DeckCell`，因为它对整块甲板是个常数，放进去只会给"两块不同高度的甲板"
- * 留一个现在还不需要的口子。
+ * 坐标就是**世界 x / z 的格心**（与 `scene.ts` 的 `islandAndJetties` 同一套数）。
+ *
+ * `level`（2026-09-19 加）是**层**：`0` = 水面上的那一层（岛台/小道，砖心 y = 0.5、顶面 y = 1.0，
+ * 正好是墙上"行 1"的行走面）；每 +1 就是再高一整格（砖心 +1）。省略 = `0`。
+ *
+ * 为什么现在才加它：在那之前甲板是一张**没有厚度**的平板（高度是常数），于是"塔"表达不出来。
+ * 加了一层之后，"同一 (x, z) 上叠好几格"就是天然的关卡数据，`cellKey` 会把层编进去
+ * （`I:5,3@1`），图/可达性/存档都不用为塔写特例。
  */
 export interface DeckCell {
   /** 世界 x 的格心。 */
   readonly x: number;
   /** 世界 z 的格心。 */
   readonly z: number;
+  /** 层（省略 = 0）。见上面"单位与坐标"。 */
+  readonly level?: number;
 }
 
 export interface Deck {
@@ -37,32 +43,37 @@ export interface Deck {
    * 顺序由构造方决定；`buildDeck` 保证"先岛台、后小道"，且各自行列升序。
    */
   readonly cells: readonly DeckCell[];
-  /** 这一格是不是甲板。非甲板返回 false，不抛异常（与 `Graph.has` 一致）。 */
-  has(x: number, z: number): boolean;
+  /** 这一格是不是甲板（可指定层，省略 = 0）。非甲板返回 false，不抛异常（与 `Graph.has` 一致）。 */
+  has(x: number, z: number, level?: number): boolean;
 }
 
-/** 甲板格的键。与 `cellKey` 同思路：对象不能直接当 Map/Set 的键。 */
+/** 甲板格的键。与 `cellKey` 同思路：对象不能直接当 Map/Set 的键。层算进去。 */
 export function deckKey(c: DeckCell): string {
-  return `${c.x},${c.z}`;
+  return `${c.x},${c.z}@${c.level ?? 0}`;
 }
 
 /**
  * 甲板格 → 图里的 `Cell`。
  *
- * 编码是 **M2**（见 `types.ts` 里 `Face` 的注释）：面 `'I'`，`col = x`、`row = z`。
- * 之所以能这么复用一个 `Cell`，是因为 `cellKey` 与 `parseCell` 的形状本来就装得下
+ * 编码是 **M2**（见 `types.ts` 里 `Face` 的注释）：面 `'I'`，`col = x`、`row = z`，
+ * `level` = 层。之所以能这么复用一个 `Cell`，是因为 `cellKey` 与 `parseCell` 的形状本来就装得下
  * `I:-4,-4` —— 于是 `graph` / `validate` / `sim` 里所有认 `Cell` 的代码都不用改类型。
  *
  * **但每个读到这个 `Cell` 的函数都要先问一句"这个判断对面 `'I'` 成立吗"**：
  * 面 `'I'` 的 `col/row` 是 `(x, z)`，不是 A/B 的 `(沿墙u, 高度)`。
  */
 export function asCell(c: DeckCell): Cell {
-  return { face: 'I', col: c.x, row: c.z };
+  const level = c.level ?? 0;
+  return level === 0
+    ? { face: 'I', col: c.x, row: c.z }
+    : { face: 'I', col: c.x, row: c.z, level };
 }
 
 /** `asCell` 的逆。给"先拿到 `Cell`、再要回 (x,z)"的调用方用。 */
 export function fromCell(cell: Cell): DeckCell {
-  return { x: cell.col, z: cell.row };
+  const level = cell.level ?? 0;
+  // 层 0 省略不写 —— 与 `parseCell` 同一条约定：旧数据往返后与加层之前逐字节相同。
+  return level === 0 ? { x: cell.col, z: cell.row } : { x: cell.col, z: cell.row, level };
 }
 
 /**
@@ -117,7 +128,7 @@ export interface DeckJoint {
   readonly enterDir: JointDir;
 }
 
-/** 由一组甲板格建 `Deck`。去重（同一格只留一次），并保留传入顺序。 */
+/** 由一组甲板格建 `Deck`。去重（同一格**同一层**只留一次），并保留传入顺序。 */
 export function buildDeck(cells: readonly DeckCell[]): Deck {
   const keys = new Set<string>();
   const kept: DeckCell[] = [];
@@ -130,7 +141,7 @@ export function buildDeck(cells: readonly DeckCell[]): Deck {
 
   return {
     cells: kept,
-    has: (x, z) => keys.has(deckKey({ x, z })),
+    has: (x, z, level = 0) => keys.has(deckKey({ x, z, level })),
   };
 }
 

@@ -1,4 +1,4 @@
-import type { Dir } from '../core/rules/movement';
+import type { Dir, Lift } from '../core/rules/movement';
 import { TICK_HZ, type Intents } from '../core/sim';
 
 /**
@@ -72,13 +72,35 @@ export function dirOfKey(key: string): Dir | null {
 }
 
 /**
+ * **世界上下**的键（`Z`/`X`，2026-09-19）。用户裁定：`awsd` 只控制方向、`z`/`x` 控制上下，
+ * 两者不互相兼职 —— 于是"我要上塔"和"我要往前走"是两件互不干扰的事。
+ *
+ * 为什么不是方向键的 `↑`/`↓`：方向键在本作里是 `WASD` 的**别名**（两套都能用）。若把 `↑`
+ * 拿去做升降、而 `w` 是"往北"，两套输入就**分裂**了 —— 用方向键的人会莫名其妙。
+ *
+ * `z` = 上（`rise`）、`x` = 下（`fall`）。想反过来只改这两行。
+ */
+export function liftOfKey(key: string): Lift | null {
+  switch (key) {
+    case 'z':
+    case 'Z':
+      return 'rise';
+    case 'x':
+    case 'X':
+      return 'fall';
+    default:
+      return null;
+  }
+}
+
+/**
  * 挖的方向键（T11）。与移动键**分开**:`Q` = 往左挖、`E` = 往右挖。
  *
  * 为什么不做成"方向键 + 修饰键":`Intents.dig` 要的信息只有"朝哪边挖"这一件事,
  * 两个独立键表达得最直白,也不必和方向键的锁存语义纠缠（见下）。
  *
  * 键位从 `Z`/`X` 改成 `Q`/`E`（用户 2026-09-19）：`Q`/`E` 就压在 `A`/`D` 上方，
- * 左手不用离开 WASD 那一排 —— 挖与走是**同一条肌肉**。
+ * 左手不用离开 WASD 那一排 —— 挖与走是**同一条肌肉**。（`Z`/`X` 后来分给了世界上下。）
  */
 export function digOfKey(key: string): Dir | null {
   switch (key) {
@@ -104,6 +126,9 @@ export interface KeyState {
   readonly held: readonly Dir[];
   readonly latched: Dir | null;
   readonly digHeld: readonly Dir[];
+  /** 按着的升降键（`Z`/`X`）。与移动键一样锁存，免得轻点被冷却窗口吃掉。 */
+  readonly liftHeld: Lift | null;
+  readonly liftLatched: Lift | null;
   /**
    * 走到第几个 tick（每次 `intents()` +1）。重复延迟必须按 **tick** 计 —— core 是定步长
    * （`TICK_HZ`），按毫秒计会与实际推进漂开，而这个延迟的全部职责就是把"轻点"与"按住"分开。
@@ -121,7 +146,15 @@ export interface KeyState {
  */
 export const REPEAT_DELAY_TICKS = Math.round(0.25 * TICK_HZ);
 
-export const NO_KEYS: KeyState = { held: [], latched: null, digHeld: [], tick: 0, holdArmedAt: 0 };
+export const NO_KEYS: KeyState = {
+  held: [],
+  latched: null,
+  digHeld: [],
+  liftHeld: null,
+  liftLatched: null,
+  tick: 0,
+  holdArmedAt: 0,
+};
 
 /**
  * 按下（含系统的按键重复）。
@@ -177,23 +210,16 @@ export function consumed(state: KeyState): KeyState {
   return {
     ...state,
     latched: null,
+    liftLatched: null,
     holdArmedAt: fromLatch ? state.tick + REPEAT_DELAY_TICKS : 0,
   };
 }
 
 /**
- * 掐掉"按住不放"：直到玩家**松手再按**为止，`held` 不再换下一步（`latched` 保持不动 ——
- * 那一下仍然欠玩家）。
- *
- * 用在**跨接头的转折**上：门（甲板 ↔ 墙面）两侧的键含义不同，按住不放会被带着拐进另一条
- * 走廊（用户 2026-09-19："按着 a 键会在到达墙面时自动转换方向，这是不对的"）。
- * 折痕**不**掐 —— 那是同一条走廊折了一下，教学里就写着"沿走廊一直走就能过去"。
- *
- * 实现上把 `holdArmedAt` 顶到无穷：`press` 对已经按住的键是**原样返回**（系统重复不清延迟），
- * 所以只有真正"松手再按"才会把它复位成 0。
+ * **掐掉"按住不放"**（见 `holdBroken`）。升降键一起掐 —— 它也是"按住"。
  */
 export function holdBroken(state: KeyState): KeyState {
-  return { ...state, holdArmedAt: Number.POSITIVE_INFINITY };
+  return { ...state, holdArmedAt: Number.POSITIVE_INFINITY, liftHeld: null };
 }
 
 /**
@@ -201,8 +227,23 @@ export function holdBroken(state: KeyState): KeyState {
  * 方向卡住只是自己走，挖键卡住会一路挖穿地板。锁存值保留（那一下仍然欠玩家一步）。
  */
 export function released(state: KeyState): KeyState {
-  if (state.held.length === 0 && state.digHeld.length === 0) return state;
-  return { ...state, held: [], digHeld: [] };
+  if (state.held.length === 0 && state.digHeld.length === 0 && state.liftHeld === null) return state;
+  return { ...state, held: [], digHeld: [], liftHeld: null };
+}
+
+/** 按下升降键。与移动键同理**锁存**：轻点一下不该被冷却窗口吃掉。 */
+export function liftPress(state: KeyState, lift: Lift): KeyState {
+  return state.liftHeld === lift ? state : { ...state, liftHeld: lift, liftLatched: lift };
+}
+
+/** 松开升降键。锁存值保留（那一下仍然欠玩家）。 */
+export function liftRelease(state: KeyState, lift: Lift): KeyState {
+  return state.liftHeld !== lift ? state : { ...state, liftHeld: null };
+}
+
+/** 本 tick 想上升/下降；没按就是 `null`。 */
+export function liftIntent(state: KeyState): Lift | null {
+  return state.liftHeld ?? state.liftLatched;
 }
 
 /** 按下挖键（T11）。与 `press` 分开：挖键不进 `held`，也不写 `latched`。 */
@@ -253,6 +294,12 @@ export function createInput(target: Window = window): Input {
   let keys = NO_KEYS;
 
   const onKeyDown = (e: KeyboardEvent): void => {
+    const lift = liftOfKey(e.key);
+    if (lift !== null) {
+      e.preventDefault();
+      keys = liftPress(keys, lift);
+      return;
+    }
     const dig = digOfKey(e.key);
     if (dig !== null) {
       e.preventDefault();
@@ -265,6 +312,11 @@ export function createInput(target: Window = window): Input {
     keys = press(keys, dir);
   };
   const onKeyUp = (e: KeyboardEvent): void => {
+    const lift = liftOfKey(e.key);
+    if (lift !== null) {
+      keys = liftRelease(keys, lift);
+      return;
+    }
     const dig = digOfKey(e.key);
     if (dig !== null) {
       keys = digRelease(keys, dig);
@@ -288,7 +340,7 @@ export function createInput(target: Window = window): Input {
     intents: (): Intents => {
       // 先走时钟：一次采样 = 一个 tick，重复延迟按它计。
       keys = ticked(keys);
-      return { move: moveIntent(keys), dig: digIntent(keys) };
+      return { move: moveIntent(keys), dig: digIntent(keys), lift: liftIntent(keys) };
     },
     consume: (): void => {
       keys = consumed(keys);

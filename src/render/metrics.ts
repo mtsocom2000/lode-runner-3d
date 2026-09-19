@@ -189,8 +189,16 @@ export function cellAnchor(level: Level, cell: Cell): Anchor {
   if (cell.face === 'I') {
     // 两个下标**就是**世界 x/z（再加半格对齐偏移，见 `DECK_SHIFT`）；高度取甲板顶面 + 半砖，
     // 与墙面格的"格心"同口径（`playerAnchor` 的"站砖面"会给回 顶面 + PLAYER_SIZE/2，脚踩顶面）。
+    //
+    // `level`（2026-09-19）：每高一整格。`level = 0` 就是水面上的那一层 —— 于是既有关卡的
+    // 锚点一个字节都没变。
+    const level = cell.level ?? 0;
     return {
-      p: [cell.col + DECK_SHIFT, DECK_TOP_Y + CUBE / 2, cell.row + DECK_SHIFT],
+      p: [
+        cell.col + DECK_SHIFT,
+        DECK_TOP_Y + CUBE / 2 + level * CUBE,
+        cell.row + DECK_SHIFT,
+      ],
       alongZ: false,
     };
   }

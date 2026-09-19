@@ -131,11 +131,12 @@ export function deckCoordOf(c: Cell): DeckCell | null {
   return c.face === 'I' ? { x: c.col, z: c.row } : null;
 }
 
-/** 这一格是不是本关**声明过**的甲板格。没声明过的 'I' 格不是地面。 */
+/** 这一格是不是本关**声明过**的甲板格（同一 `(x, z)` **且同一层**）。没声明过的 'I' 格不是地面。 */
 export function isDeckCell(level: Level, c: Cell): boolean {
   const d = deckCoordOf(c);
   if (d === null) return false;
-  return level.deck.some((k) => k.x === d.x && k.z === d.z);
+  const level_ = c.level ?? 0;
+  return level.deck.some((k) => k.x === d.x && k.z === d.z && (k.level ?? 0) === level_);
 }
 
 /**
@@ -288,16 +289,33 @@ export function buildGraph(level: Level, opts: GraphOptions = {}): Graph {
     }
   }
 
-  // 甲板内部的 walk：岛台是 4×4 的砖面，站在上面能横向挪。
+  // 甲板内部的 walk：岛台是砖面，站在上面能横向挪（**同一层内**）。
   // **只连甲板↔甲板** —— 甲板格不与墙的 col±1 相邻（不同坐标系），跨过去要走接头。
   if (horizontalOn && decksOn) {
     for (const cell of deckCells) {
       const out = adjacency.get(cellKey(cell));
       if (out === undefined) continue;
+      const level = cell.level ?? 0;
       for (const [dx, dz] of DECK_STEPS) {
-        const target = asCell({ x: cell.col + dx, z: cell.row + dz });
+        const target = asCell({ x: cell.col + dx, z: cell.row + dz, level });
         if (!adjacency.has(cellKey(target))) continue;
         out.push({ from: cell, to: target, kind: 'walk' });
+      }
+    }
+  }
+
+  // 甲板的**上下**：同一 `(x, z)` 相邻两层的甲板格直接相连（= 塔的梯子）。
+  // 判据只有"上面/下面那一层是不是甲板" —— `Z`/`X` 能不能上去，由它回答，
+  // 而"梯子"只是渲染出来的**标记**（告诉玩家这里能上），不是另一份数据。
+  if (climbOn && decksOn) {
+    for (const cell of deckCells) {
+      const out = adjacency.get(cellKey(cell));
+      if (out === undefined) continue;
+      const level = cell.level ?? 0;
+      for (const dl of [1, -1]) {
+        const target = asCell({ x: cell.col, z: cell.row, level: level + dl });
+        if (!adjacency.has(cellKey(target))) continue;
+        out.push({ from: cell, to: target, kind: 'climb' });
       }
     }
   }

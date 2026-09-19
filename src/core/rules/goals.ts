@@ -67,10 +67,14 @@ export function openGates(
  * 所以不守面，玩家站在墙上某一格就会被判成"踩到了宝物"。
  *
  * 这条守卫不是防御性编程，是**两套坐标系共存**这个事实的必然要求（见 `deck.ts` 文件头）。
+ *
+ * `level`（2026-09-19）：宝物可以在**塔顶**（甲板有层之后）。层必须一起比 —— 否则站在塔底
+ * 那一格就会把塔顶那颗取走（两者的 `(x, z)` 相同）。
  */
 export function treasureAt(treasures: readonly DeckCell[], cell: Cell): DeckCell | undefined {
   if (cell.face !== 'I') return undefined;
-  return treasures.find((t) => t.x === cell.col && t.z === cell.row);
+  const level = cell.level ?? 0;
+  return treasures.find((t) => t.x === cell.col && t.z === cell.row && (t.level ?? 0) === level);
 }
 
 /**
@@ -80,5 +84,8 @@ export function treasureAt(treasures: readonly DeckCell[], cell: Cell): DeckCell
  * （与 `applyDig` / `applyBackfill` 同一条理由 —— 否则回放比对会串味）。
  */
 export function withoutTreasure(treasures: readonly DeckCell[], taken: DeckCell): readonly DeckCell[] {
-  return treasures.filter((t) => t.x !== taken.x || t.z !== taken.z);
+  const level = taken.level ?? 0;
+  return treasures.filter(
+    (t) => t.x !== taken.x || t.z !== taken.z || (t.level ?? 0) !== level,
+  );
 }
