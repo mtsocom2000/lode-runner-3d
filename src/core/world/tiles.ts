@@ -116,8 +116,14 @@ export type LoadError =
   | { readonly kind: 'badChar'; readonly row: number; readonly col: number; readonly ch: string }
   | { readonly kind: 'foldMismatch'; readonly fold: number; readonly cols: number };
 
-/** 敌人种类。T12 只做 `drone`（T15 加 `stalker`）—— 与 `sim.ts` 的 `EntityKind` 同源。 */
-export type EnemyKind = 'drone';
+/**
+ * 敌人种类。T12 只做 `drone`，T15 加 `stalker`（攀爬者）。
+ *
+ * 与 `sim.ts` 的 `EntityKind` **同源**：那两个类型说的是同一件事（关卡能声明什么 /
+ * 模拟能跑什么），改一个必须改另一个。这里少写一个，关卡就会在解析期被抓；
+ * 那边少写一个，`switch` 会被 TS 判为不穷尽。
+ */
+export type EnemyKind = 'drone' | 'stalker';
 
 /**
  * 关卡里声明的敌人（T12）。

@@ -58,8 +58,12 @@ export interface FeatureHit {
 /**
  * 色相规则。每条只认一种东西，且都是**只有它会**满足的条件：
  * 品红只有横杆/连杆，绿只有出口，金只有岛台宝物，亮青只有芯片/折痕/梯。
+ *
+ * **导出**是给 `test/palette.test.ts` 用的：那条测试拿 `PALETTE` 里每个实体的颜色逐条过一遍，
+ * 断言"只命中自己那一条" —— 调色板与探针是同一份契约的两端（见 `palette.ts` 文件头），
+ * 而这份契约以前只有注释在维护。
  */
-const FEATURE_RULES: Readonly<Record<string, (r: number, g: number, b: number) => boolean>> = {
+export const FEATURE_RULES: Readonly<Record<string, (r: number, g: number, b: number) => boolean>> = {
   /** 品红：横杆 / 连杆（0xff4fd0）。 */
   bar: (r, g, b) => r > 150 && b > 130 && g < r * 0.62 && g < b * 0.72,
   /** 绿：出口（0x37e068）。 */
@@ -109,6 +113,14 @@ const FEATURE_RULES: Readonly<Record<string, (r: number, g: number, b: number) =
    * 与 `player` 那条同一条理由：**紧在因后处理而不变的关系上，不紧在一个绝对色值上**。
    */
   drone: (r, g, b) => b > 150 && r > 90 && r > g && b > g * 1.4,
+  /**
+   * 深青：潜伏攀爬者（`PALETTE.stalker` = 0x1e5f69 = 30,95,105）。
+   *
+   * 判据是"**暗**青"：蓝绿都亮过红一截（`b − r > 40` 把它从暖灰/砖/水里摘出来），
+   * 而 `g < 110` 又把它挡在 `chip` 的亮青（g = 143）之外 —— 那两条是本规则与其它规则的接缝，
+   * 也是 `palette.ts` 里那张对照表的代码端。
+   */
+  stalker: (r, g, b) => b - r > 40 && g - r > 40 && g < 110 && Math.abs(b - g) < 25,
 };
 
 /**

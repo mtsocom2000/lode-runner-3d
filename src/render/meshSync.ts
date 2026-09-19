@@ -136,10 +136,12 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
   const bodyMat: Readonly<Record<EntityKind, THREE.MeshBasicMaterial>> = {
     player: new THREE.MeshBasicMaterial({ color: PALETTE.player }),
     drone: new THREE.MeshBasicMaterial({ color: PALETTE.drone }),
+    stalker: new THREE.MeshBasicMaterial({ color: PALETTE.stalker }),
   };
   const glowMat: Readonly<Record<EntityKind, THREE.MeshBasicMaterial>> = {
     player: glowOf(PALETTE.player),
     drone: glowOf(PALETTE.drone),
+    stalker: glowOf(PALETTE.stalker),
   };
 
   const actors = new Map<number, Actor>();
@@ -161,6 +163,7 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
   const arrowMat: Readonly<Record<EntityKind, THREE.MeshBasicMaterial>> = {
     player: new THREE.MeshBasicMaterial({ color: PALETTE.player }),
     drone: new THREE.MeshBasicMaterial({ color: PALETTE.drone }),
+    stalker: new THREE.MeshBasicMaterial({ color: PALETTE.stalker }),
   };
 
   function spawn(id: number, kind: EntityKind, at: Vec3): Actor {
@@ -247,7 +250,7 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
    * 里 `EXPECTED_FEATURES` 的说明。
    */
   counts(): Readonly<Record<EntityKind, number>> {
-    const out: Record<EntityKind, number> = { player: 0, drone: 0 };
+    const out: Record<EntityKind, number> = { player: 0, drone: 0, stalker: 0 };
     for (const actor of actors.values()) out[actor.kind] += 1;
     return out;
   },

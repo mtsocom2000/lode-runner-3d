@@ -415,7 +415,7 @@ describe('T12-a：渲染层按 kind 画，并如实报数（探针据此核对�
   it('`counts()` 报出每个种类真正画了几个 —— 含无人机', () => {
     const syncer = createSyncer(parent, parsed.level);
     syncer.update(createSim(DEF, SPAWN), 0.016);
-    expect(syncer.counts()).toEqual({ player: 1, drone: 2 });
+    expect(syncer.counts()).toEqual({ player: 1, drone: 2, stalker: 0 });
     syncer.dispose();
   });
 });

@@ -1,5 +1,6 @@
 import { cellKey, type Cell } from './types';
 import { decideDrone, DRONE_STEP } from './ai/drone';
+import { decideStalker, STALKER_STEP } from './ai/stalker';
 import type { DeckCell, DeckJoint } from './world/deck';
 import { faceOf, isSeamStep } from './world/fold';
 import {
@@ -91,13 +92,29 @@ export const ENEMY_DOWN_TICKS = 60;
  */
 export const DRONE_MOVE_TICKS = 24;
 
-/** 这个实体走一格要几个 tick。玩家与敌人**不同速**，理由见 `DRONE_MOVE_TICKS`。 */
+/**
+ * 攀爬者走一格要几个 tick（T15）。计划里的验收写的是"**速度 ≤ 90%**"（相对玩家）。
+ *
+ * 玩家 `MOVE_TICKS` = 8 → 90% 对应 8.89 tick，取整 **9**（= 玩家的 88.9%）。
+ * 它比无人机快得多（24 vs 9），威胁来自**贴身**：无人机是"一直在来"，攀爬者是真追得上你
+ * （代价是它慢一点、而且你能听出它就在后面 —— 见 `ai/stalker.ts`）。
+ */
+export const STALKER_MOVE_TICKS = 9;
+
+/** 这个实体走一格要几个 tick。玩家与敌人**不同速**，理由见 `DRONE_MOVE_TICKS` / `STALKER_MOVE_TICKS`。 */
 function moveTicks(kind: EntityKind): number {
-  return kind === 'drone' ? DRONE_MOVE_TICKS : MOVE_TICKS;
+  switch (kind) {
+    case 'drone':
+      return DRONE_MOVE_TICKS;
+    case 'stalker':
+      return STALKER_MOVE_TICKS;
+    default:
+      return MOVE_TICKS;
+  }
 }
 
 /** 实体种类。T12 加 `drone`、T15 加 `stalker` —— 那时只需在这里加一格并补上它的决策函数。 */
-export type EntityKind = 'player' | 'drone';
+export type EntityKind = 'player' | 'drone' | 'stalker';
 
 export interface Entity {
   readonly id: number;
@@ -429,12 +446,20 @@ interface AdvanceContext {
 /**
  * 这个实体走一步时，认不认甲板（岛台 / 小道）。
  *
- * 玩家 = 完整世界（默认）；无人机 = `DRONE_STEP`（**只在墙面内**，那份能力的唯一出处）。
- * 与 AI 用同一份表，所以"图上到不了的地方，脚也走不到" —— 早先只有图那一半，
- * 于是巡逻到接头格时会一步跨上小道（用户报的"机器人进入岛台后就变傻了"）。
+ * 玩家 = 完整世界（默认）；**无人机** = `DRONE_STEP`（只在墙面内，那份能力的唯一出处）；
+ * **攀爬者** = `STALKER_STEP`（能上岛台 —— "可爬崖"）。三个答案都从各自的 AI 模块取，
+ * 与它们决策时用的图**是同一份**：图上到不了的地方，脚也走不到（早先只有图那一半，
+ * 于是巡逻到接头格时会一步跨上小道 —— 用户报的"机器人进入岛台后就变傻了"）。
  */
 function stepOptions(entity: Entity, bridges: ReadonlySet<string>): StepOptions {
-  return entity.kind === 'player' ? { bridges } : { ...DRONE_STEP, bridges };
+  switch (entity.kind) {
+    case 'drone':
+      return { ...DRONE_STEP, bridges };
+    case 'stalker':
+      return { ...STALKER_STEP, bridges };
+    default:
+      return { bridges };
+  }
 }
 
 /**
@@ -448,12 +473,14 @@ function decide(entity: Entity, intents: Intents, level: Level, ctx: AdvanceCont
   // **落坑受困**（T12-c，原版守卫的"落坑受困"）：站在坑里就别想动 —— 直到土长回来把它埋掉。
   // 这不是冷却（冷却到期后是**原地继续走**），而是"被困住"：判据是脚下的格还是不是坑。
   if (ctx.pits.has(cellKey(entity.cell))) return null;
-  return decideDrone({
+  const input = {
     level,
     at: { cell: entity.cell, mode: entity.mode },
     facing: entity.facing,
     playerCell: ctx.playerCell,
-  });
+  };
+  // 两种敌人共用同一个两段式引擎，只有"能力"不同（见 `ai/stalker.ts`）。
+  return entity.kind === 'stalker' ? decideStalker(input) : decideDrone(input);
 }
 
 /**

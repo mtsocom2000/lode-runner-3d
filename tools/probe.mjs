@@ -111,6 +111,7 @@ const EXPECTED_FEATURES = [
   // 实体（T12）：`counts` 里这一项来自 `syncer.counts()`（渲染层真正建了几个实体），
   // 所以"关卡声明了无人机 ⇒ 画面上必须有无人机"这条是**两端各自记账**的核对。
   { feature: 'drone', count: 'drone', meaning: '巡逻无人机' },
+  { feature: 'stalker', count: 'stalker', meaning: '潜伏攀爬者' },
 ];
 for (const { feature, count, meaning } of EXPECTED_FEATURES) {
   const declared = (summary.counts?.[count] ?? 0) > 0;

@@ -47,20 +47,37 @@ const REVERSE: Readonly<Record<Dir, Dir>> = { left: 'right', right: 'left', up: 
 export const DRONE_STEP: StepOptions = { decks: false };
 
 /** 这一格朝这个方向走，**真能走一格**吗（坠落与撞墙都不算）。 */
-function canWalk(level: Level, at: MoveState, dir: Dir): boolean {
-  return step(level, at, dir, DRONE_STEP).kind === 'move';
+function canWalk(level: Level, at: MoveState, dir: Dir, opts: StepOptions): boolean {
+  return step(level, at, dir, opts).kind === 'move';
 }
 
 /**
- * 从 `from` 走到图上相邻的 `to`，第一步该按哪个键。
+ * 从 `from` 走到图上的邻居 `to`，第一步按哪个键。
  *
- * 只认四种相邻：同行列 ±1（`left`/`right`）、同列行 ±1（`up`/`down`）。
- * 折痕那一跳（`col fold-1 ↔ fold`）在摊平网格里就是一次 `right`/`left` —— 与 `movement.ts`
- * 的口径一致，所以这里不需要为折痕单开一条。
+ * 两条来源，按"两个格子在哪张网格上"分工 —— 各取自己那份**唯一出处**：
+ *
+ * - **两端都在墙面**：用摊平网格的坐标差（同行列 ±1）。这也覆盖折痕那一跳
+ *   （`col fold-1 ↔ fold` 在摊平图里就是一次 `right`/`left`）。
+ *   走坐标差而不是问 `step`，是因为**踩空也是合法的一步**：追兵的路径会穿过坑口
+ *   （"守卫对坑是瞎的"，见 T12-e），而 `step` 对那一格给的是 `fall`、拿不到目标格 ——
+ *   只看"能不能 move"会把这条路径整条判掉。
+ * - **一端在甲板上**：那条边是**接头**声明的，问 `step`（四个方向试一遍）。甲板格的
+ *   `(x, z)` 不属于墙的坐标系，坐标差在这里没有意义（T15 之前无人机图里没有甲板节点，
+ *   这里一直只有第一支；攀爬者第一步就是接头 —— 一接上就现形）。
  */
-function firstDir(from: Cell, to: Cell): Dir | null {
-  if (from.row === to.row) return to.col > from.col ? 'right' : to.col < from.col ? 'left' : null;
-  if (from.col === to.col) return to.row > from.row ? 'up' : 'down';
+function firstDir(level: Level, at: MoveState, to: Cell, opts: StepOptions): Dir | null {
+  if (at.cell.face !== 'I' && to.face !== 'I') {
+    if (at.cell.row === to.row) return to.col > at.cell.col ? 'right' : to.col < at.cell.col ? 'left' : null;
+    if (at.cell.col === to.col) return to.row > at.cell.row ? 'up' : 'down';
+    return null;
+  }
+
+  for (const dir of DIRS) {
+    const r = step(level, at, dir, opts);
+    if (r.kind !== 'move') continue;
+    const c = r.state.cell;
+    if (c.face === to.face && c.col === to.col && c.row === to.row) return dir;
+  }
   return null;
 }
 
@@ -72,11 +89,19 @@ export interface DroneInput {
   readonly facing: Dir;
   /** 玩家本 tick 开始时在哪；没有玩家（终局）是 `null`。 */
   readonly playerCell: Cell | null;
+  /**
+   * 这个敌人的**移动能力**（默认 = 无人机的 `DRONE_STEP`：只在墙面内）。
+   *
+   * 攀爬者（`ai/stalker.ts`）传它自己那一份（`decks: true`）—— 于是**图与脚用同一个答案**：
+   * 图上能到岛台，它就走得上去。这条参数化是 T15 加进来时唯一需要改的地方。
+   */
+  readonly step?: StepOptions;
 }
 
 /** 本 tick 该朝哪走；`null` = 不动（到不了玩家，而且四个方向都走不通）。 */
 export function decideDrone(input: DroneInput): Dir | null {
-  return chaseDir(input) ?? patrolDir(input.level, input.at, input.facing);
+  const step = input.step ?? DRONE_STEP;
+  return chaseDir(input, step) ?? patrolDir(input.level, input.at, input.facing, step);
 }
 
 /**
@@ -108,26 +133,27 @@ function plannedGrid(level: Level): readonly TileKind[] {
  * 注意"计划"与"物理"的分工：这里只决定**朝哪走**；踩空会怎样由 `sim.advance` 里的 `step`
  * 判定（那才是唯一的地形真相）。
  */
-function chaseDir(input: DroneInput): Dir | null {
+function chaseDir(input: DroneInput, opts: StepOptions): Dir | null {
   const { level, at, playerCell } = input;
   if (playerCell === null) return null;
 
-  // `decks: false` —— 见文件头"为什么只在墙面内要写成图的开关"。
-  const graph = buildGraph(withGrid(level, plannedGrid(level)), { decks: false });
+  // 图与脚用**同一个** `decks`（见文件头"为什么只在墙面内要写成图的开关"）。
+  // 无人机是 `decks: false`（只在墙面内），攀爬者是 `true`（能上岛台）。
+  const graph = buildGraph(withGrid(level, plannedGrid(level)), { decks: opts.decks !== false });
   if (!graph.has(at.cell) || !graph.has(playerCell)) return null;
 
   const path = findPath(graph, at.cell, playerCell);
   // `length < 2`：到不了（null），或者已经站在玩家那一格上（只剩起点）。
   if (path === null || path.length < 2) return null;
   const next = path[1];
-  return next === undefined ? null : firstDir(at.cell, next);
+  return next === undefined ? null : firstDir(level, at, next, opts);
 }
 
 /** 巡逻段：沿 `facing` 直走；走不通就转向，且**尽量不掉头**。 */
-function patrolDir(level: Level, at: MoveState, facing: Dir): Dir | null {
-  if (canWalk(level, at, facing)) return facing;
+function patrolDir(level: Level, at: MoveState, facing: Dir, opts: StepOptions): Dir | null {
+  if (canWalk(level, at, facing, opts)) return facing;
 
-  const open = DIRS.filter((dir) => canWalk(level, at, dir));
+  const open = DIRS.filter((dir) => canWalk(level, at, dir, opts));
   // 排除反向之后按 `DIRS` 的固定顺序取第一个 —— 完全确定，回放可逐字节比对。
   const notReverse = open.filter((dir) => dir !== REVERSE[facing]);
   return notReverse[0] ?? open[0] ?? null;
