@@ -15,8 +15,9 @@ import { decideDrone, type DroneInput } from './drone';
  *
  * ## 速度
  *
- * `STALKER_MOVE_TICKS = 9`（玩家的 88.9%，计划里的验收是"≤90%"）。
- * 无人机是 24 —— 两者的分工是：无人机"一直在来"，攀爬者"真追得上"。
+ * `STALKER_MOVE_TICKS = 20`（玩家的 40%）—— 比无人机（24）快一点，但**一样追不上你**
+ * （用户试玩："貌似你速度又改快了，我记得原本的机器人速度也是慢于玩家的"）。
+ * 它真正的威胁不在速度，而在**能力**：下面那条 `STALKER_STEP`（能上岛台）。
  */
 export const STALKER_STEP: StepOptions = { decks: true };
 

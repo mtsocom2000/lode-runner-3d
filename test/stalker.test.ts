@@ -36,12 +36,13 @@ function stand(cell: Cell) {
   return at;
 }
 
-describe('T15：速度 —— 计划里的验收是"≤ 90%"', () => {
-  it('常量关系：攀爬者比无人机快得多，但仍慢于玩家', () => {
+describe('T15：速度 —— 快过无人机，但仍然**明显慢于玩家**', () => {
+  it('常量关系：比无人机快，比玩家慢得多（用户："原本的机器人速度也是慢于玩家的"）', () => {
     expect(STALKER_MOVE_TICKS).toBeLessThan(DRONE_MOVE_TICKS);
     expect(STALKER_MOVE_TICKS).toBeGreaterThanOrEqual(MOVE_TICKS);
-    // ≤90%：一格要 ≥ 8/0.9 ≈ 8.89 tick。
-    expect(STALKER_MOVE_TICKS).toBeGreaterThanOrEqual(Math.ceil(MOVE_TICKS / 0.9));
+    // 它的威胁在**能力**（能上岛台），不在速度 —— 所以这里钉"慢得下来"：
+    // 一格至少花玩家两倍的时间。
+    expect(STALKER_MOVE_TICKS).toBeGreaterThanOrEqual(MOVE_TICKS * 2);
   });
 
   it('跑起来也一样：同一次移动之后攀爬者的冷却 = STALKER_MOVE_TICKS-1', () => {
