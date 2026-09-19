@@ -3,6 +3,7 @@ import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel } from '../src/core/world/tiles';
 import { createCamera } from '../src/render/camera';
 import { dirHints, formatDirHints, type DirHint, type ScreenAxes } from '../src/render/hints';
+import { keyLabel } from '../src/app/input';
 
 /**
  * 方向提示：把"每个键实际会往**屏幕**哪边走"变成可断言的数字。
@@ -67,22 +68,29 @@ describe('hints：屏幕方向（用户反馈"WASD 在拐角与岛台上完全�
     expect(get(hints, 'left').danger).toBe(true);
     // 右边是接头（上小道），不是水 —— 别把好东西也标成危险。
     expect(get(hints, 'right').danger).toBe(false);
-    expect(formatDirHints(hints)).toContain('⚠ 会落水：a');
+    expect(formatDirHints(hints, 'wall', keyLabel)).toContain('⚠ 会落水：a');
   });
 
   it('走不了的方向记 ×（出界 / 撞墙 / 没梯），且不会误报落水', () => {
     const hints = hintsAt('A', 0, 1); // 出生点：左边就是网格外
     expect(get(hints, 'left').glyph).toBe('×');
-    expect(formatDirHints(hints)).not.toContain('⚠');
+    expect(formatDirHints(hints, 'wall', keyLabel)).not.toContain('⚠');
   });
 
-  it('墙面那行**不列** `w`/`s`（那里它们不是移动键，按了不走）', () => {
-    // 用户 2026-09-19 的裁定：墙上的上下是爬梯，而爬梯归 `Z`/`X` —— 见 `moveAllowed`。
-    const line = formatDirHints(hintsAt('A', 5, 1), 'wall');
+  it('墙面那行只列 `a`/`d`（那里 `w`/`s`/`e` 都不是移动键，按了不走）', () => {
+    // 键位表是**按面分**的（`input.ts` 的 `KEY_DIRS`），HUD 从那里取键名 —— 不另抄一份。
+    const line = formatDirHints(hintsAt('A', 5, 1), 'wall', keyLabel);
     expect(line).not.toContain('w=');
     expect(line).not.toContain('s=');
+    expect(line).not.toContain('e=');
     expect(line).toContain('a=');
     expect(line).toContain('d=');
     expect(line).toContain('Z/X');
+  });
+
+  it('甲板那行列的是四个屏幕斜向键 `w`/`e`/`s`/`d`（各自正对一个象限）', () => {
+    const line = formatDirHints(hintsAt('I', -3, -3), 'deck', keyLabel);
+    for (const k of ['w=', 'e=', 's=', 'd=']) expect(line).toContain(k);
+    expect(line).not.toContain('a=');
   });
 });

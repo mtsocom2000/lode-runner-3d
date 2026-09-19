@@ -3,14 +3,14 @@ import { L2, L2_SPAWN } from '../core/level/levels/l2';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel } from '../core/world/tiles';
-import { surfaceOf } from '../core/types';
+import { surfaceOf, type Surface } from '../core/types';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
 import { createStage } from '../render/scene';
 import { createHud } from './hud';
-import { createInput } from './input';
+import { createInput, keyLabel } from './input';
 import { dirHints, formatDirHints, type ScreenAxes } from '../render/hints';
 import { createSelectiveBloom } from '../render/bloom';
 import { feedbackFor } from '../render/feedback';
@@ -40,7 +40,16 @@ let state: SimState = createSim(L2, L2_SPAWN);
 const syncer = createSyncer(stage.scene, level);
 
 /** 键盘（T7）。它只产出 `Intents`，不碰 sim —— 方向映射与"轻点锁存"都在 `./input` 里。 */
-const input = createInput();
+/**
+ * 玩家此刻站在哪种面 —— 输入层用它决定"这个键是什么方向"（键位按面分，见 `input.ts`）。
+ * 出处只有 `surfaceOf`；这里只负责"玩家是谁"（与 HUD 那段用的是同一个找法）。
+ */
+function playerSurface(): Surface {
+  const walker = state.entities.find((e) => e.kind === 'player');
+  return walker === undefined ? 'wall' : surfaceOf(walker.cell);
+}
+
+const input = createInput(window, playerSurface);
 
 /** 玩家固定是 `entities[0]`（`sim.ts` 的契约），所以 id 恒为 0。 */
 const PLAYER_ID = 0;
@@ -141,7 +150,7 @@ function refreshHud(): void {
     // T13：目标状态。这两个数是玩家做决策要看的 —— "还剩几块"决定还有多远，
     // 闸门开没开决定现在能不能去出口。**刻意不显示宝物在哪**：那是玩家该自己找的。
     `宝物 ${state.treasures.length === 0 ? '已集齐' : `还剩 ${state.treasures.length} 块`} ｜ 出口闸门 ${state.gatesOpen ? '已开' : '封着（集齐才开）'}`,
-    '方向键 / WASD 面内移动（墙上只有 a/d） ｜ Z 上 / X 下（爬梯、上塔、松手） ｜ Q 左挖 / E 右挖 ｜ R 重开本局',
+    '方向键 / WASD 面内移动（墙上只有 a/d） ｜ Z 上 / X 下（爬梯、上塔、松手） ｜ Q 后挖 / R 前挖 ｜ Backspace 重开本局',
     // 用户反复反馈"WASD 在拐角与岛台上完全不准"。**不换映射** —— 实测在这个相机下
     // 无解（甲板是水平面、方位角又是 45°，两个轴在屏幕上都投成 (±0.7,∓0.3)）；
     // 能做的是把每个键实际会往屏幕哪边走如实报出来。推导见 render/hints.ts。
@@ -151,6 +160,7 @@ function refreshHud(): void {
           formatDirHints(
             dirHints(level, player.cell, player.mode, screenAxes(), bridgesOf(state)),
             surfaceOf(player.cell),
+            keyLabel,
           ),
         ]),
     // 教学提示（T14）：来自**关卡数据**（`LevelDef.hints`），不写死在 app 里 ——
@@ -192,7 +202,7 @@ function flash(text: string, ms: number): void {
   bannerUntil = performance.now() + ms;
 }
 
-/** 常驻提示（终局：等 R 重开）。 */
+/** 常驻提示（终局：等 `Backspace` 重开）。 */
 function flashForever(text: string): void {
   hud.flash(text);
   bannerUntil = null;
@@ -204,7 +214,7 @@ function flashForever(text: string): void {
  * ## 为什么它不在 `input.ts`
  *
  * 那一层的契约是"**每 tick 采样的电平**意图"（移动 / 挖），有一整套纯函数状态机与 19 条测试。
- * 而重开是一次性**命令** —— 把它采样成电平毫无意义（按住 R 不该每 tick 重开一次），
+ * 而重开是一次性**命令** —— 把它采样成电平毫无意义（按住不该每 tick 重开一次），
  * 也犯不着为它动那一层的契约。所以在这里直接监听：一次按键就是一次动作。
  *
  * ## 为什么要它
@@ -231,8 +241,16 @@ function restart(): void {
   refreshHud();
 }
 
+/**
+ * 重开的键。**从 `R` 挪到 `Backspace`**（2026-09-19）：`R` 被"前挖"拿走了。
+ * 选 `Backspace` 是因为它在本作里没有别的用途，语义上也对（"退回去重来"）。
+ */
+const RESTART_KEY = 'Backspace';
+
 window.addEventListener('keydown', (e) => {
-  if (e.key === 'r' || e.key === 'R') restart();
+  if (e.key !== RESTART_KEY) return;
+  e.preventDefault(); // 免得浏览器把它当成"后退"
+  restart();
 });
 
 function resize(): void {
@@ -377,10 +395,7 @@ function loop(now: number): void {
   // 玩家是谁 —— 死亡提示只该为**玩家**亮。见下面那段"必须看是谁"。
   const playerId = state.entities.find((e) => e.kind === 'player')?.id;
   while (acc >= STEP_MS) {
-    // 输入的含义按**玩家此刻站在哪种面**上分（墙面上 `w`/`s` 没有走法）。每 tick 重取，
-    // 因为跨接头 / 跨折痕的那一步会换面。`surfaceOf` 是"我在哪种面上"的唯一出处。
-    const walker = state.entities.find((e) => e.kind === 'player');
-    const intents = input.intents(walker === undefined ? 'wall' : surfaceOf(walker.cell));
+    const intents = input.intents();
     const frame = tick(state, intents);
     state = frame.state;
     acc -= STEP_MS;

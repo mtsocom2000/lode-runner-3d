@@ -63,14 +63,19 @@ function firstWith(frames: readonly SimFrame[], kind: string): SimFrame {
   return frame;
 }
 
-const digLeft: Intents = { move: null, dig: 'left' };
-const digRight: Intents = { move: null, dig: 'right' };
+/**
+ * 挖是**前/后**（相对朝向），不是绝对左右（2026-09-19 用户裁定："`q` 后挖、`r` 前挖"）。
+ * 前/后由 `sim.ts` 用 `facing` 解成真正的 `Dir` —— 出生点初始朝 `right`，所以
+ * `front` = 右、`back` = 左。
+ */
+const digFront: Intents = { move: null, dig: 'front' };
+const digBack: Intents = { move: null, dig: 'back' };
 const stepLeft: Intents = { move: 'left', dig: null };
 
 describe('挖（T11）：接进 tick 之后', () => {
   it('一挖：目标砖变空、报 dug、登记一个满额回填倒计时', () => {
     const state = createSim(PIT, SPAWN, PLAYER_LIVES);
-    const frame = tick(state, digLeft);
+    const frame = tick(state, digBack);
 
     expect(eventsOf(frame)).toContain('dug');
     expect(tileAt(frame.state, HOLE_LEFT)).toBe('pit'); // 挖出来的是「坑」（一格深的口袋），不是空
@@ -80,7 +85,7 @@ describe('挖（T11）：接进 tick 之后', () => {
 
   it('挖是**换新网格**，原 state 一个字节都不动（回放要靠这条）', () => {
     const state = createSim(PIT, SPAWN, PLAYER_LIVES);
-    tick(state, digLeft);
+    tick(state, digBack);
 
     expect(tileAt(state, HOLE_LEFT)).toBe('dig');
     expect(state.fills).toHaveLength(0);
@@ -88,26 +93,25 @@ describe('挖（T11）：接进 tick 之后', () => {
 
   it('挖**斜下方**那一格，不是脚下 —— 站着那块砖不会被挖掉', () => {
     const state = createSim(PIT, SPAWN, PLAYER_LIVES);
-    const frame = tick(state, digLeft);
+    const frame = tick(state, digBack);
 
     expect(tileAt(frame.state, cellA(1, 1))).toBe('dig'); // 脚下还在，所以人没掉
     expect(playerOf(frame)).toEqual(SPAWN);
   });
 
-  it('上下不能挖：没有事件、也不登记回填', () => {
-    const state = createSim(PIT, SPAWN, PLAYER_LIVES);
-    const up = tick(state, { move: null, dig: 'up' });
-    const down = tick(state, { move: null, dig: 'down' });
+  it('前/后跟着**朝向**走：先转身，同一个 `dig` 就挖到另一侧', () => {
+    // 这是"前/后"这个设计的核心证据 —— 同一个 `dig: 'back'`，在初始朝向下挖的是左边，
+    // 转身（先往左走一步、等冷却过去）之后挖的就是右边（`A:1,1`，出生点脚下那块砖）。
+    const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [stepLeft, ...wait(MOVE_TICKS), digBack]);
+    const dug = firstWith(frames, 'dug');
 
-    expect(eventsOf(up)).toEqual([]);
-    expect(eventsOf(down)).toEqual([]);
-    expect(up.state.fills).toEqual([]);
-    expect(down.state.fills).toEqual([]);
+    expect(playerOf(dug)).toEqual(cellA(0, 2)); // 人没动，只是转了身
+    expect(tileAt(dug.state, cellA(1, 1))).toBe('pit');
   });
 
   it('硬砖挖不动（这条判据不是"实心"能替代的）', () => {
     const state = createSim(HARD_FLOOR, SPAWN, PLAYER_LIVES);
-    const frame = tick(state, digLeft);
+    const frame = tick(state, digBack);
 
     expect(eventsOf(frame)).toEqual([]);
     expect(frame.state.fills).toEqual([]);
@@ -122,7 +126,7 @@ describe('挖（T11）：接进 tick 之后', () => {
     expect(eventsOf(moved)).toContain('entered');
     expect(moved.state.entities[0]?.cooldown).toBe(MOVE_TICKS - 1);
 
-    const tried = tick(moved.state, digRight);
+    const tried = tick(moved.state, digFront);
     expect(eventsOf(tried)).not.toContain('dug');
     expect(tried.state.fills).toEqual([]);
   });
@@ -136,8 +140,8 @@ describe('挖（T11）：接进 tick 之后', () => {
   });
 
   it('重复按住挖同一个洞不会挖第二次（洞已经空了）', () => {
-    const first = tick(createSim(PIT, SPAWN, PLAYER_LIVES), digLeft);
-    const again = tick(first.state, digLeft);
+    const first = tick(createSim(PIT, SPAWN, PLAYER_LIVES), digBack);
+    const again = tick(first.state, digBack);
 
     expect(eventsOf(again)).not.toContain('dug');
     expect(again.state.fills).toHaveLength(1); // 还是那一个，不是两个
@@ -146,7 +150,7 @@ describe('挖（T11）：接进 tick 之后', () => {
 
 describe('挖 → 坠 → 入坑（T11 的链）', () => {
   it('挖穿邻居脚下的地板，再走过去就会掉进那个坑里', () => {
-    const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [digLeft, stepLeft]);
+    const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [digBack, stepLeft]);
     const frame = last(frames);
 
     expect(eventsOf(firstWith(frames, 'dug'))).toContain('dug');
@@ -159,7 +163,7 @@ describe('挖 → 坠 → 入坑（T11 的链）', () => {
 
 describe('回填（T11）', () => {
   it('到期自己长回来：砖复原、报 filled、倒计时清单清空', () => {
-    const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [digRight, ...wait(DIG_BACKFILL_TICKS)]);
+    const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [digFront, ...wait(DIG_BACKFILL_TICKS)]);
     const filled = firstWith(frames, 'filled');
     const frame = last(frames);
 
@@ -171,7 +175,7 @@ describe('回填（T11）', () => {
   });
 
   it('还没到期时**不会**长回来（差一个 tick 都不行）', () => {
-    const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [digRight, ...wait(DIG_BACKFILL_TICKS - 1)]);
+    const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [digFront, ...wait(DIG_BACKFILL_TICKS - 1)]);
     const frame = last(frames);
 
     expect(tileAt(frame.state, HOLE_RIGHT)).toBe('pit');
@@ -181,7 +185,7 @@ describe('回填（T11）', () => {
 
   it('活埋：坑合拢时人还在里面 → 死一次、回出生点、坑照样填上', () => {
     const frames = run(createSim(PIT, SPAWN, PLAYER_LIVES), [
-      digLeft,
+      digBack,
       stepLeft,
       ...wait(DIG_BACKFILL_TICKS + 10),
     ]);
@@ -204,7 +208,7 @@ describe('回填（T11）', () => {
   });
 
   it('坑被占住 → 4× 加速；占着坑**正上方**不算（这条差别是手册措辞与原型行为的差距）', () => {
-    const dug = tick(createSim(PIT, SPAWN, PLAYER_LIVES), digRight);
+    const dug = tick(createSim(PIT, SPAWN, PLAYER_LIVES), digFront);
     const hole = cellB(2, 1); // 挖出来的那一格
     const above = cellB(2, 2); // 它的正上方
 
@@ -235,10 +239,10 @@ describe('回填（T11）', () => {
 describe('回放（T11）', () => {
   it('同一串意图跑两遍，逐帧 state 完全一致（挖改的是网格，尤其容易漂）', () => {
     const script: readonly Intents[] = [
-      digLeft,
+      digBack,
       stepLeft,
       ...wait(30),
-      digRight,
+      digFront,
       ...wait(DIG_BACKFILL_TICKS + 5),
       { move: 'up', dig: null },
     ];
@@ -252,7 +256,7 @@ describe('回放（T11）', () => {
   });
 
   it('回填倒计时是**纯数据**：JSON 往返之后接着跑，结果与不往返一致', () => {
-    const script: readonly Intents[] = [digRight, ...wait(5)];
+    const script: readonly Intents[] = [digFront, ...wait(5)];
     const straight = run(createSim(PIT, SPAWN, PLAYER_LIVES), script);
     const mid = straight[2];
     if (mid === undefined) throw new Error('脚本至少要 3 帧');

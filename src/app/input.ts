@@ -1,5 +1,5 @@
 import type { Dir, Lift } from '../core/rules/movement';
-import { TICK_HZ, type Intents } from '../core/sim';
+import { TICK_HZ, type DigSide, type Intents } from '../core/sim';
 import type { Surface } from '../core/types';
 
 /**
@@ -59,28 +59,80 @@ import type { Surface } from '../core/types';
  * 不用起 DOM；`createInput` 只是把它接到真实事件上。
  */
 
-/** 方向键 / WASD → core 的摊平网格方向。认不出来返回 null（其它键不归我们管）。 */
-export function dirOfKey(key: string): Dir | null {
-  switch (key) {
-    case 'ArrowLeft':
-    case 'a':
-    case 'A':
-      return 'left';
-    case 'ArrowRight':
-    case 'd':
-    case 'D':
-      return 'right';
-    case 'ArrowUp':
-    case 'w':
-    case 'W':
-      return 'up';
-    case 'ArrowDown':
-    case 's':
-    case 'S':
-      return 'down';
-    default:
-      return null;
-  }
+/**
+ * 键 → 面内方向。**按面分**（用户 2026-09-19 的裁定）。
+ *
+ * 一张表两个查询：`dirOfKey`（按下时查"这个键是什么方向"）与 `moveAllowed`（采样时查
+ * "这个方向在这个面上有没有键"）。写成**一张表**，是为了让这两个问题不可能给出互相矛盾的答案。
+ *
+ * ## 为什么按面分
+ *
+ * 用户的原话：*"我希望去除掉 awsd 的自动转换……a 往左下，w 往左上，s 往右下，d 往右上。"*
+ * 最后定为四个**屏幕斜向**：`w`↖ `e`↗ `s`↙ `d`↘。
+ *
+ * | 面 | 键 → 方向 |
+ * |---|---|
+ * | **甲板**（水平面） | `w`↖ `e`↗ `s`↙ `d`↘ —— 四个键各自正对一个屏幕象限（实测：水平面的两个轴在这个 45° 相机下正好投成四个斜向） |
+ * | **墙面**（竖直面） | 只有 `a`/`d`（沿墙左右）。墙面上屏幕方向是 ←→↑↓ 四个**正**方向，**没有斜向可给**；而 ↑↓ 是爬梯，归 `Z`/`X` |
+ *
+ * 墙面为什么不用同一套四键：走廊是**跨折痕连续**的（"沿走廊一直走就能过去"是本作的招牌），
+ * 而两面墙在屏幕上朝向相反 —— 按屏幕象限分配的话，过折痕必须**换键**。`a`/`d` 是"摊平网格上的
+ * 左右"，所以按住 `d` 能一路穿过折痕。代价是 `a`/`d` 与屏幕方向差 45°（那正是 HUD 那行
+ * "屏幕方向"提示存在的理由）。
+ *
+ * 于是墙面上的 `w`/`s`/`e` 与甲板上的 `a` **什么都不做** —— 不是"按了被拦下"，是那里没有
+ * 它们的走法。一个必然后果：吊在杆上"松手"原来是按 `s`，现在按 `X`（世界向下）。
+ *
+ * 方向键是 `WASD` 的**别名**（完全等价，不另立含义）：`↑`=`w`、`↓`=`s`、`→`=`d`、`←`=`a`。
+ */
+export const KEY_DIRS: Readonly<Record<Surface, readonly (readonly [string, Dir])[]>> = {
+  wall: [
+    ['a', 'left'],
+    ['A', 'left'],
+    ['ArrowLeft', 'left'],
+    ['d', 'right'],
+    ['D', 'right'],
+    ['ArrowRight', 'right'],
+  ],
+  deck: [
+    ['w', 'left'], // ↖（-x）
+    ['W', 'left'],
+    ['ArrowUp', 'left'],
+    ['e', 'up'], // ↗（-z）
+    ['E', 'up'],
+    ['s', 'down'], // ↙（+z）
+    ['S', 'down'],
+    ['ArrowDown', 'down'],
+    ['d', 'right'], // ↘（+x）
+    ['D', 'right'],
+    ['ArrowRight', 'right'],
+  ],
+};
+
+/** 这个键在这个面上是什么方向；没有这个键（或这个面上它不做事）就是 `null`。 */
+export function dirOfKey(key: string, surface: Surface): Dir | null {
+  for (const [k, dir] of KEY_DIRS[surface]) if (k === key) return dir;
+  return null;
+}
+
+/**
+ * 这个方向在这个面上**有没有键**。采样时用它挡掉"上个面锁存下来的方向" ——
+ * 比如在甲板上按 `e`（= `up`）之后走上墙，那个 `up` 不能在墙上变成爬梯。
+ */
+export function moveAllowed(dir: Dir, surface: Surface): boolean {
+  return KEY_DIRS[surface].some(([, d]) => d === dir);
+}
+
+/**
+ * 反向查询：给 HUD 的"屏幕方向"那行显示按键名（取表里的第一个别名，也就是字母那个）。
+ */
+export function keyLabel(dir: Dir, surface: Surface): string {
+  return KEY_DIRS[surface].find(([, d]) => d === dir)?.[0] ?? '?';
+}
+
+/** 这个键**在某个面上**是移动键吗（按下时用它筛掉不认识的键）。 */
+export function isMoveKey(key: string): boolean {
+  return KEY_DIRS.wall.some(([k]) => k === key) || KEY_DIRS.deck.some(([k]) => k === key);
 }
 
 /**
@@ -106,54 +158,45 @@ export function liftOfKey(key: string): Lift | null {
 }
 
 /**
- * 挖的方向键（T11）。与移动键**分开**:`Q` = 往左挖、`E` = 往右挖。
+ * 挖的键（T11）：**`Q` 后挖、`R` 前挖**（用户 2026-09-19 裁定）。
  *
- * 为什么不做成"方向键 + 修饰键":`Intents.dig` 要的信息只有"朝哪边挖"这一件事,
- * 两个独立键表达得最直白,也不必和方向键的锁存语义纠缠（见下）。
+ * "前/后"而不是"左/右"：本作是折面，同一个"左"在两面墙上指的是不同的世界方向，而"前/后"
+ * 跟着**朝向**走 —— 折一下不会反过来。朝向由角色脚下的**箭头**指示（见 `render/meshSync.ts`）。
  *
- * 键位从 `Z`/`X` 改成 `Q`/`E`（用户 2026-09-19）：`Q`/`E` 就压在 `A`/`D` 上方，
- * 左手不用离开 WASD 那一排 —— 挖与走是**同一条肌肉**。（`Z`/`X` 后来分给了世界上下。）
+ * 为什么不做成"方向键 + 修饰键"：`Intents.dig` 要的信息只有"朝哪边挖"这一件事，两个独立键
+ * 表达得最直白，也不必和方向键的锁存语义纠缠（见下）。
+ *
+ * 键位变迁：`Z`/`X` → `Q`/`E`（挖与走同一条肌肉）→ `Q`/`R`（`E` 被甲板的 ↗ 拿走了）。
  */
-export function digOfKey(key: string): Dir | null {
+export function digOfKey(key: string): DigSide | null {
   switch (key) {
     case 'q':
     case 'Q':
-      return 'left';
-    case 'e':
-    case 'E':
-      return 'right';
+      return 'back';
+    case 'r':
+    case 'R':
+      return 'front';
     default:
       return null;
   }
 }
 
 /**
- * 这一步该不该由 `WASD` 发出来（用户 2026-09-19 的裁定）。
+ * 键盘状态。**记的是键，不是方向** —— 因为"键 → 方向"是**按面分**的（见 `KEY_DIRS`），
+ * 同一个键在墙上和甲板上可以是两件事（甚至什么都不做）。把方向存进来就等于在最开始那一刻
+ * 把含义钉死，之后跨过一条折痕它就变成错的了。
  *
- * **墙面是竖直面**：屏幕上的四个方向正好是 ←→↑↓，其中 ↑/↓ 是**爬梯**。用户裁定爬梯只归
- * `Z`/`X`（世界上下），于是 `w`/`s` 在墙面上**根本不是移动键** —— 不是"按了被拦下"，
- * 是这里**没有这个走法**。（顺带一个必然后果：吊在杆上"松手"原来是按 `s`，现在按 `X`。）
- *
- * **甲板是水平面**：四个方向都是水平的（屏幕上落成四个斜向）→ 四个键都在。
- *
- * 这条**不是**在重复 `movement.step` 的判据：`step` 管的是"这个走法合不合法"（还有 AI、
- * 脚本、回放在用它），这里管的是"**哪个键**代表这个走法"。两件事，各自一个出处。
- */
-export function moveAllowed(dir: Dir, surface: Surface): boolean {
-  return surface === 'deck' || (dir !== 'up' && dir !== 'down');
-}
-
-/**
- * 键盘状态。`held` 按**按下顺序**排列（最后一个是最近按下的，优先于更早按下的）；
+ * `held` 按**按下顺序**排列（最后一个是最近按下的，优先于更早按下的）；
  * `latched` 是"按下过但还没被消费"的那一下。
  *
  * `digHeld`（T11）与 `held` 是**两套独立状态**：挖键不进 `held`，也不参与 `latched`。
- * 分开的理由见 `createInput` 上方那段（要命的差别在"锁存"上）。
+ * 分开的理由见 `createInput` 上方那段（要命的差别在"锁存"上）。挖键记的是"前/后"（`DigSide`）,
+ * 那个含义是**相对朝向**的，与面无关 —— 所以它不需要跟着面重新解释。
  */
 export interface KeyState {
-  readonly held: readonly Dir[];
-  readonly latched: Dir | null;
-  readonly digHeld: readonly Dir[];
+  readonly held: readonly string[];
+  readonly latched: string | null;
+  readonly digHeld: readonly DigSide[];
   /** 按着的升降键（`Z`/`X`）。与移动键一样锁存，免得轻点被冷却窗口吃掉。 */
   readonly liftHeld: Lift | null;
   readonly liftLatched: Lift | null;
@@ -185,35 +228,37 @@ export const NO_KEYS: KeyState = {
 };
 
 /**
- * 按下（含系统的按键重复）。
+ * 按下（含系统的按键重复）。存的是**键名** —— 含义等到采样那一刻再按"我在哪种面"解释。
  *
  * 系统重复送来的 keydown（同一个键已经在 `held` 里）**原样返回** —— 不能重新锁存、
  * 更不能清掉重复延迟，否则"按住"会被它提前放行（那正是重复延迟要防的事）。
  */
-export function press(state: KeyState, dir: Dir): KeyState {
-  if (state.held.includes(dir)) return state;
+export function press(state: KeyState, key: string): KeyState {
+  if (state.held.includes(key)) return state;
   // 全新的一下：立刻兑现（走 `latched`），并且不设限 —— 之后才需要等。
-  return { ...state, held: [...state.held, dir], latched: dir, holdArmedAt: 0 };
+  return { ...state, held: [...state.held, key], latched: key, holdArmedAt: 0 };
 }
 
 /** 松开。松手**不动** `latched` —— 那一下还没被消费，不能因为松手就丢掉。 */
-export function release(state: KeyState, dir: Dir): KeyState {
-  if (!state.held.includes(dir)) return state;
-  return { ...state, held: state.held.filter((d) => d !== dir) };
+export function release(state: KeyState, key: string): KeyState {
+  if (!state.held.includes(key)) return state;
+  return { ...state, held: state.held.filter((d) => d !== key) };
 }
 
 /**
- * 本 tick 该朝哪走：按住的话以**最近按下的**那个为准；只点过一下则用锁存值。
+ * 本 tick 该朝哪走：按住的话以**最近按下的**那个键为准；只点过一下则用锁存值。
+ * 键 → 方向按 `surface` 解释（`dirOfKey`）—— 所以这个键**在这个面上没有含义**时给 `null`。
  *
  * **重复延迟在这里生效**：按住时若还没到 `holdArmedAt`，这一步不放行 —— 那就是"按得稍长
  * 就多走一格"的堵口。刚按下的第一步不受影响：它走 `latched`，而 `latched` 是被 `consumed`
  * 清掉之后才可能落进这条分支的。
  */
-export function moveIntent(state: KeyState): Dir | null {
+export function moveIntent(state: KeyState, surface: Surface): Dir | null {
   const lastHeld = state.held[state.held.length - 1];
-  if (lastHeld === undefined) return state.latched;
-  if (state.tick < state.holdArmedAt) return null;
-  return lastHeld;
+  const key = lastHeld ?? state.latched;
+  if (key === null || key === undefined) return null;
+  if (lastHeld !== undefined && state.tick < state.holdArmedAt) return null;
+  return dirOfKey(key, surface);
 }
 
 /**
@@ -275,17 +320,19 @@ export function liftIntent(state: KeyState): Lift | null {
 }
 
 /** 按下挖键（T11）。与 `press` 分开：挖键不进 `held`，也不写 `latched`。 */
-export function digPress(state: KeyState, dir: Dir): KeyState {
-  return state.digHeld.includes(dir) ? state : { ...state, digHeld: [...state.digHeld, dir] };
+export function digPress(state: KeyState, side: DigSide): KeyState {
+  return state.digHeld.includes(side) ? state : { ...state, digHeld: [...state.digHeld, side] };
 }
 
 /** 松开挖键。松手即失效 —— 挖**没有**锁存（理由见 `createInput` 上方那段）。 */
-export function digRelease(state: KeyState, dir: Dir): KeyState {
-  return state.digHeld.includes(dir) ? { ...state, digHeld: state.digHeld.filter((d) => d !== dir) } : state;
+export function digRelease(state: KeyState, side: DigSide): KeyState {
+  return state.digHeld.includes(side)
+    ? { ...state, digHeld: state.digHeld.filter((d) => d !== side) }
+    : state;
 }
 
 /** 本 tick 想往哪挖；两个都按住时**最近按下的**优先。没按就是 `null`。 */
-export function digIntent(state: KeyState): Dir | null {
+export function digIntent(state: KeyState): DigSide | null {
   return state.digHeld[state.digHeld.length - 1] ?? null;
 }
 
@@ -293,10 +340,10 @@ export interface Input {
   /**
    * 每个 sim tick 调一次 —— 输入是**电平**，不是边沿。
    *
-   * `surface` = 玩家此刻站在哪种面上（`core/types.ts` 的 `surfaceOf` 是唯一出处）：
-   * 墙面上的 `w`/`s` 没有走法可言（见 `moveAllowed`）。
+   * 不用传"我在哪种面"：那是 `createInput` 的 `at` 回调（与按下时用的是**同一个**回调，
+   * 于是不可能出现"按下按 A 面、采样按 B 面"的自相矛盾）。
    */
-  intents(surface: Surface): Intents;
+  intents(): Intents;
   /** 实体动过一次之后调一次，把锁存的那一下销账。 */
   consume(): void;
   /**
@@ -322,8 +369,17 @@ export interface Input {
  * 代价是"冷却中轻点挖键"会被漏掉一次。这条**记进 T-SP1 的试玩清单**：
  * 如果试玩时觉得挖键也钝，再给它加锁存（`KeyState` 旁边加一个 `digLatched` 即可，
  * 不必动 core）。
+ *
+ * ## `at`：为什么"我在哪种面"是个**回调**
+ *
+ * 键 → 方向是**按面分**的（见 `KEY_DIRS`），所以每次**采样**都要知道"我在墙上还是甲板上"。
+ * 状态机存的是**键名**（`KeyState.held`），含义在采样那一刻才解释 —— 存方向就等于在按下那一刻
+ * 把它钉死，跨过一条折痕之后那个方向就是错的了。
+ *
+ * 做成回调而不是采样时传参：调用方（`main.ts`）给的实现是 `surfaceOf(player.cell)` ——
+ * 那是"我在哪种面"的唯一出处，输入层不必自己去问 sim。
  */
-export function createInput(target: Window = window): Input {
+export function createInput(target: Window = window, at: () => Surface = () => 'wall'): Input {
   let keys = NO_KEYS;
 
   const onKeyDown = (e: KeyboardEvent): void => {
@@ -339,10 +395,11 @@ export function createInput(target: Window = window): Input {
       keys = digPress(keys, dig);
       return;
     }
-    const dir = dirOfKey(e.key);
-    if (dir === null) return;
+    // 移动键存的是**键名**，含义等采样时按面解释 —— 所以这里只问"它是不是一个移动键"，
+    // 不问"它在这个面上是什么方向"（那正是不能在这一层回答的问题）。
+    if (!isMoveKey(e.key)) return;
     e.preventDefault(); // 方向键默认会滚页面
-    keys = press(keys, dir);
+    keys = press(keys, e.key);
   };
   const onKeyUp = (e: KeyboardEvent): void => {
     const lift = liftOfKey(e.key);
@@ -355,9 +412,7 @@ export function createInput(target: Window = window): Input {
       keys = digRelease(keys, dig);
       return;
     }
-    const dir = dirOfKey(e.key);
-    if (dir === null) return;
-    keys = release(keys, dir);
+    keys = release(keys, e.key); // 不在 `held` 里就是空操作
   };
   // 失焦必须放开所有键：否则切走再回来会"卡住一个按住的方向"，角色自己一直走。
   // `released` 连挖键一起放（卡住的挖键会一路挖过去）。
@@ -370,18 +425,18 @@ export function createInput(target: Window = window): Input {
   target.addEventListener('blur', onBlur);
 
   return {
-    intents: (surface: Surface): Intents => {
+    intents: (): Intents => {
       // 先走时钟：一次采样 = 一个 tick，重复延迟按它计。
       keys = ticked(keys);
       const dig = digIntent(keys);
       const lift = liftIntent(keys);
-      let move = moveIntent(keys);
-      if (move !== null && !moveAllowed(move, surface)) {
-        // 这个面上没有这个走法（墙上的 `w`/`s`）。把它当**没按过**、别欠着 ——
-        // 否则在墙上点一下 `w`，等会儿走上甲板会莫名自己动一格。
-        // `held` 不动：真按着不放的人，走上甲板时那个键就重新有含义了。
+      const surface = at();
+      const move = moveIntent(keys, surface);
+      if (move === null && keys.latched !== null && dirOfKey(keys.latched, surface) === null) {
+        // 这一下**在当前面上没有对应的键**（在墙上按 `w`、或在甲板上按 `a`）→ 当它没按过、别欠着，
+        // 否则换个面之后它会被兑现成一步玩家没想要的走法。
+        // `held` 不动：真按着不放的人，走回那个面时这个键就重新有含义了。
         keys = { ...keys, latched: null };
-        move = null;
       }
       return { move, dig, lift };
     },

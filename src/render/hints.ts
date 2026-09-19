@@ -52,9 +52,6 @@ export interface DirHint {
 const H = (sx: number): string => (sx > NEGLIGIBLE ? '→' : sx < -NEGLIGIBLE ? '←' : '');
 const V = (sy: number): string => (sy > NEGLIGIBLE ? '↑' : sy < -NEGLIGIBLE ? '↓' : '');
 
-/** 键位记号（与 WASD 一致；`core` 的 `up/down` 在这里才第一次与键名绑定）。 */
-const KEY: Readonly<Record<Dir, string>> = { up: 'w', down: 's', left: 'a', right: 'd' };
-
 function dot(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
@@ -79,14 +76,26 @@ export function dirHints(
   });
 }
 
-/** 一行给 HUD 的提示：方位 + 键位，末尾单列"会落水"的键。 */
-export function formatDirHints(hints: readonly DirHint[], surface: Surface = 'deck'): string {
-  // 墙面是竖直面 —— 屏幕上没有斜向，`w`/`s` 在那里**不是移动键**（上下归 `Z`/`X`，
-  // 用户 2026-09-19 的裁定）。既然按了不走，就别把它列进"按下的键实际会往哪走"。
+/**
+ * 一行给 HUD 的提示：方位 + 键位，末尾单列"会落水"的键。
+ *
+ * `keyOf` 由调用方给（`app/input.ts` 的 `keyLabel`）—— 键位表**只有那一处**（按面分的那张表），
+ * 这里不另抄一份：抄一份的下场是"改了键位、HUD 还在报旧键"，而 HUD 那行正是玩家唯一能看到
+ * "这个键现在会往哪走"的地方。
+ *
+ * `surface` 决定列哪些方向：墙面是竖直面，那里 `w`/`s`/`e` 都不是移动键（上下归 `Z`/`X`，
+ * 见 `input.ts` 的 `KEY_DIRS`）—— 既然按了不走，就别列进"按下的键实际会往哪走"。
+ */
+export function formatDirHints(
+  hints: readonly DirHint[],
+  surface: Surface,
+  keyOf: (dir: Dir, surface: Surface) => string,
+): string {
   const live = surface === 'deck' ? hints : hints.filter((h) => h.dir !== 'up' && h.dir !== 'down');
-  const parts = live.map((h) => `${KEY[h.dir]}=${h.glyph}`);
-  const danger = live.filter((h) => h.danger).map((h) => KEY[h.dir]);
+  const name = (d: Dir): string => keyOf(d, surface);
+  const parts = live.map((h) => `${name(h.dir)}=${h.glyph}`);
+  const danger = live.filter((h) => h.danger).map((h) => name(h.dir));
   const tail = danger.length === 0 ? '' : ` ｜ ⚠ 会落水：${danger.join('/')}`;
-  const lift = surface === 'deck' ? 'Z/X 上下一层' : 'Z/X 上下爬梯（吊杆时 X = 松手）';
+  const lift = surface === 'deck' ? 'Z/X 上下一层' : 'Z/X 上下爬梯（吊杆时 X = 松手、接头处 X 下到小道）';
   return `屏幕方向（按下的键实际会往哪走）：${parts.join('  ')} ｜ ${lift}${tail}`;
 }

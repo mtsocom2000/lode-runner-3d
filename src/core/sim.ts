@@ -14,6 +14,7 @@ import {
 import { drownPath, type DrownPath } from './rules/drown';
 import { openGates, treasureAt, withoutTreasure } from './rules/goals';
 import {
+  OPPOSITE_DIR,
   fallTo,
   stateAt,
   step,
@@ -244,19 +245,28 @@ export interface SimState {
 /**
  * 一个 tick 的玩家意图。这是**输入层与 core 的唯一接口**。
  *
- * `dig` 从 T11 起有人消费了：非 `null` 就表示"本 tick 想朝这个方向挖"。
- * 与 `move` 一样是**电平**（按住 = 持续想挖）—— `applyDig` 对已经挖空的格子返回 `null`，
- * 所以按住不放不会重复触发，不需要在这里做边沿检测。
+ * `dig`（T11）非 `null` 就表示"本 tick 想挖"，与 `move` 一样是**电平**（按住 = 持续想挖）——
+ * `applyDig` 对已经挖空的格子返回 `null`，所以按住不放不会重复触发。
+ *
+ * **`dig` 是前/后，不是左/右**（2026-09-19 用户裁定："`q` 后挖、`r` 前挖"）。
+ * 理由在这个世界里比在原版里更硬：本作是**折面**，同一个"左"在两面墙上指的是不同的世界方向，
+ * 而"前/后"跟着**朝向**走 —— 折一下不会反过来。朝向由 `facing` 给，`sim` 在这里把它解成
+ * 真正的 `Dir`（`front` = 正对着的那一侧，`back` = 反手那一侧）。
  *
  * `lift`（2026-09-19）是第三组输入：**世界上下**（`Z`/`X`）。用户裁定 `awsd` 只控制方向、
  * `Z`/`X` 控制上下，两者不互相兼职 —— 于是甲板上"我要上塔"和"我要往前走"是两件互不干扰的事。
  */
 export interface Intents {
   readonly move: Dir | null;
-  readonly dig: Dir | null;
+  readonly dig: DigSide | null;
   /** 世界上下（`Z`/`X`）。**可选**：省略 = 没按（既有的 `{move, dig}` 字面量仍然合法）。 */
   readonly lift?: Lift | null;
 }
+
+/** 挖的**相对**朝向。`front` = 面朝的那一侧，`back` = 背后那一侧（见 `Intents.dig`）。 */
+export type DigSide = 'front' | 'back';
+
+export const DIG_SIDES = ['front', 'back'] as const satisfies readonly DigSide[];
 
 export const NO_INTENTS: Intents = { move: null, dig: null, lift: null };
 
@@ -563,7 +573,14 @@ function advance(
     if (dir === null) return entity; // 站着不动：不进入冷却，下一 tick 按方向立刻起步
     stepDir = dir;
     result = step(level, moveState, dir, opts);
-    facingDir = dir;
+    // **爬梯（墙面上的 `up`/`down`）不改朝向**（2026-09-19）。朝向是"我面朝哪一侧"，不是"我正往上"。
+    // 两条硬理由：
+    //   ①挖是**前/后**（`Intents.dig`）。朝向要是被爬梯刷成 `up`，"前挖"就变成"往上挖"——非法，
+    //     于是玩家爬完梯子会突然挖不动。
+    //   ②朝向箭头是个**贴地的平面三角**（`render/meshSync.ts`）。朝向 `up` 时它在屏幕上的投影
+    //     长度是 0 —— 箭头直接消失。
+    // 与下面 `lift`（`Z`/`X`）同一条口径：**竖直方向的移动不参与朝向**。
+    facingDir = dir === 'up' || dir === 'down' ? null : dir;
   }
 
   switch (result.kind) {
@@ -753,7 +770,10 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   // "挖了顺势跳下去"会比预期慢一帧。冷却中不许挖 —— 挖是一个**动作**，不是站姿。
   const digger = prev.entities.find((e) => e.kind === 'player' && e.cooldown === 0);
   if (digger !== undefined && intents.dig !== null) {
-    const dug = applyDig(viewOf({ ...prev, grid }), digger.cell, intents.dig);
+    // 前/后 → 真正的 `Dir`：**朝向是唯一出处**（`facing`）。挖的目标格再由 `digTarget` 从
+    // 那个 Dir 算出斜下方那一格 —— 两件事各一处，不在这里合成坐标。
+    const dir = intents.dig === 'front' ? digger.facing : OPPOSITE_DIR[digger.facing];
+    const dug = applyDig(viewOf({ ...prev, grid }), digger.cell, dir);
     if (dug !== null) {
       grid = dug.grid;
       fills.push({ index: dug.index, remaining: DIG_BACKFILL_TICKS });

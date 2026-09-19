@@ -291,6 +291,34 @@ describe('sim：回放', () => {
   });
 });
 
+describe('sim：朝向（`facing`）—— 竖直方向的移动不参与', () => {
+  /**
+   * 为什么这条不是细节：挖是**前/后**（`Intents.dig`，由 `facing` 解析），而角色脚下的
+   * **朝向箭头**是个贴地的平面三角。朝向要是被爬梯刷成 `up`：①"前挖"变成"往上挖"（非法，
+   * 玩家爬完梯子会突然挖不动）；②箭头在屏幕上的投影长度变成 0 —— 直接消失。
+   */
+  it('爬梯**不改朝向**', () => {
+    const start = createSim(UPPER, spawnUpper);
+    expect(start.entities[0]?.facing).toBe('right'); // 默认朝向
+
+    const frames = replay(start, [{ move: 'up', dig: null }, ...wait(MOVE_TICKS)]);
+    const last = frames[frames.length - 1];
+    if (last === undefined) throw new Error('脚本不能为空');
+
+    expect(playerOf(last)).toEqual(cellA(0, 2)); // 真的爬上去了
+    expect(last.state.entities[0]?.facing).toBe('right'); // 但朝向一动没动
+  });
+
+  it('横移照旧改朝向（对照，免得上面那条把朝向整个冻住）', () => {
+    const frames = replay(createSim(UPPER, cellA(1, 3)), [{ move: 'left', dig: null }, ...wait(MOVE_TICKS)]);
+    const last = frames[frames.length - 1];
+    if (last === undefined) throw new Error('脚本不能为空');
+
+    expect(playerOf(last)).toEqual(cellA(0, 3));
+    expect(last.state.entities[0]?.facing).toBe('left');
+  });
+});
+
 describe('sim：意图辅助', () => {
   it('hold / wait 长度正确，wait 不含方向', () => {
     expect(hold('left')).toHaveLength(MOVE_TICKS);
