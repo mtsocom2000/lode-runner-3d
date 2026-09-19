@@ -73,11 +73,18 @@ function distance(a: Vec3, b: Vec3): number {
  * 四个方向各自会走到屏幕的哪个方位。**纯函数**（只吃 `level` + 当前格 + 屏幕轴），
  * 所以能直接在无头测试里断言 `test/hints.test.ts`。
  */
-export function dirHints(level: Level, at: Cell, mode: MoveMode, axes: ScreenAxes): readonly DirHint[] {
-  const base = playerAnchor(level, at, mode);
+export function dirHints(
+  level: Level,
+  at: Cell,
+  mode: MoveMode,
+  axes: ScreenAxes,
+  bridges?: ReadonlySet<string>,
+): readonly DirHint[] {
+  const base = playerAnchor(level, at, mode, bridges);
+  const opts = { bridges };
 
   return DIRS.map((dir): DirHint => {
-    const result = step(level, { cell: at, mode }, dir);
+    const result = step(level, { cell: at, mode }, dir, opts);
 
     let to: Vec3 | null = null;
     let danger = false;
@@ -87,7 +94,7 @@ export function dirHints(level: Level, at: Cell, mode: MoveMode, axes: ScreenAxe
       // 直接报方位会得到 `·`，对玩家等于没说。玩家要的是"按下去之后我会往屏幕的哪边走"，
       // 所以这一步之后再走一步、报那一步的方位（那正是他松手再按时会看到的）。
       if (distance(to, base) < NEGLIGIBLE) {
-        const next = step(level, result.state, dir);
+        const next = step(level, result.state, dir, opts);
         if (next.kind === 'move') {
           to = playerAnchor(level, next.state.cell, next.state.mode);
         } else if (next.kind === 'fall') {

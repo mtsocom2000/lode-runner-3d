@@ -204,15 +204,26 @@ export function cellAnchor(level: Level, cell: Cell): Anchor {
 /** 站在砖面上时，身体中心比格心低这么多（推导见文件头的表）。 */
 const STAND_ON_BRICK_DROP = 1 - CUBE / 2 - PLAYER_SIZE / 2;
 
-/** 角色在世界里的位置。三种停驻方式不一样 —— 见文件头的表。 */
-export function playerAnchor(level: Level, cell: Cell, mode: MoveMode): Vec3 {
+/**
+ * 角色在世界里的位置。三种停驻方式不一样 —— 见文件头的表。
+ *
+ * `bridges` = **有人的坑**（`sim.bridgesOf`）：坑里有人时坑口踩得住，角色就站在**那个人的头上**
+ * —— 高度按"站在砖面上"算（脚在坑口那一格的下沿），否则会画成半个身子陷在坑里。
+ * 与移动层问的是**同一个**集合，"人能停在哪"与"人看起来停在哪"因此不可能不一致。
+ */
+export function playerAnchor(
+  level: Level,
+  cell: Cell,
+  mode: MoveMode,
+  bridges?: ReadonlySet<string>,
+): Vec3 {
   const { p } = cellAnchor(level, cell);
   const [x, y, z] = p;
 
   // 吊在杆下：手搭在杆上，而杆心就是格心。
   if (mode === 'hang') return [x, y - HANG_DROP, z];
 
-  const support = supportOf(level, cell);
+  const support = supportOf(level, cell, bridges);
   // 站在砖面上：脚踩在下方那格砖的**顶面**。
   if (support === 'brick') return [x, y - STAND_ON_BRICK_DROP, z];
   // 梯（以及万一说不清支撑方式时的兜底）：身体就占本格。

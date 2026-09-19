@@ -412,6 +412,11 @@ interface AdvanceContext {
    */
   readonly pits: ReadonlySet<string>;
   /**
+   * **有人的坑**（格键集合）—— 那些坑口踩得住（原版"踩其头顶跨过去"，见 `supportOf` ⑤）。
+   * 与 `pits` 同源（都从瓦片表推），但集合更小：只有里头真站着人的那些。
+   */
+  readonly bridges: ReadonlySet<string>;
+  /**
    * 本 tick 已经**被埋**的实体 id（① 里判出来的）。
    *
    * 它们这一 tick 不再参与移动：那格已经变回砖，`supportOf` 会算出 null，于是 ③ 会让它
@@ -428,8 +433,8 @@ interface AdvanceContext {
  * 与 AI 用同一份表，所以"图上到不了的地方，脚也走不到" —— 早先只有图那一半，
  * 于是巡逻到接头格时会一步跨上小道（用户报的"机器人进入岛台后就变傻了"）。
  */
-function stepOptions(entity: Entity): StepOptions {
-  return entity.kind === 'player' ? {} : DRONE_STEP;
+function stepOptions(entity: Entity, bridges: ReadonlySet<string>): StepOptions {
+  return entity.kind === 'player' ? { bridges } : { ...DRONE_STEP, bridges };
 }
 
 /**
@@ -485,14 +490,14 @@ function advance(
   // 不能只靠 `step` 内部那条同样的自检：`decide` 返回 `null` 时（玩家没按键、无人机被困在坑里、
   // 敌人还没想好）根本走不到 `step` 那一步，于是"支撑被挖掉"会表现成**人悬在空中站着**。
   // 这条是被 T12-d 的用例抓出来的（把无人机脚下的砖改成空，它却一动不动、一个事件都不报）。
-  if (supportOf(level, entity.cell) === null) {
-    return settleFall(level, entity, fallTo(level, entity.cell), 'fall', events);
+  if (supportOf(level, entity.cell, ctx.bridges) === null) {
+    return settleFall(level, entity, fallTo(level, entity.cell, ctx.bridges), 'fall', events);
   }
 
   const dir = decide(entity, intents, level, ctx);
   if (dir === null) return entity; // 站着不动：不进入冷却，下一 tick 按方向立刻起步
 
-  const result = step(level, { cell: entity.cell, mode: entity.mode }, dir, stepOptions(entity));
+  const result = step(level, { cell: entity.cell, mode: entity.mode }, dir, stepOptions(entity, ctx.bridges));
 
   switch (result.kind) {
     case 'blocked':
@@ -620,6 +625,34 @@ function pitCells(grid: readonly TileKind[], cols: number, fold: number): Readon
 }
 
 /**
+ * **有人的坑**（格键集合）：那些坑口可以踩过去 —— 原版"踩其头顶跨过去"
+ * （见 `world/graph.ts` 的 `supportOf` ⑤）。
+ *
+ * 为什么要有这个函数（"判据只能有一个出处"）：这件事有三个消费者 —— `sim` 的移动、
+ * 渲染层摆角色的高度（`meshSync` 要拿它算锚点）、HUD 的方向提示。三处各推一遍，
+ * 迟早会漂成"人能站住、但被画在坑里"。
+ */
+function bridgesIn(
+  grid: readonly TileKind[],
+  entities: readonly Entity[],
+  cols: number,
+  fold: number,
+): ReadonlySet<string> {
+  const pits = pitCells(grid, cols, fold);
+  const out = new Set<string>();
+  for (const entity of entities) {
+    const key = cellKey(entity.cell);
+    if (pits.has(key)) out.add(key);
+  }
+  return out;
+}
+
+/** `bridgesIn` 的对外版本：渲染层与提示读的是**同一个**推导。 */
+export function bridgesOf(state: SimState): ReadonlySet<string> {
+  return bridgesIn(state.grid, state.entities, state.cols, state.fold);
+}
+
+/**
  * 一帧。纯函数：同一个 (state, intents) 永远给同一帧。
  *
  * 一个 tick 里的顺序是**规则的一部分**，不是实现细节：
@@ -671,11 +704,14 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   // 于是"谁在坑里"也必须问它 —— 从 `fills` 反推就是同一件事的第二个出处，
   // 而两个出处必然会在某一天漂成"回填说坑没了、AI 说还在坑里"。
   const pits = pitCells(grid, prev.cols, prev.fold);
+  // 有人的坑：坑口可以踩过去（原版"踩其头顶跨过去" —— 用户 2026-09-19 报的
+  // "我挖了个坑、机器人也掉进去了，结果我往前走也判我掉进去了"就是缺了这一半）。
+  const bridges = bridgesIn(grid, prev.entities, prev.cols, prev.fold);
   // ①里已经"被埋"的实体，本 tick 不再参与移动（见 `AdvanceContext.buried`）。
   const buriedIds = new Set(
     events.filter((e) => e.kind === 'buried').map((e) => e.entity),
   );
-  const ctx: AdvanceContext = { playerCell: player?.cell ?? null, pits, buried: buriedIds };
+  const ctx: AdvanceContext = { playerCell: player?.cell ?? null, pits, bridges, buried: buriedIds };
   const entities: Entity[] = [];
   for (const entity of prev.entities) {
     entities.push(advance(level, entity, intents, ctx, events));

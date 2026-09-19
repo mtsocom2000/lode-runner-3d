@@ -43,7 +43,7 @@ export interface MoveState {
 }
 
 /**
- * 这一次移动里，"这个世界的**甲板**（岛台 / 小道）算不算存在"。
+ * 这一次移动里，"这个世界的**甲板**（岛台 / 小道）算不算存在"，以及"哪些坑里有人"。
  *
  * 与 `world/graph.ts` 的 `GraphOptions.decks` 是**同一件事的两半**：那边管"图上有没有甲板节点"，
  * 这边管"走一步的时候认不认接头"。两边必须给同一个答案，所以 drone 的那一份只在
@@ -56,6 +56,11 @@ export interface MoveState {
 export interface StepOptions {
   /** 默认 `true`。`false` = 这个行动者"只在墙面内"（无人机）。 */
   readonly decks?: boolean;
+  /**
+   * **有人的坑**（格键集合）—— 那些坑口可以踩过去（原版"踩其头顶"）。
+   * 由 `sim.bridgesOf` 从 state 推出来，是这件事的唯一出处。
+   */
+  readonly bridges?: ReadonlySet<string>;
 }
 
 /**
@@ -104,12 +109,15 @@ export function stateAt(level: Level, cell: Cell): MoveState | null {
  * 每往下一格都先问"这一格能不能停" —— 梯和杆不实心，但**能接住人**，
  * 所以判定必须用 supportOf 而不是 isSolid。只盯"下方是不是实心"会让坠落穿杆而过。
  * 一路掉到 row 0 还停不住 → 掉出墙体 → 水。
+ *
+ * `bridges` 一路传下去：坑里有人时，坑口是踩得住的一格
+ * （原版"踩其头顶"，见 `world/graph.ts` 的 `supportOf` ⑤）。
  */
-export function fallTo(level: Level, from: Cell): FallEnd {
+export function fallTo(level: Level, from: Cell, bridges?: ReadonlySet<string>): FallEnd {
   let row = from.row;
   for (;;) {
     const cell: Cell = { face: faceOf(from.col, level.fold), col: from.col, row };
-    const support: Support | null = supportOf(level, cell);
+    const support: Support | null = supportOf(level, cell, bridges);
     if (support !== null) return { kind: 'landed', cell };
     if (row - 1 < 0) return { kind: 'water', from, row };
     row -= 1;
@@ -195,8 +203,8 @@ export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions
   // 对甲板格会造出错误的 A/B 面（甲板边缘该阻止、不该坠落，本来也不进 `fallTo`）。
   if (cell.face === 'I') return stepOnDeck(level, state, dir);
 
-  if (supportOf(level, cell) === null) {
-    return { kind: 'fall', end: fallTo(level, cell) };
+  if (supportOf(level, cell, opts.bridges) === null) {
+    return { kind: 'fall', end: fallTo(level, cell, opts.bridges) };
   }
 
   // 甲板接头**优先于**网格邻居，也**优先于下面的上下梯门**（B-1 修）。
@@ -230,11 +238,11 @@ export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions
   if (dir === 'up' || dir === 'down') {
     if (state.mode === 'hang') return stepOnBar(level, state, dir);
     // stand：只有梯能上下。
-    if (supportOf(level, cell) !== 'ladder') return blocked('not-ladder');
+    if (supportOf(level, cell, opts.bridges) !== 'ladder') return blocked('not-ladder');
 
     const target = cellAt(level, cell.col, dir === 'up' ? cell.row + 1 : cell.row - 1);
     if (target === null) return blocked('not-ladder');
-    if (supportOf(level, target) !== 'ladder') return blocked('not-ladder');
+    if (supportOf(level, target, opts.bridges) !== 'ladder') return blocked('not-ladder');
     return { kind: 'move', state: { cell: target, mode: 'stand' } };
   }
 
@@ -242,7 +250,7 @@ export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions
   if (target === null) return blocked('out');
   if (isSolid(level.at(target.col, target.row))) return blocked('solid');
 
-  const support: Support | null = supportOf(level, target);
+  const support: Support | null = supportOf(level, target, opts.bridges);
   if (state.mode === 'hang') {
     if (support === 'bar') return { kind: 'move', state: { cell: target, mode: 'hang' } };
     if (support === 'brick' || support === 'ladder') {
@@ -252,7 +260,7 @@ export function step(level: Level, state: MoveState, dir: Dir, opts: StepOptions
     return blocked('nothing-there');
   }
 
-  if (support === null) return { kind: 'fall', end: fallTo(level, target) };
+  if (support === null) return { kind: 'fall', end: fallTo(level, target, opts.bridges) };
   return { kind: 'move', state: { cell: target, mode: support === 'bar' ? 'hang' : 'stand' } };
 }
 

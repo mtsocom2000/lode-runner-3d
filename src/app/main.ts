@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { L1, L1_SPAWN } from '../core/level/levels/l1';
 import { validateLevel } from '../core/level/validate';
-import { TICK_HZ, createSim, tick, type SimEvent, type SimState } from '../core/sim';
+import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel } from '../core/world/tiles';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
@@ -146,7 +146,7 @@ function refreshHud(): void {
     // 能做的是把每个键实际会往屏幕哪边走如实报出来。推导见 render/hints.ts。
     ...(player === undefined
       ? []
-      : [formatDirHints(dirHints(level, player.cell, player.mode, screenAxes()))]),
+      : [formatDirHints(dirHints(level, player.cell, player.mode, screenAxes(), bridgesOf(state)))]),
     // 教学提示（T14）：来自**关卡数据**（`LevelDef.hints`），不写死在 app 里 ——
     // 换一关就换一套（写死会变成一串 `if (levelId === …)`，那是把数据藏进代码）。
     // 原先那两行写死的"挖开的地板 4 秒后…""取到宝物后闸门变梯子"已并入 L1 的 hints。

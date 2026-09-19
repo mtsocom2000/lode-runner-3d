@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { applyBackfill, applyDig, canDig, digTarget, PIT } from '../src/core/rules/dig';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { fallTo, step } from '../src/core/rules/movement';
-import type { Cell } from '../src/core/types';
+import { cellKey, type Cell } from '../src/core/types';
 import { supportOf } from '../src/core/world/graph';
 import { parseLevel, withGrid } from '../src/core/world/tiles';
 
@@ -202,5 +202,37 @@ describe('坑是口袋：掉进去停在坑里、出不来（不穿到下一层�
     expect(filled.at(1, 2)).toBe('dig');
     expect(supportOf(filled, inPit)).toBeNull(); // 砖里不能站人
     expect(supportOf(filled, abovePit)).toBe('brick'); // 站在砖面上
+  });
+
+  /**
+   * 口袋的**例外**：坑里有人时，坑口由那个人撑着 —— 原版"踩其头顶跨过去"。
+   * 用户 2026-09-19：*"我挖了一个坑并且机器人也掉进去了，结果立刻我往前走也判我掉进去了。"*
+   */
+  const besideMouth: Cell = { face: 'A', col: 2, row: 3 }; // 坑口旁边那一格（站得住）
+
+  it('对照：**空**坑的坑口站不住 —— 走上去会掉进去（口袋的常态）', () => {
+    expect(supportOf(withPit, abovePit)).toBeNull();
+    expect(step(withPit, { cell: besideMouth, mode: 'stand' }, 'left')).toEqual({
+      kind: 'fall',
+      end: { kind: 'landed', cell: inPit },
+    });
+  });
+
+  it('坑里**有人**时坑口踩得住：走过去 = 站在它头上（不掉下去）', () => {
+    const bridges = new Set([cellKey(inPit)]); // 有人的坑（`sim.bridgesOf` 给的就是这个）
+    expect(supportOf(withPit, abovePit, bridges)).toBe('brick');
+    expect(step(withPit, { cell: besideMouth, mode: 'stand' }, 'left', { bridges })).toEqual({
+      kind: 'move',
+      state: { cell: abovePit, mode: 'stand' },
+    });
+  });
+
+  it('踩在头上时**掉不下去**：脚下那格自己也有支撑了（下 tick 不会又坠）', () => {
+    const bridges = new Set([cellKey(inPit)]);
+    // 站在坑口那一格时，`step` 的第一句自检也必须过（否则下一 tick 照样坠）。
+    expect(step(withPit, { cell: abovePit, mode: 'stand' }, 'right', { bridges })).toEqual({
+      kind: 'move',
+      state: { cell: besideMouth, mode: 'stand' },
+    });
   });
 });

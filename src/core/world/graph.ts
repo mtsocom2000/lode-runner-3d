@@ -163,8 +163,20 @@ export function isDeckCell(level: Level, c: Cell): boolean {
  *
  * 注意"坑是落脚点"只影响**坑自己那一格**：坑上方那一格照旧停不住（`isSolid('pit')` 为假），
  * 于是走在坑口上的人**会掉进去** —— 这正是我们要的。两条合起来就是"口袋"的全部语义。
+ *
+ * ## ⑤ 坑里**有人**时，坑口那一格由那个人撑着（原版"踩其头顶跨过去"）
+ *
+ * 用户 2026-09-19 报的原话：*"我挖了一个坑并且机器人也掉进去了，结果立刻我往前走也判我掉进去了。"*
+ * —— 这正是原版那个经典动作缺的那一半：守卫落坑之后，玩家是**踩着它的头顶**过去的
+ * （见 `rules/dig.ts` 与架构文档 §八-4）。所以"坑口站不住"这条有个例外：**坑里有人**时，
+ * 那个人的身体就把坑口填上了，可以踩。
+ *
+ * `bridges` = **有人的坑**的格键（由 `sim.bridgesOf` 从 state 推出来 —— 唯一出处，
+ * 渲染层要摆角色的高度时问的是同一个函数）。
+ *
+ * 空坑照旧是陷阱（掉进去 = 受困），所以这条不会把坑变废。
  */
-export function supportOf(level: Level, c: Cell): Support | null {
+export function supportOf(level: Level, c: Cell, bridges?: ReadonlySet<string>): Support | null {
   if (c.face === 'I') return isDeckCell(level, c) ? 'brick' : null;
   if (!isConsistentCell(c, level.fold)) return null;
   const here = level.at(c.col, c.row);
@@ -172,6 +184,10 @@ export function supportOf(level: Level, c: Cell): Support | null {
   if (isLadder(here)) return 'ladder';
   if (isBar(here)) return 'bar';
   if (here === 'pit') return 'brick'; // ④ 口袋：坑底就在坑自己这一格
+  // ⑤ 脚下那格是有人的坑 → 踩着它过去
+  if (bridges !== undefined && bridges.has(cellKey({ face: c.face, col: c.col, row: c.row - 1 }))) {
+    return 'brick';
+  }
   return isSolid(level.at(c.col, c.row - 1)) ? 'brick' : null;
 }
 

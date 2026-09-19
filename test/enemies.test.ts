@@ -13,6 +13,7 @@ import {
 import { validateLevel } from '../src/core/level/validate';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
+import type { Cell } from '../src/core/types';
 import { cellA, cellB } from './fixtures';
 import type { ObjectParent } from '../src/render/meshSync';
 import { createSyncer } from '../src/render/meshSync';
@@ -306,6 +307,65 @@ describe('T12-b：无人机**走不上甲板**（用户报的"机器人进入岛
     // 而巡逻段**正是**出问题的那条（它会照着 `facing` 直走，`facing` 恰好等于 `enterDir`）。
     const frame = tick(createSim(def, { face: 'I', col: -4, row: -4 }), { move: null, dig: null });
     expect(frame.state.entities[1]?.cell).toEqual(cellA(4, 1));
+  });
+});
+
+describe('T12-c：坑里有人时，坑口踩得住（原版"踩其头顶跨过去"）', () => {
+  /**
+   * 一条走廊：`r1` 是可挖地板、`r2` 是行走行 —— 与 L1 的形状一致（挖斜下方那块砖，
+   * 坑口正好落在自己前面那一格）。用户 2026-09-19 报的就是这里：
+   * *"我挖了一个坑并且机器人也掉进去了，结果立刻我往前走也判我掉进去了。"*
+   */
+  const DEF: LevelDef = {
+    id: 'BRIDGE',
+    name: '踩头夹具',
+    // `fold = 4`（8 列）：坑与"坑口旁边的格子"都在 A 面**远离折痕**的地方
+    //（A 面最内列是 col 3，避开它，免得把折痕那一步混进来）。
+    fold: 4,
+    tiles: ['========', 'XXXXXXXX', '........'],
+    enemies: [{ kind: 'drone', cell: cellA(3, 2) }], // 家（测试里会把它挪进坑）
+  };
+  /** 对照用：同样的地形，但没有无人机（免得它一边追人一边搅乱断言）。 */
+  const EMPTY_DEF: LevelDef = { ...DEF, enemies: undefined };
+  const DRONE = 1;
+  const PIT: Cell = cellA(1, 1); // 坑
+  const MOUTH: Cell = cellA(1, 2); // 坑口（= 站在它头上的那一格）
+  const BEFORE: Cell = cellA(2, 2); // 玩家从这儿往左走
+  const BEYOND: Cell = cellA(0, 2); // 踩过去之后的下一格
+
+  /** `A:1,1` 变成坑；`occupant` = 谁在坑里（`null` = 空坑）。 */
+  function withPit(base: SimState, occupant: number | null): SimState {
+    const index = 1 * 8 + 1;
+    return {
+      ...base,
+      grid: base.grid.map((kind, i) => (i === index ? ('pit' as const) : kind)),
+      fills: [{ index, remaining: 120 }],
+      entities: base.entities.map((e) => (e.id === occupant ? { ...e, cell: PIT } : e)),
+    };
+  }
+
+  it('对照：**空**坑的坑口是陷阱 —— 往前走会掉进去', () => {
+    const frame = tick(withPit(createSim(EMPTY_DEF, BEFORE), null), { move: 'left', dig: null });
+    expect(frame.state.entities[0]?.cell).toEqual(PIT);
+    expect(frame.events.some((e) => e.kind === 'fell')).toBe(true);
+  });
+
+  it('坑里有人时，玩家**踩着它过去**：站上坑口、不掉进去、也不被抓', () => {
+    const frame = tick(withPit(createSim(DEF, BEFORE), DRONE), { move: 'left', dig: null });
+    expect(frame.state.entities[0]?.cell).toEqual(MOUTH); // 站在那个人的头上
+    expect(frame.events.some((e) => e.kind === 'fell')).toBe(false);
+    expect(frame.events.some((e) => e.kind === 'caught')).toBe(false);
+    expect(frame.state.lives).toBe(3);
+  });
+
+  it('踩上去之后**还能继续往前走**（不会卡在坑口、也不会掉下去）', () => {
+    let state = withPit(createSim(DEF, BEFORE), DRONE);
+    state = tick(state, { move: 'left', dig: null }).state; // 站上坑口
+    expect(state.entities[0]?.cell).toEqual(MOUTH);
+    // 等一格冷却过去（普通走一格要 `MOVE_TICKS`），再往左一格 = 坑口之外。
+    const frames = replay(state, [...wait(MOVE_TICKS - 1), { move: 'left', dig: null }]);
+    state = frames[frames.length - 1]?.state ?? state;
+    expect(state.entities[0]?.cell).toEqual(BEYOND);
   });
 });
 

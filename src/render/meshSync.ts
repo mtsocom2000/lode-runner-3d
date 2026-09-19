@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { EntityKind, SimState } from '../core/sim';
+import { bridgesOf, type EntityKind, type SimState } from '../core/sim';
 import type { Level } from '../core/world/tiles';
 import { PLAYER_SIZE, playerAnchor } from './metrics';
 import { PALETTE } from './palette';
@@ -160,6 +160,9 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     update(state: SimState, dt: number, opts?: { readonly snapEntities?: ReadonlySet<number> }): void {
       const alive = new Set<number>();
       const snap = opts?.snapEntities;
+      // 有人的坑：坑口踩得住，角色的高度要按"站在那个人的头上"算（见 `playerAnchor`）。
+      // 与移动层读的是同一个推导（`sim.bridgesOf`）。
+      const bridges = bridgesOf(state);
 
       // 终局时不把**玩家**的尸体留在原地装作还活着。用户报过"命数减为 0 之后还渲染了一个角色
       // 在梯子上" —— 那其实是留在**落水那一格**（紧挨梯子）的尸体，而它和活人长得一模一样
@@ -170,7 +173,7 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
 
       for (const entity of state.entities) {
         alive.add(entity.id);
-        const target = playerAnchor(level, entity.cell, entity.mode);
+        const target = playerAnchor(level, entity.cell, entity.mode, bridges);
         const actor = actors.get(entity.id) ?? spawn(entity.id, entity.kind, target);
 
         actor.group.visible = !(entity.kind === 'player' && state.status === 'dead');
