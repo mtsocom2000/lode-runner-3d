@@ -54,9 +54,12 @@ describe('fold：摊平坐标 ↔ 折后坐标', () => {
     expect(isConsistentCell({ face: 'B', col: 14, row: 0 }, FOLD)).toBe(false);
   });
 
-  it('halfExtent：7 列的一面墙 → 折痕在 6.5', () => {
-    expect(halfExtent(7)).toBeCloseTo(6.5, 10);
-    expect(halfExtent(10)).toBeCloseTo(9.5, 10);
+  it('halfExtent：7 列的一面墙 → 折痕线在 6', () => {
+    // `fold - 1`（不是 `fold - 0.5`）：折痕线必须落在**整数**格上，最内列才贴得住它。
+    // 见 `halfExtent` 的说明 —— 差这半格，最内列就会有一半伸到对面那面墙的背板后面
+    // （用户报的"走到两个侧面交界处就进墙里了"）。
+    expect(halfExtent(7)).toBeCloseTo(6, 10);
+    expect(halfExtent(10)).toBeCloseTo(9, 10);
   });
 });
 
@@ -116,23 +119,25 @@ describe('fold：折痕邻接表', () => {
 });
 
 describe('fold：世界坐标', () => {
-  it('A 面的格子全部落在 x = -6.5 这个竖直面上', () => {
+  it('A 面的格子全部落在 x = -6 这个竖直面上（折痕线自己）', () => {
     for (let u = 0; u < FOLD; u++) {
-      expect(toWorld({ face: 'A', u, y: 0 }, FOLD).x).toBe(-6.5);
+      expect(toWorld({ face: 'A', u, y: 0 }, FOLD).x).toBe(-6);
     }
   });
 
-  it('B 面的格子全部落在 z = -6.5 这个竖直面上', () => {
+  it('B 面的格子全部落在 z = -6 这个竖直面上（折痕线自己）', () => {
     for (let u = 0; u < FOLD; u++) {
-      expect(toWorld({ face: 'B', u, y: 0 }, FOLD).z).toBe(-6.5);
+      expect(toWorld({ face: 'B', u, y: 0 }, FOLD).z).toBe(-6);
     }
   });
 
-  it('u 的方向就是从折痕往外：A 沿 +z，B 沿 +x', () => {
-    expect(toWorld({ face: 'A', u: 0, y: 0 }, FOLD).z).toBe(-6.5);
-    expect(toWorld({ face: 'A', u: 6, y: 0 }, FOLD).z).toBe(-0.5);
-    expect(toWorld({ face: 'B', u: 0, y: 0 }, FOLD).x).toBe(-6.5);
-    expect(toWorld({ face: 'B', u: 6, y: 0 }, FOLD).x).toBe(-0.5);
+  it('u 的方向就是从折痕往外：A 沿 +z，B 沿 +x；**最内列在折痕之外半格**', () => {
+    // 最内列（u=0）的格心在 -half + 0.5 —— 整格都在折痕线之外，不骑在它上面。
+    // 用户报的"走到两个侧面交界处就进墙里了"就是这条被破坏时的样子（见 `halfExtent`）。
+    expect(toWorld({ face: 'A', u: 0, y: 0 }, FOLD).z).toBe(-5.5);
+    expect(toWorld({ face: 'A', u: 6, y: 0 }, FOLD).z).toBe(0.5);
+    expect(toWorld({ face: 'B', u: 0, y: 0 }, FOLD).x).toBe(-5.5);
+    expect(toWorld({ face: 'B', u: 6, y: 0 }, FOLD).x).toBe(0.5);
   });
 
   it('格心在行的中央：y = row + 0.5', () => {

@@ -152,12 +152,13 @@ function collectProps(level: Level): {
 /**
  * 水面中央的岛台 + 两条通向墙面的小道。
  *
- * ## 这一段的数全是**算出来的**，不是抄来的
+ * ## 这一段的数全来自**关卡数据**（不是抄来的，也不是从 `fold` 推的）
  *
- * 上一版这里写着 `mocks/cube-fold-mock-v10.html` 的一组手抄数字（岛台中心 (0,0)、层心 1.71…），
- * 留着它只为"截图与 v10 mock 构图一致"那条验收。现在关卡换了尺寸（`fold = 9`），
- * 手抄数字会当场失效 —— 而"两套数字各说各话"正是本仓库历次 bug 的病因。
- * 所以整段改成从 `halfExtent(fold)` / `BRICK_N` / `ISLAND_HALF` 推出来。
+ * 更早的版本写着 `mocks/cube-fold-mock-v10.html` 的一组手抄数字；再往后改成从
+ * `halfExtent(fold)` 加写死的常量（`JETTY_U`、`ISLAND_HALF`）**算**出来。两次都不行：
+ * 手抄数字一换关卡就失效，而"从 `fold` 推"让岛台永远 4×4、位置永远偏在某一侧 ——
+ * 关卡一放大（每面 10 列 × 12 行），房间大了、岛台与水面纹丝不动
+ * （用户的原话："场景利用率变低了……地台和水面的面积也小了"）。
  *
  * ## 高度必须正好对齐（这是"能不能走过去"的全部）
  *
@@ -165,14 +166,9 @@ function collectProps(level: Level): {
  * 岛台与小道只有一层砖厚，于是砖心落在 y = 0.5、顶面正好 1.0，与墙上最底那层砖齐平。
  * 差半格就会变成"上不去"，或者"要先下沉一格才能攀" —— 用户之前抓到过同类的坑。
  *
- * ## 岛台 / 小道 / 宝物：**逐格照关卡数据画**（本轮的结构性改动）
+ * ## 岛台 / 小道 / 宝物：**逐格照关卡数据画**
  *
- * 这里原先是从 `halfExtent(fold)` 加几个写死的常量（`JETTY_U = 5`、`ISLAND_HALF = 2`）
- * **算**出岛台与小道的：那套推导在概念场景里是对的（它让"两道各 2 块砖"读得出来），
- * 代价是岛台永远 4×4、位置永远偏在某一侧。关卡一放大（每面 10 列 × 12 行）问题就来了：
- * 房间大了，岛台与水面**纹丝不动** —— 用户的原话是"场景利用率变低了……地台和水面的面积也小了"。
- *
- * 现在渲染层**照 `level.deck` 逐格画**、宝物照 `level.treasures` 摆。关卡数据是唯一出处，
+ * 渲染层照 `level.deck` 逐格画、宝物照 `level.treasures` 摆。关卡数据是唯一出处，
  * 于是"看得见"与"走得到"**结构上不可能不一致**（那类事故本仓库栽过两次：甲板锚点、接头方向）。
  * 想摆多大的岛、岛在哪，改关卡的 `deck` 就是。
  */
@@ -357,20 +353,18 @@ export interface Stage {
 export function createStage(level: Level): Stage {
   const half = halfExtent(level.fold);
   const wallTop = level.rows + HEADROOM;
-  /**
-   * **一面墙**（折起来之后）在世界里占多宽。
-   *
-   * 曾经这里是 `level.cols + 2` —— 那是**摊平后两面的总列数**（20+2），而折起来之后
-   * 两片墙是**互相垂直**的，各自只摊到一个面（`fold` 格）。于是墙板比地形宽了**一倍多**：
-   * 地形缩在中间一块、四周全是空墙板。用户的原话："左右侧面扩大了，但是侧面上的场景没有铺满。"
-   *
-   * 概念场景里这个错被**写死的相机取景裁掉了**（`ORTHO = 6.5` 把空墙板切出画外），
-   * 所以一直没露出来；把取景改成"跟着内容走"之后它当场显形。这就是那句
-   * "判据只能有一个出处"的又一面：`cols` 与 `fold` 是两套坐标，混用必错。
-   */
-  const faceSpan = level.fold + 1; // 含两侧各 0.5 的余量
-  /** 一面墙在它那条轴上的中心（从折痕 `-half` 到最外一列 `-half + fold - 1`）。 */
-  const faceCentre = -half + (level.fold - 1) / 2;
+/**
+ * **一面墙**（折起来之后）在世界里占多宽，以及它在自己那条轴上的中心。
+ *
+ * 折痕线在 `-halfExtent(fold)`，格子从折痕线往外排 `fold` 格（`fold.ts` 的 `toWorld`），
+ * 所以一面墙恰好占 `[−half, −half + fold]`：宽度 = `fold`、中心 = `-half + fold/2`。
+ *
+ * > 这里曾经是 `cols + 2`（那是**摊平后两面的总列数**）—— 于是墙板比地形宽一倍多，
+ * > 地形缩在中间一块、四周全是空墙板（用户："左右侧面扩大了，但是侧面上的场景没有铺满"）。
+ * > `cols` 与 `fold` 是两套坐标，混用必错；判据只能有一个出处。
+ */
+const faceSpan = level.fold;
+const faceCentre = -half + level.fold / 2;
 
   // 内容包围盒（取景用，见 `Stage.bounds` 的说明）在函数末尾算 —— 它要用到水面外沿。
 
@@ -509,8 +503,8 @@ export function createStage(level: Level): Stage {
   const island = islandAndJetties(level);
   const islandCentre = island.centre;
   const waterFar = -half + 0.2;
-  /** 墙口：最外一片砖（col 0）的格心在 -0.5，再加半个立方体就是它的外表面。 */
-  const wallOuter = -0.5 + CUBE / 2;
+  /** 墙口：最外一列格子的中心在 `-half + fold - 0.5`，再加半个立方体就是砖的外表面。 */
+  const wallOuter = -half + level.fold;
   /** 水从墙口外沿再往开口侧铺出去多少格（观感参数，不参与任何规则）。 */
   const WATER_SPILL = 2.2;
   const waterNear = wallOuter + WATER_SPILL;

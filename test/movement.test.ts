@@ -53,12 +53,12 @@ describe('movement：方向表', () => {
 describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () => {
   const sim = load(CONCEPT_MINIMAL);
 
-  it('A 面接点：站在 A:3,1 按 right 拐上小道，落到 I:-7,-4', () => {
-    expect(shape(step(sim, at(sim, cellA(3, 1)), 'right'))).toBe('move:stand:I:-7,-4');
+  it('A 面接点：站在 A:4,1 按 right 拐上小道，落到 I:-7,-4', () => {
+    expect(shape(step(sim, at(sim, cellA(4, 1)), 'right'))).toBe('move:stand:I:-7,-4');
   });
 
-  it('B 面接点：站在 B:14,1 按 up 拐上小道，落到 I:-4,-7', () => {
-    expect(shape(step(sim, at(sim, cellB(14, 1)), 'up'))).toBe('move:stand:I:-4,-7');
+  it('B 面接点：站在 B:13,1 按 up 拐上小道，落到 I:-4,-7', () => {
+    expect(shape(step(sim, at(sim, cellB(13, 1)), 'up'))).toBe('move:stand:I:-4,-7');
   });
 
   it('`decks: false`（无人机）**不认接头**：同一步只走到隔壁墙格，走不上小道', () => {
@@ -66,9 +66,9 @@ describe('movement：墙面 → 小道的接点（概念关卡的 2.1）', () =>
     // `enterDir` 时它一步跨上了小道 —— 而甲板上没有它的图节点（`decks:false`），于是追不了人、
     // 只能在板上打转。修法是让**移动**也知道这件事（`StepOptions.decks`），
     // 而不只是图那一半。
-    expect(shape(step(sim, at(sim, cellA(3, 1)), 'right', DRONE_STEP))).toBe('move:stand:A:4,1');
+    expect(shape(step(sim, at(sim, cellA(4, 1)), 'right', DRONE_STEP))).toBe('move:stand:A:5,1');
     // B 面接点的 `enterDir` 是 `up`：不允许接头之后，那里只是一段普通砖面 → 爬不了、走不动。
-    expect(shape(step(sim, at(sim, cellB(14, 1)), 'up', DRONE_STEP))).toBe('blocked:not-ladder');
+    expect(shape(step(sim, at(sim, cellB(13, 1)), 'up', DRONE_STEP))).toBe('blocked:not-ladder');
   });
 });
 

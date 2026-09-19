@@ -46,15 +46,18 @@ describe('hints：屏幕方向（用户反馈"WASD 在拐角与岛台上完全�
   it('墙面上：col±1 就是屏幕水平（以 → / ← 开头）', () => {
     // 只断言**水平分量**：垂直那一丁点会随"脚下是砖还是梯子"变（梯格锚点在格心、
     // 比砖顶面高 0.25），那不是这条测试的主题 —— 主题是"墙面上横移在屏幕上确实是横的"。
-    // 取 `col 4`（概念关卡的接头在 `A:3`），左右邻都是普通砖格。
-    expect(get(hintsAt('A', 4, 1), 'right').glyph.startsWith('→')).toBe(true);
-    expect(get(hintsAt('A', 4, 1), 'left').glyph.startsWith('←')).toBe(true);
+    // 取 `col 5`：左右邻都是普通砖格，且不在接头列（概念关卡的接头是 `A:4`）上。
+    expect(get(hintsAt('A', 5, 1), 'right').glyph.startsWith('→')).toBe(true);
+    expect(get(hintsAt('A', 5, 1), 'left').glyph.startsWith('←')).toBe(true);
   });
 
-  it('折痕最内列反向：A:8 按 d 在屏幕上往**左**（"拐角手感不对"的数字证据）', () => {
-    expect(get(hintsAt('A', 8, 1), 'right').glyph).toBe('←');
-    // 另一侧同理：B:9 按 a 反而往右。
-    expect(get(hintsAt('B', 9, 1), 'left').glyph).toBe('→');
+  it('折痕最内列**不再反向**：A:8 按 d 在屏幕上往**右**（拐角手感已修）', () => {
+    // 以前这里是反的（`←`）—— 因为折痕一步会把人从墙角"送进对面墙的背板里"，
+    // 位移里带上了那半格的错位。修好之后折痕一步是**原地转 90°**，提示于是报的是
+    // "接着走下去会往屏幕哪边"（拿到的是那个方向的真实投影）。
+    expect(get(hintsAt('A', 8, 1), 'right').glyph.startsWith('→')).toBe(true);
+    // 另一侧同理：B:9 按 a 往左。
+    expect(get(hintsAt('B', 9, 1), 'left').glyph.startsWith('←')).toBe(true);
   });
 
   it('落水必须**提前**标出来：从 A:3,1 按 a 会掉进 col2 的缺口', () => {

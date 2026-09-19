@@ -1,5 +1,5 @@
 import type { Cell } from '../types';
-import { faceOf, halfExtent } from '../world/fold';
+import { faceOf, toFold, toWorld } from '../world/fold';
 import { isSolid, supportOf, type Support } from '../world/graph';
 import type { Level } from '../world/tiles';
 
@@ -157,15 +157,19 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
 
   // ② 接头：甲板端 → 墙面端。
   //    方向按**世界坐标差的主导轴**判定，不能按晶格相等比 ——
-  //    墙面格落在半整数世界坐标上（`-half + u`）、甲板砖心在整数上，两者天然差 0.5。
-  const h = halfExtent(level.fold);
+  //    甲板格的两个下标是 `(x, z)` 晶格、墙面格在折后坐标里，两套坐标系天然差半格
+  //    （渲染层再各自加 `BRICK_N` / `DECK_SHIFT`）。这里只取**主导轴**，所以那半格不影响符号。
+  //
+  //    ⚠ 墙面格的世界坐标只能问 `toWorld`（唯一出处）。这里曾经自己重算一遍
+  //    `-half + u` —— 折痕线从 `fold - 0.5` 挪到 `fold - 1` 时它就成了漏网的那一处
+  //    （差半格、符号刚好没翻，测试碰巧还是绿的）。判据只能有一个出处。
   for (const joint of level.joints) {
     if (joint.deck.x !== x || joint.deck.z !== z) continue;
 
     const w = joint.wall;
-    const u = w.face === 'A' ? level.fold - 1 - w.col : w.col - level.fold;
-    const dx = (w.face === 'A' ? -h : -h + u) - x;
-    const dz = (w.face === 'A' ? -h + u : -h) - z;
+    const wp = toWorld(toFold(w, level.fold), level.fold);
+    const dx = wp.x - x;
+    const dz = wp.z - z;
     const toward: Dir = Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 'right' : 'left') : dz > 0 ? 'up' : 'down';
     if (toward !== dir) continue;
 

@@ -16,11 +16,11 @@ import {
 } from '../src/app/input';
 import { MOVE_TICKS, createSim, tick, type SimEvent, type SimState } from '../src/core/sim';
 import type { Dir } from '../src/core/rules/movement';
-import { toFold, toWorld } from '../src/core/world/fold';
 import { CONCEPT_MINIMAL, PLAYER_SPAWN } from '../src/core/level/levels/conceptMinimal';
-import { cellKey, type Cell, type Face } from '../src/core/types';
+import { cellKey, type Cell } from '../src/core/types';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 import { createCamera } from '../src/render/camera';
+import { cellAnchor } from '../src/render/metrics';
 
 /**
  * T7 的验收。两件事：
@@ -40,6 +40,13 @@ const DEF: LevelDef = {
   tiles: ['XXXXXX', '......', 'XXXXXX'],
 };
 const SPAWN: Cell = { face: 'A', col: 0, row: 1 };
+
+/** 夹具关卡解析出来的 `Level`（折痕那条测试要用 `cellAnchor` 换世界坐标）。 */
+const level = (() => {
+  const parsed = parseLevel(DEF);
+  if (!parsed.ok) throw new Error(`夹具必须合法：${JSON.stringify(parsed.errors)}`);
+  return parsed.level;
+})();
 
 /** 推进 n 个 tick。重复延迟按 tick 计，所以边界必须能被精确地摆出来。 */
 function tickN(state: KeyState, n: number): KeyState {
@@ -303,10 +310,13 @@ describe('input：折痕对输入是透明的（拿真相机的轴钉住）', ()
   const UP = axis(1);
 
   const project = (col: number, row: number): { x: number; y: number } => {
-    const w = toWorld(toFold({ face: (col < FOLD ? 'A' : 'B') as Face, col, row }, FOLD), FOLD);
+    // 用**真的**"格 → 世界坐标"换算（`cellAnchor`，含砖厚/半格偏移）——
+    // 折痕两侧最内列**在世界同一个位置**这件事，正是靠那一层偏移才成立的
+    // （见 `metrics.BRICK_N` 的说明）。只比 `toWorld` 的格心会少掉那半格。
+    const [x, y, z] = cellAnchor(level, { face: col < FOLD ? 'A' : 'B', col, row }).p;
     return {
-      x: RIGHT.x * w.x + RIGHT.y * w.y + RIGHT.z * w.z,
-      y: UP.x * w.x + UP.y * w.y + UP.z * w.z,
+      x: RIGHT.x * x + RIGHT.y * y + RIGHT.z * z,
+      y: UP.x * x + UP.y * y + UP.z * z,
     };
   };
 

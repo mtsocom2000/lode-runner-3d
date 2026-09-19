@@ -64,6 +64,11 @@ function dot(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
+/** 两点的距离（用来识别"这一步其实没动" —— 跨折痕那一跳）。 */
+function distance(a: Vec3, b: Vec3): number {
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+
 /**
  * 四个方向各自会走到屏幕的哪个方位。**纯函数**（只吃 `level` + 当前格 + 屏幕轴），
  * 所以能直接在无头测试里断言 `test/hints.test.ts`。
@@ -78,6 +83,22 @@ export function dirHints(level: Level, at: Cell, mode: MoveMode, axes: ScreenAxe
     let danger = false;
     if (result.kind === 'move') {
       to = playerAnchor(level, result.state.cell, result.state.mode);
+      // **跨折痕那一步的位移是 0**（两格在世界同一个位置 —— 见 `metrics.BRICK_N`），
+      // 直接报方位会得到 `·`，对玩家等于没说。玩家要的是"按下去之后我会往屏幕的哪边走"，
+      // 所以这一步之后再走一步、报那一步的方位（那正是他松手再按时会看到的）。
+      if (distance(to, base) < NEGLIGIBLE) {
+        const next = step(level, result.state, dir);
+        if (next.kind === 'move') {
+          to = playerAnchor(level, next.state.cell, next.state.mode);
+        } else if (next.kind === 'fall') {
+          if (next.end.kind === 'landed') {
+            to = playerAnchor(level, next.end.cell, stateAt(level, next.end.cell)?.mode ?? 'stand');
+          } else {
+            danger = true;
+            to = playerAnchor(level, next.end.from, result.state.mode);
+          }
+        }
+      }
     } else if (result.kind === 'fall') {
       if (result.end.kind === 'water') {
         danger = true;

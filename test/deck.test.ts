@@ -162,7 +162,10 @@ describe('validate 抓得出指空的甲板接头（T10 步骤⑤）', () => {
 });
 
 describe('甲板行走（movement.ts）', () => {
-  const wall = { id: 't', name: 't', fold: 1, tiles: ['XX', '..'] } as const;
+  // `fold = 2`（4 列）：**不能取 1** —— 那时折痕线就在原点，接头两端（墙面格与甲板格）
+  // 会落在**世界同一个点**上，"往哪边走"根本没有意义（`stepOnDeck` 的方向判据是主导轴之差）。
+  // 真实关卡里接头两端差一格，这里也照那个来。
+  const wall = { id: 't', name: 't', fold: 2, tiles: ['XXXX', '....'] } as const;
   // 一条 3 格甲板 + 一处接头。甲板格是 (x, z)，`right → +x`。
   const deckCells: readonly DeckCell[] = [
     { x: 0, z: 0 },

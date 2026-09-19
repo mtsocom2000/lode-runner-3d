@@ -83,10 +83,14 @@ export const L1: LevelDef = {
   /**
    * 两处接头：墙面端 `A:7` / `B:20`（由 `fold` 与墙面格的世界坐标反算；`enterDir` 是
    * **站在墙面端按哪个方向键能上小道**）。
+   *
+   * 列号跟着**墙角重整**（2026-09-19）走了一位：折痕线从 `fold - 0.5` 改到 `fold - 1`、
+   * 格子整体沿墙外移一格（见 `world/fold.ts` 的 `halfExtent`），于是"小道正对的那块墙砖"
+   * 从 `A:6`/`B:21` 变成 `A:7`/`B:20` —— 位置一模一样，只是编号变了。
    */
   joints: [
-    { deck: { x: -12, z: -7 }, wall: { face: 'A', col: 6, row: 1 }, enterDir: 'right' },
-    { deck: { x: -7, z: -12 }, wall: { face: 'B', col: 21, row: 1 }, enterDir: 'up' },
+    { deck: { x: -12, z: -7 }, wall: { face: 'A', col: 7, row: 1 }, enterDir: 'right' },
+    { deck: { x: -7, z: -12 }, wall: { face: 'B', col: 20, row: 1 }, enterDir: 'up' },
   ],
   /** 出口闸门（T13）：`r11` 上封住两个出口的四块硬砖。取到宝物后变成梯子（= 通天梯）。 */
   gates: [
