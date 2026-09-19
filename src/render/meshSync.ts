@@ -49,10 +49,15 @@ const GLOW_OPACITY = 0.32;
 /** 发光壳的渲染序号：晚于全场不透明物 → 光晕压在砖上面（这就是"角色始终可见"）。 */
 const GLOW_RENDER_ORDER = 998;
 
-/** 朝向箭头：长度 / 宽度，以及"压扁"系数（不压扁看起来像一根钉在地上的锥）。 */
-const ARROW_LENGTH = 0.5;
-const ARROW_WIDTH = 0.13;
-const ARROW_FLAT = 0.25;
+/**
+ * 朝向箭头：长度 / 宽度，以及"压扁"系数（不压扁看起来像一根钉在地上的锥）。
+ *
+ * 2026-09-19 放大过一轮（`0.5 / 0.13` → `0.8 / 0.22`）：用户要拿它来判断"哪边是前、哪边是后"
+ * （挖改成了 `Q` 后挖 / `R` 前挖），原来那尺寸在默认视距下几乎是地面上的一个点。
+ */
+const ARROW_LENGTH = 0.8;
+const ARROW_WIDTH = 0.22;
+const ARROW_FLAT = 0.3;
 
 export interface Syncer {
   readonly group: THREE.Group;
