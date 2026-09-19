@@ -6,11 +6,13 @@ import { parseLevel } from '../core/world/tiles';
 import { surfaceOf, cellKey, type Surface } from '../core/types';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
+import { createFx } from '../render/fx';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
 import { createStage } from '../render/scene';
 import { createHud } from './hud';
 import { createInput, keyLabel } from './input';
+import { createSfx } from './sfx';
 import { dirHints, formatDirHints, type ScreenAxes } from '../render/hints';
 import { createSelectiveBloom } from '../render/bloom';
 import { feedbackFor } from '../render/feedback';
@@ -38,6 +40,15 @@ let state: SimState = createSim(L2, L2_SPAWN);
 
 /** 实体层（角色）。它只读 state，不推进 sim。 */
 const syncer = createSyncer(stage.scene, level);
+
+/**
+ * 特效层（临时记号）与音效（2026-09-19，用户要的"哑火反馈"）。
+ *
+ * 两者都**只吃事件流**，与 `syncer` 吃状态是两种东西：`syncer` 每帧对账"现在是什么样"，
+ * 这两个只关心"刚刚发生了一件事"。
+ */
+const fx = createFx(stage.scene, level);
+const sfx = createSfx();
 
 /** 键盘（T7）。它只产出 `Intents`，不碰 sim —— 方向映射与"轻点锁存"都在 `./input` 里。 */
 /**
@@ -441,7 +452,15 @@ function loop(now: number): void {
     for (const event of frame.events) {
       // 运行时日志：带 tick 与格号 —— 用户报"走过那几块砖的时候出的问题"时，这就是那句可直接对上话。
       if (LOGGED_EVENTS.has(event.kind)) {
-        hud.log(`t${frame.state.tick} ${event.kind}${'cell' in event ? ` ${cellKey(event.cell)}` : ''}`);
+        const where = 'cell' in event && event.cell !== null ? ` ${cellKey(event.cell)}` : '';
+        hud.log(`t${frame.state.tick} ${event.kind}${where}`);
+      }
+      if (event.kind === 'digBlocked') {
+        // **哑火反馈**（用户 2026-09-19）：按了挖、那一铲落在空处。
+        // 只做两件事，不做文字弹窗 —— 完全没反应会让玩家怀疑"按键失灵"，而弹字太打扰节奏。
+        // 记号落在**目标格**上（`event.cell`），顺便教会玩家"这一铲是往哪儿去的"。
+        sfx.dryFire();
+        if (event.cell !== null) fx.blockedFlash(event.cell);
       }
       if (event.kind === 'respawned' || event.kind === 'returned') {
         // `returned` = 敌人被重置回家（玩家死亡时的追捕重置）。它同样是**瞬移** ——
@@ -491,6 +510,9 @@ function loop(now: number): void {
   }
 
   stage.update(now / 1000);
+  // 特效层的时钟是**真实秒数**（与 `syncer` 同一个口径）：记号该在 0.15s 后消失，
+  // 而那是"画面上过了多久"，不是"游戏推进了几 tick"。
+  fx.update(elapsedMs / 1000);
   // 重生是**瞬移**，补间必须就地落位：`sim` 把 `fall → drowned → respawned` 压在同一个 tick 里，
   // 照常插值会把这一跳画成一条横穿场景的直线（用户报的"跳过缺口，回到起点处"）。
   syncer.update(state, elapsedMs / 1000, snapped === null ? undefined : { snapEntities: snapped });

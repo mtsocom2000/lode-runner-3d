@@ -7,6 +7,7 @@ import {
   applyBackfill,
   applyDig,
   DIG_BACKFILL_TICKS,
+  digTarget,
   fillDrain,
   indexToColRow,
   type PendingFill,
@@ -312,6 +313,21 @@ export type SimEvent =
    * 渲染层靠它把那一格从砖改成坑。
    */
   | { readonly kind: 'dug'; readonly entity: number; readonly cell: Cell }
+  /**
+   * 按了挖，但**那一铲落在空处**（2026-09-19，用户要的"哑火反馈"）。
+   *
+   * 为什么需要一个事件：在这之前"挖失败"这件事**在系统里不存在** —— 挖不动时 `sim` 什么都不报，
+   * 于是画面与声音层没有任何依据可给反馈，玩家只能怀疑"按键失灵 / 卡输入 / 判定延迟"。
+   *
+   * `cell` = 那一铲**本来会落在哪一格**（`digTarget` 的结果，可能是 `null` —— 比如甲板上根本没有
+   * 可挖的砖、或者朝向那一侧是网格外）。给出来是为了让反馈能落在**正确的位置**上：
+   * 在目标格闪一下，顺便教会玩家"这一铲是往哪儿去的"。
+   *
+   * **电平而不是边沿**：`Intents.dig` 是每 tick 采样的电平，按住不放就会每 tick 报一次。
+   * 这是有意的 —— core 里没有"上一 tick 按了什么"的状态，做边沿检测就得往 `SimState` 里加一份
+   * 输入历史（回放语义会被它污染）。要收拢节奏的层自己去做（`main.ts` 那边有节流）。
+   */
+  | { readonly kind: 'digBlocked'; readonly entity: number; readonly cell: Cell | null }
   /** 洞自己长回来了（T11）。`cell` 是长回砖的那一格。 */
   | { readonly kind: 'filled'; readonly cell: Cell }
   /**
@@ -773,11 +789,18 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
     // 前/后 → 真正的 `Dir`：**朝向是唯一出处**（`facing`）。挖的目标格再由 `digTarget` 从
     // 那个 Dir 算出斜下方那一格 —— 两件事各一处，不在这里合成坐标。
     const dir = intents.dig === 'front' ? digger.facing : OPPOSITE_DIR[digger.facing];
-    const dug = applyDig(viewOf({ ...prev, grid }), digger.cell, dir);
+    const level2 = viewOf({ ...prev, grid });
+    const dug = applyDig(level2, digger.cell, dir);
     if (dug !== null) {
       grid = dug.grid;
       fills.push({ index: dug.index, remaining: DIG_BACKFILL_TICKS });
       events.push({ kind: 'dug', entity: digger.id, cell: dug.cell });
+    } else {
+      // **哑火**：按了挖，那一铲却落在空处。把"本来会落在哪"一并报出去 ——
+      // 反馈要落在正确的位置上（也是"这一铲往哪儿去"的现场教学）。
+      // `digTarget` 是同一个函数的第二次调用，但它是**纯函数**且判据只有一处（`applyDig` 内部
+      // 也是问它），所以这里问的不是"另一份能不能挖"，而是"挖的话落在哪"。
+      events.push({ kind: 'digBlocked', entity: digger.id, cell: digTarget(level2, digger.cell, dir) });
     }
   }
 

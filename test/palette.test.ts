@@ -45,6 +45,9 @@ const CONTRACT: Readonly<Record<PaletteKey, string | null>> = {
   player: 'player',
   drone: 'drone',
   stalker: 'stalker',
+  // 反馈记号：自己那条（只在"挖了空处"那 0.15 秒里出现，无头探针看不到它 ——
+  // 这条登记是为了让"调色板每一项都有人管"这条契约继续成立）
+  blocked: 'blocked',
 };
 
 function rgb(hex: number): readonly [number, number, number] {

@@ -16,6 +16,7 @@ import {
 import { cellKey, type Cell } from '../src/core/types';
 import type { LevelDef, TileKind } from '../src/core/world/tiles';
 import { PIT, cellA, cellB } from './fixtures';
+import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 
 /**
  * T11 在 **sim 层**的行为：挖 / 回填 / 走顶加速 / 活埋。
@@ -39,6 +40,12 @@ function playerOf(frame: SimFrame): Cell {
 
 function eventsOf(frame: SimFrame): readonly string[] {
   return frame.events.map((e) => e.kind);
+}
+
+/** 哑火那一铲**本来会落在哪一格**（`digBlocked` 的 `cell`；没有该事件或落在网格外就是 `null`）。 */
+function dugBlockedAt(frame: SimFrame): Cell | null {
+  const blocked = frame.events.find((e) => e.kind === 'digBlocked');
+  return blocked !== undefined && blocked.kind === 'digBlocked' ? blocked.cell : null;
 }
 
 function tileAt(state: SimState, cell: Cell): TileKind | undefined {
@@ -109,13 +116,27 @@ describe('挖（T11）：接进 tick 之后', () => {
     expect(tileAt(dug.state, cellA(1, 1))).toBe('pit');
   });
 
-  it('硬砖挖不动（这条判据不是"实心"能替代的）', () => {
+  it('硬砖挖不动（这条判据不是"实心"能替代的），但会报一条**哑火**', () => {
     const state = createSim(HARD_FLOOR, SPAWN, PLAYER_LIVES);
     const frame = tick(state, digBack);
 
-    expect(eventsOf(frame)).toEqual([]);
+    expect(eventsOf(frame)).not.toContain('dug'); // 一格都没挖掉
     expect(frame.state.fills).toEqual([]);
     expect(tileAt(frame.state, HOLE_LEFT)).toBe('hard');
+    // 哑火反馈的**依据**：按了挖、却没有可挖的砖 → 报出"这一铲本来会落在哪"。
+    // 在这之前"挖失败"在系统里根本不存在，画面与声音层无从给反馈（用户要的"否定反馈"）。
+    expect(eventsOf(frame)).toContain('digBlocked');
+    expect(dugBlockedAt(frame)).toEqual(HOLE_LEFT);
+  });
+
+  it('甲板上挖 → 哑火（岛台是一整块板，没有可挖的砖）', () => {
+    // `HOLE_LEFT` 是甲板格吗？不是 —— 这里用**概念关卡**的岛台格，它才是 `face: 'I'`。
+    const state = createSim(CONCEPT_MINIMAL, { face: 'I', col: -3, row: -3 }, PLAYER_LIVES);
+    const frame = tick(state, digBack);
+
+    expect(eventsOf(frame)).toContain('digBlocked');
+    expect(frame.state.fills).toEqual([]);
+    expect(dugBlockedAt(frame)).toBeNull(); // 目标格根本算不出来（甲板没有可挖的砖）
   });
 
   it('冷却中不许挖 —— 挖是一个动作，不是站姿', () => {
