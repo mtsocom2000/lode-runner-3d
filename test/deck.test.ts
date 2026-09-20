@@ -10,7 +10,7 @@ import {
 } from '../src/core/world/deck';
 import { cellKey, parseCell, type Cell } from '../src/core/types';
 import { validateLevel } from '../src/core/level/validate';
-import { stateAt, step } from '../src/core/rules/movement';
+import { stateAt, step, stepLift } from '../src/core/rules/movement';
 import { buildGraph, isStandable, reachableFrom } from '../src/core/world/graph';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
 
@@ -179,6 +179,97 @@ describe('validate 抓得出指空的甲板接头（T10 步骤⑤）', () => {
       joints: [{ deck: { x: 0, z: 0 }, wall: { face: 'A', col: 0, row: 1 }, enterDir: 'down' }],
     };
     expect(rules(def)).not.toContain('jointNeverEntered');
+  });
+});
+
+describe('甲板横杆（T17：断岛之间用连杆）', () => {
+  /**
+   * 两块板之间架一根杆：`(0,0)` 板 —— `(1,0)` 杆 —— `(2,0)` 板。
+   *
+   * `hang: true` 是甲板的第二种格：**不是板、是横杆**（与墙上 `TileKind.bar` 同构）。
+   * 省略 = 板，所以旧关卡数据一字不变。
+   */
+  const wall = { id: 't', name: 't', fold: 2, tiles: ['XXXX', '....'] } as const;
+
+  function load(deck: readonly DeckCell[]) {
+    const parsed = parseLevel({ ...wall, deck });
+    if (!parsed.ok) throw new Error(`夹具 parseLevel 失败：${JSON.stringify(parsed.errors)}`);
+    return parsed.level;
+  }
+
+  const bridge = load([
+    { x: 0, z: 0 },
+    { x: 1, z: 0, hang: true },
+    { x: 2, z: 0 },
+  ]);
+
+  const at = (lv: ReturnType<typeof load>, cell: Cell) => {
+    const s = stateAt(lv, cell);
+    if (s === null) throw new Error(`夹具里 ${cellKey(cell)} 停不住`);
+    return s;
+  };
+
+  const board0: Cell = { face: 'I', col: 0, row: 0 };
+  const bar: Cell = { face: 'I', col: 1, row: 0 };
+  const board2: Cell = { face: 'I', col: 2, row: 0 };
+
+  it('杆格算"可站"，但停驻方式是**吊**（与墙上杆格同一个口径）', () => {
+    expect(isStandable(bridge, bar)).toBe(true);
+    expect(stateAt(bridge, bar)).toEqual({ cell: bar, mode: 'hang' });
+    expect(stateAt(bridge, board0)).toEqual({ cell: board0, mode: 'stand' });
+  });
+
+  it('板 → 杆 → 板：一路吊过去，模式跟着脚下变', () => {
+    expect(step(bridge, at(bridge, board0), 'right')).toEqual({
+      kind: 'move',
+      state: { cell: bar, mode: 'hang' },
+    });
+    expect(step(bridge, at(bridge, bar), 'right')).toEqual({
+      kind: 'move',
+      state: { cell: board2, mode: 'stand' },
+    });
+  });
+
+  it('吊着往外挪（杆外是空中）→ **拦住**，必须先松手 —— 与墙上那句逐字同构', () => {
+    // `(1,0)` 往左是板（能走），往右是板（能走）—— 用一个只有杆的夹具试"杆外"。
+    const lonely = load([{ x: 1, z: 0, hang: true }]);
+    expect(step(lonely, at(lonely, bar), 'left')).toEqual({ kind: 'blocked', reason: 'nothing-there' });
+  });
+
+  it('松手（`fall`）→ 掉进水里（这一格下面没有板）', () => {
+    const released = stepLift(bridge, at(bridge, bar), 'fall');
+    expect(released).toEqual({ kind: 'fall', end: { kind: 'water', from: bar, row: 0 } });
+  });
+
+  it('松手时**下面那一层是板** → 落在板上（甲板上的下坠 = 往下找层）', () => {
+    const stacked = load([
+      { x: 1, z: 0 }, // 底层板
+      { x: 1, z: 0, level: 1, hang: true }, // 上面架一根杆
+    ]);
+    const upper: Cell = { face: 'I', col: 1, row: 0, level: 1 };
+    expect(stepLift(stacked, at(stacked, upper), 'fall')).toEqual({
+      kind: 'fall',
+      end: { kind: 'landed', cell: { face: 'I', col: 1, row: 0 } },
+    });
+  });
+
+  it('吊着按 `rise` 没有意义 → `not-hangable`（墙上也一样：吊着不能往上）', () => {
+    expect(stepLift(bridge, at(bridge, bar), 'rise')).toEqual({
+      kind: 'blocked',
+      reason: 'not-hangable',
+    });
+  });
+
+  it('站在板上按 `Z` 上到**杆**那一层 → 模式是 `hang`（不是 `stand`）', () => {
+    const stacked = load([
+      { x: 1, z: 0 },
+      { x: 1, z: 0, level: 1, hang: true },
+    ]);
+    const lower: Cell = { face: 'I', col: 1, row: 0 };
+    expect(stepLift(stacked, at(stacked, lower), 'rise')).toEqual({
+      kind: 'move',
+      state: { cell: { face: 'I', col: 1, row: 0, level: 1 }, mode: 'hang' },
+    });
   });
 });
 

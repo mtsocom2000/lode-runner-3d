@@ -35,6 +35,27 @@ export interface DeckCell {
   readonly z: number;
   /** 层（省略 = 0）。见上面"单位与坐标"。 */
   readonly level?: number;
+  /**
+   * **可吊**（省略 = 实心板）。T17 加的第二种甲板格：不是板，是一根**横杆**。
+   *
+   * ## 为什么需要它
+   *
+   * 用户要的是"**断岛之间用连杆**"：两块不相连的岛台之间架一根杆，吊着荡过去。
+   * 而在这之前甲板格只有"板"一种，**天生有支撑** —— 横杆要求的恰恰是"没有支撑、吊着、
+   * 能松手掉下去"，两者在同一张表里必须能区分。
+   *
+   * ## 它改变的是"脚下是什么"，不是"能不能去"
+   *
+   * 与墙上的 `TileKind.bar` 完全同构：`supportOf` 对可吊格返回 `'bar'`，于是停驻方式是
+   * `mode: 'hang'`（见 `graph.ts` / `sim.ts` 的 `stateAt`）。移动规则也照墙上那套：
+   * 板 ↔ 吊 ↔ 板 都能走，**吊着往空中挪要被拦住**（得先松手）。
+   *
+   * ## 省略 = 板，所以旧关卡数据一字不变
+   *
+   * `deckKey` **不含它** —— 键标识的是"哪一格"，而"这一格是板还是杆"是那一格的属性。
+   * 于是 `has(x, z, level)` 的语义与旧数据完全一致。
+   */
+  readonly hang?: boolean;
 }
 
 export interface Deck {
@@ -50,6 +71,25 @@ export interface Deck {
 /** 甲板格的键。与 `cellKey` 同思路：对象不能直接当 Map/Set 的键。层算进去。 */
 export function deckKey(c: DeckCell): string {
   return `${c.x},${c.z}@${c.level ?? 0}`;
+}
+
+/**
+ * 找那一格甲板数据；不是甲板就是 `null`。
+ *
+ * 存在的理由：`Deck.has` 只回答"在不在"，而"是板还是杆"要读那一格的属性 ——
+ * 让每个调用方自己去 `cells.find(...)` 会把这个查找写好几遍。
+ *
+ * 参数收**裸数组**而不是 `Deck`：`Level.deck` 就是裸数组（`tiles.ts` 的约定 ——
+ * 查询走闭包、持有/复制走裸数组），而这两个函数两边都要用。
+ */
+export function deckCellAt(deck: readonly DeckCell[], cell: Cell): DeckCell | null {
+  const want = cell.level ?? 0;
+  return deck.find((c) => c.x === cell.col && c.z === cell.row && (c.level ?? 0) === want) ?? null;
+}
+
+/** 这一格甲板是**横杆**吗（不是甲板、或是一块板 → `false`）。 */
+export function isHangCell(deck: readonly DeckCell[], cell: Cell): boolean {
+  return deckCellAt(deck, cell)?.hang === true;
 }
 
 /**

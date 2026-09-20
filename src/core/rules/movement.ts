@@ -1,6 +1,6 @@
 import type { Cell } from '../types';
 import { faceOf, toFold, toWorld } from '../world/fold';
-import { asCell } from '../world/deck';
+import { asCell, isHangCell } from '../world/deck';
 import { isDeckCell, isSolid, supportOf, type Support } from '../world/graph';
 import type { Level } from '../world/tiles';
 
@@ -135,8 +135,22 @@ export function stateAt(level: Level, cell: Cell): MoveState | null {
  *
  * `bridges` 一路传下去：坑里有人时，坑口是踩得住的一格
  * （原版"踩其头顶"，见 `world/graph.ts` 的 `supportOf` ⑤）。
+ *
+ * ## 甲板上的下坠（T17）：往下**找层**，不是找行
+ *
+ * 甲板的"下面"是层号：同一个 `(x, z)` 上 `level − 1` 还是甲板 → 落在那一层；一路降到
+ * `level < 0` → 水。这与墙上"沿着行往下找支撑"是**同一件事的两个坐标系**，
+ * 所以由同一个函数回答 —— 分成两份实现必然会在某一天漂开。
  */
 export function fallTo(level: Level, from: Cell, bridges?: ReadonlySet<string>): FallEnd {
+  if (from.face === 'I') {
+    for (let levelAt = (from.level ?? 0) - 1; levelAt >= 0; levelAt -= 1) {
+      const cell = asCell({ x: from.col, z: from.row, level: levelAt });
+      if (supportOf(level, cell, bridges) !== null) return { kind: 'landed', cell };
+    }
+    return { kind: 'water', from, row: from.row };
+  }
+
   let row = from.row;
   for (;;) {
     const cell: Cell = { face: faceOf(from.col, level.fold), col: from.col, row };
@@ -226,13 +240,21 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
   const step = DECK_DIR[dir];
 
   // ① 甲板内部的四邻：目标必须在**同一层**的 `level.deck` 里。
-  if (level.deck.some((d) => d.x === x + step.dx && d.z === z + step.dz && (d.level ?? 0) === myLevel)) {
+  const target = level.deck.find(
+    (d) => d.x === x + step.dx && d.z === z + step.dz && (d.level ?? 0) === myLevel,
+  );
+  if (target !== undefined) {
+    // 落到**板**上就站着、落到**杆**上就吊着 —— 与墙上"杆格 → hang"同一个口径。
+    // （吊着的时候也照样能横移：`a`/`d` 的语义由 `DECK_DIR` 定，与"松手"是两件事。）
     return {
       kind: 'move',
-      // `asCell` 负责"层 0 省略不写"这条约定（与 `parseCell` 同一个口径）。
-      state: { cell: asCell({ x: x + step.dx, z: z + step.dz, level: myLevel }), mode: 'stand' },
+      state: {
+        cell: asCell({ x: x + step.dx, z: z + step.dz, level: myLevel }),
+        mode: target.hang === true ? 'hang' : 'stand',
+      },
     };
   }
+  if (state.mode === 'hang') return blocked('nothing-there'); // 吊着走到头了，杆外没有东西
 
   // ② 接头：甲板端 → 墙面端。接头只在**底层**（小道接的是水面上的那一层）。
   //    **方向 = 沿小道"往外"**（`jettyOutward`：甲板自己的数据说了算）—— 也就是"玩家沿着小道
@@ -279,6 +301,14 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
  *
  * 甲板上"上面那一层是不是甲板"这个判断，就是"玩家心里的梯子"这件事的**唯一出处** ——
  * 渲染层照它画梯子标记（见 `render/scene.ts` 的 `deckLadders`），不再有第二份数据。
+ *
+ * ## 吊在**甲板横杆**上时，`fall` = 松手（T17）
+ *
+ * 与墙上那条逐字同构（`stepOnBar`：吊着按"下"不是走路，是松手）。用户 2026-09-19 定的：
+ * 甲板上 `X` 本来就是"往下" —— 站在板上是**下一层**，吊在杆上是**松手**。
+ * 松手之后掉到哪儿由 `fallTo` 回答（同一个 `(x, z)` 往下找层；没有就是水）。
+ *
+ * `rise` 吊着时没有意义（墙上也一样：吊着不能往上）→ 与墙上同一句 `blocked('not-hangable')`。
  */
 export function stepLift(level: Level, state: MoveState, lift: Lift, opts: StepOptions = {}): StepResult {
   const cell = state.cell;
@@ -287,13 +317,19 @@ export function stepLift(level: Level, state: MoveState, lift: Lift, opts: StepO
     return step(level, state, lift === 'rise' ? 'up' : 'down', opts);
   }
 
+  if (state.mode === 'hang') {
+    if (lift === 'rise') return blocked('not-hangable');
+    return { kind: 'fall', end: fallTo(level, cell, opts.bridges) };
+  }
+
   const target = asCell({
     x: cell.col,
     z: cell.row,
     level: (cell.level ?? 0) + (lift === 'rise' ? 1 : -1),
   });
   if (!isDeckCell(level, target)) return blocked('no-lift');
-  return { kind: 'move', state: { cell: target, mode: 'stand' } };
+  // 上面那一层是**杆**就吊着 —— 与 `stateAt` / `supportOf` 同一个口径（"脚下是什么"决定停驻方式）。
+  return { kind: 'move', state: { cell: target, mode: isHangCell(level.deck, target) ? 'hang' : 'stand' } };
 }
 
 /**

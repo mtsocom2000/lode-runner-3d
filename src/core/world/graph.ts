@@ -1,5 +1,5 @@
 import { cellKey, type Cell } from '../types';
-import { asCell, type DeckCell, type JointDir } from './deck';
+import { asCell, isHangCell, type DeckCell, type JointDir } from './deck';
 import { faceOf, fromFold, isConsistentCell, seamNeighbour, toFold } from './fold';
 import type { Level, TileKind } from './tiles';
 
@@ -178,7 +178,12 @@ export function isDeckCell(level: Level, c: Cell): boolean {
  * 空坑照旧是陷阱（掉进去 = 受困），所以这条不会把坑变废。
  */
 export function supportOf(level: Level, c: Cell, bridges?: ReadonlySet<string>): Support | null {
-  if (c.face === 'I') return isDeckCell(level, c) ? 'brick' : null;
+  if (c.face === 'I') {
+    // 甲板：**板**是实心（站着走），**可吊格**是横杆（吊着，见 `DeckCell.hang`）。
+    // 与墙上那两行同一套语义 —— "脚下是什么"决定停驻方式，而"能不能去"是移动规则的事。
+    if (!isDeckCell(level, c)) return null;
+    return isHangCell(level.deck, c) ? 'bar' : 'brick';
+  }
   if (!isConsistentCell(c, level.fold)) return null;
   const here = level.at(c.col, c.row);
   if (!isPassable(here)) return null;

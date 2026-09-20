@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
-import type { DeckCell } from '../core/world/deck';
+import { deckKey, type DeckCell } from '../core/world/deck';
 import type { Level, TileKind } from '../core/world/tiles';
 import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
@@ -175,6 +175,26 @@ export function collectProps(
     }
   }
 
+  // **甲板上的横杆**（T17 的"断岛之间用连杆"）：它们不在摊平网格里，所以不在上面那个循环里 ——
+  // 但它们与墙上的横杆是**同一种东西**（`PALETTE.bar`、同一根细杆），所以归同一个数组。
+  // 分成两处画必然有一天会出现"墙上的杆是陶土红、甲板上的杆是别的色"。
+  const layerY = DECK_TOP_Y - CUBE / 2;
+  const hangKeys = new Set(level.deck.filter((c) => c.hang === true).map((c) => deckKey(c)));
+  for (const cell of level.deck) {
+    if (cell.hang !== true) continue;
+    // 杆的**朝向**由邻居说了算：沿 x 有邻居就横着画，否则竖着。两端都空（孤零零一根杆）
+    // 就按 z 画 —— 那只是个记号，走不走得过去由 core 判，画错不会造成"看得见走不到"。
+    const level_ = cell.level ?? 0;
+    const alongX = hangKeys.has(deckKey({ x: cell.x - 1, z: cell.z, level: level_ })) ||
+      hangKeys.has(deckKey({ x: cell.x + 1, z: cell.z, level: level_ }));
+    const p: Vec3 = [
+      cell.x + DECK_SHIFT,
+      layerY + level_ * CUBE,
+      cell.z + DECK_SHIFT,
+    ];
+    bars.push({ p, s: alongX ? [CUBE, 0.1, 0.1] : [0.1, 0.1, CUBE] });
+  }
+
   return { ladders, bars, chips, exits };
 }
 
@@ -222,13 +242,15 @@ function islandAndJetties(level: Level): {
   /** 一层砖厚：砖心落在**甲板顶面**下方半个立方体 —— 于是顶面正好与墙面最底那层砖齐平。 */
   const layerY = DECK_TOP_Y - CUBE / 2;
 
-  const bricks: (Piece & { color: number })[] = level.deck.map((cell) => ({
-    // `DECK_SHIFT`：往折痕方向挪半格，小道才正对墙砖中心（两套晶格相差 0.5，见 metrics.ts）。
-    // `level`：每高一整格 —— 塔就是这条式子叠出来的。
-    p: [cell.x + DECK_SHIFT, layerY + (cell.level ?? 0) * CUBE, cell.z + DECK_SHIFT],
-    s: [CUBE, CUBE, CUBE],
-    color: PALETTE.brick,
-  }));
+  const bricks: (Piece & { color: number })[] = level.deck
+    .filter((cell) => cell.hang !== true) // 可吊格不是板 —— 它们是杆，归 `collectProps` 的 bars
+    .map((cell) => ({
+      // `DECK_SHIFT`：往折痕方向挪半格，小道才正对墙砖中心（两套晶格相差 0.5，见 metrics.ts）。
+      // `level`：每高一整格 —— 塔就是这条式子叠出来的。
+      p: [cell.x + DECK_SHIFT, layerY + (cell.level ?? 0) * CUBE, cell.z + DECK_SHIFT],
+      s: [CUBE, CUBE, CUBE],
+      color: PALETTE.brick,
+    }));
 
   // 塔的梯子标记：这一格的正上方也是甲板 → 画一段梯（rails 贯穿一格，rungs 落在下缘附近）。
   const key = (x: number, z: number, level: number): string => `${x},${z}@${level}`;
