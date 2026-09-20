@@ -229,7 +229,7 @@ export function collectProps(
  * 于是"看得见"与"走得到"**结构上不可能不一致**（那类事故本仓库栽过两次：甲板锚点、接头方向）。
  * 想摆多大的岛、岛在哪，改关卡的 `deck` 就是。
  */
-function islandAndJetties(level: Level): {
+export function islandAndJetties(level: Level): {
   readonly bricks: readonly (Piece & { readonly color: number })[];
   /**
    * **塔的梯子标记**：某一层甲板格的正上方还是甲板 → 那里画一段梯子。
@@ -281,23 +281,23 @@ function islandAndJetties(level: Level): {
     const level_ = cell.level ?? 0;
     if (!present.has(key(cell.x, cell.z, level_ + 1))) continue;
 
-    // 梯子挂在**外侧**（用户 2026-09-19："左右两面加梯子"）。
+    // 梯子画在**这一格自己身上**，而且只画**离相机最近的那一格**（用户 2026-09-19）。
     //
-    // 第一版画在**格心**（`layerY + level*CUBE`）—— 那是板厚里，整段梯子被板包住、根本看不见，
-    // 用户看到的就是"4×4 台子上的宝物怎么上去？没有梯子"。
+    // 两个都是被用户纠正过的：
     //
-    // 挑面的规矩：优先 `±z`、再 `±x`，取**上一层没有甲板邻居**的那一面（那面才是露出来的）。
-    // 挑 `±z` 在前是因为 `ladderParts(p, alongZ=false)` 画的梯子正好朝 `±z` ——
-    // 朝向与偏移必须是同一根轴，否则梯子会横着嵌进平台里。
+    // ① **不能往外挪**。第一版把梯子挪到柱子**外侧面**（"挂在左右两面"），结果玩家走进梯子那里
+    //    按 `Z` 毫无反应 —— 因为 `Z` 是"同一 `(x, z)` 上一层"，生效的是**柱子自己那一格**，
+    //    梯子画在隔壁就等于指错了地方。梯子在哪、就该站在哪。
+    // ② **不能每格都画**。柱子是 2×2，四格都画就是四把梯子并排；而且离相机远的那些会被挡住。
+    //    只画"没有被更近的同层柱格遮住"的那一格（`+x` / `+z` 方向都没有柱格）—— 于是
+    //    一座柱子只会得到**一把**梯子，正好落在玩家走过去时最先碰到的那一格上。
     const free = (dx: number, dz: number): boolean =>
       !present.has(key(cell.x + dx, cell.z + dz, level_ + 1));
-    const [dx, dz] = free(0, 1) ? [0, 1] : free(0, -1) ? [0, -1] : free(1, 0) ? [1, 0] : [-1, 0];
-    const outward = CUBE / 2 + 0.02;
-    const x = cell.x + DECK_SHIFT + dx * outward;
-    const z = cell.z + DECK_SHIFT + dz * outward;
+    if (!(free(1, 0) && free(0, 1))) continue; // 被更近的柱格遮住 → 不画
+
     // 一格层高：从**这一层的落脚面**到**上一层的落脚面**（`DECK_TOP_Y + level` → `+ level + 1`）。
     const y = DECK_TOP_Y + level_ * CUBE + CUBE / 2;
-    ladders.push(...ladderParts([x, y, z], dx !== 0));
+    ladders.push(...ladderParts([cell.x + DECK_SHIFT, y, cell.z + DECK_SHIFT], false));
   }
 
   // 水面要读的"甲板中心"：按甲板格的实际范围算，不再由 `fold` 推。

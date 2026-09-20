@@ -4,7 +4,7 @@ import { L2 } from '../src/core/level/levels/l2';
 import { L3 } from '../src/core/level/levels/l3';
 import { CUBE } from '../src/render/metrics';
 import { openGates } from '../src/core/rules/goals';
-import { collectProps } from '../src/render/scene';
+import { collectProps, islandAndJetties } from '../src/render/scene';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 
 /**
@@ -45,7 +45,7 @@ describe('道具层：折痕那一对只画一根（那根"粉红十字"的回�
     expect(collectProps(level, level.grid).bars).toHaveLength(0);
   });
 
-  it('L3：两处三格缺口各三根杆 + **甲板上的三根杆**，一共 9 件', () => {
+  it('L3：两处三格缺口各三根杆 + **甲板上的一根杆桥**，一共 7 件', () => {
     // 甲板上的杆不在摊平网格里，所以它们走的是 `collectProps` 里另一段 —— 用户报的
     // "两岛之间只有一根杆，这个没看到"就是那一段的回归。
     const level = load(L3);
@@ -56,11 +56,38 @@ describe('道具层：折痕那一对只画一根（那根"粉红十字"的回�
   it('甲板杆的**朝向**由邻居决定：杆桥沿 x → 横着画（`[CUBE, 0.1, 0.1]`）', () => {
     const level = load(L3);
     const bars = collectProps(level, level.grid).bars;
-    // 甲板杆桥在 `x = -6`、`z ∈ {-8,-7,-6}`，世界坐标带 `DECK_SHIFT`(0.5)。
+    // 甲板杆桥在 `x = -6`、`z = -7`，世界坐标带 `DECK_SHIFT`(0.5)。
     // 必须**连 z 一起筛**：B 面缺口那根墙杆恰好也在 `x = -5.5`（两套坐标系在那里重合）。
     const bridge = bars.filter((b) => b.p[0] === -6 + 0.5 && b.p[2] === -7 + 0.5);
     expect(bridge).toHaveLength(1);
-    for (const rod of bridge) expect(rod.s).toEqual([CUBE, 0.1, 0.1]);
+    expect(bridge[0]?.s).toEqual([CUBE, 0.1, 0.1]);
+  });
+});
+
+/**
+ * 塔的**梯子标记**：它画在哪，玩家就得能站在哪按 `Z` —— 两者错开一格就等于指错路。
+ *
+ * 用户报过两次：①"没有梯子"（画在板厚里，被板包住）；②"走进梯子无法攀爬，直接从底层穿过"
+ * （挪到了柱子**外面**，而 `Z` 生效的是柱子**自己那一格**）。所以这条测试钉的是**位置**。
+ */
+describe('道具层：塔的梯子标记必须落在"按 Z 生效的那一格"上', () => {
+  it('L3 的柱：每层只画**一把**梯子，位置正是柱子离相机最近的那一格', () => {
+    const level = load(L3);
+    const ladders = islandAndJetties(level).ladders;
+    // 柱有 level 0/1/2 三层各自"上面还有一层" → 三把梯子，每把 5 件（2 立柱 + 3 横档）。
+    expect(ladders).toHaveLength(3 * 5);
+    // 全部落在同一个 (x, z)：柱子离相机最近的那一格（`(-8, -8)`，带 `DECK_SHIFT`）。
+    // 允许 ±0.3 —— 梯子的两根**立柱**本来就在格心两侧各偏 0.24（`ladderParts` 的几何）。
+    // 关键不是"正好等于格心"，而是**没有偏出这一格**（第一版往外挪了整整半格）。
+    for (const piece of ladders) {
+      expect(Math.abs(piece.p[0] - (-8 + 0.5))).toBeLessThan(0.3);
+      expect(Math.abs(piece.p[2] - (-8 + 0.5))).toBeLessThan(0.3);
+    }
+  });
+
+  it('对照：没有塔的关卡一把甲板梯子都没有（L1 是平地台）', () => {
+    const level = load(L1);
+    expect(islandAndJetties(level).ladders).toHaveLength(0);
   });
 });
 
