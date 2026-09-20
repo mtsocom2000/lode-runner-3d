@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { L2, L2_SPAWN } from '../core/level/levels/l2';
+import { L3, L3_SPAWN } from '../core/level/levels/l3';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel } from '../core/world/tiles';
@@ -21,9 +21,9 @@ const host = document.getElementById('app');
 if (!host) throw new Error('找不到 #app 挂载点（index.html 被改坏了？）');
 
 // 关卡先过 parseLevel —— 数据不合法就没有"渲染一个关"这回事，早点炸比看着像空关卡强。
-const parsed = parseLevel(L2);
+const parsed = parseLevel(L3);
 if (!parsed.ok) {
-  throw new Error(`关卡 ${L2.id} 数据不合法：${JSON.stringify(parsed.errors)}`);
+  throw new Error(`关卡 ${L3.id} 数据不合法：${JSON.stringify(parsed.errors)}`);
 }
 const level = parsed.level;
 
@@ -36,7 +36,7 @@ const camera = createCamera();
 const stage = createStage(level);
 
 /** sim 初态。出生点由关卡文件给出 —— 摆错位置是关卡 bug，`createSim` 会当场抛。 */
-let state: SimState = createSim(L2, L2_SPAWN);
+let state: SimState = createSim(L3, L3_SPAWN);
 
 /** 实体层（角色）。它只读 state，不推进 sim。 */
 const syncer = createSyncer(stage.scene, level);
@@ -125,7 +125,7 @@ function actedOn(frame: { readonly events: readonly SimEvent[] }): boolean {
  * 它内部会再 parse 一次 —— 启动时这点开销换来的是"关卡数据只有一个入口"，
  * 不值得为了省这一次而把 parse 结果在几层之间传来传去。
  */
-const levelIssues = validateLevel(L2, L2_SPAWN);
+const levelIssues = validateLevel(L3, L3_SPAWN);
 
 const hud = createHud(host);
 
@@ -142,7 +142,7 @@ window.addEventListener('unhandledrejection', (e) => {
   hud.log(`✗ 未处理的 Promise：${String(e.reason)}`);
 });
 hud.log(`构建 ${__BUILD_STAMP__}`);
-hud.log(`关卡 ${L2.id}（${level.cols}×${level.rows}, fold=${level.fold}）`);
+hud.log(`关卡 ${L3.id}（${level.cols}×${level.rows}, fold=${level.fold}）`);
 if (levelIssues.length === 0) hud.log('关卡校验：通过');
 else for (const issue of levelIssues) hud.log(`✗ 关卡校验 ${issue.rule}：${issue.detail}`);
 
@@ -215,7 +215,7 @@ function refreshHud(): void {
     // 教学提示（T14）：来自**关卡数据**（`LevelDef.hints`），不写死在 app 里 ——
     // 换一关就换一套（写死会变成一串 `if (levelId === …)`，那是把数据藏进代码）。
     // 原先那两行写死的"挖开的地板 4 秒后…""取到宝物后闸门变梯子"已并入 L1 的 hints。
-    ...(L2.hints ?? []).map((hint) => `· ${hint}`),
+    ...(L3.hints ?? []).map((hint) => `· ${hint}`),
     // 构建时间戳：`dist-single/index.html` 是**产物**，不 `npm run pack` 就不会跟着源码变。
     // 这一行让"我现在跑的到底是哪个构建"变成一眼可见（已经因为这个白绕过两次）。
     `构建 ${__BUILD_STAMP__}（改了源码要 npm run pack 才会变）`,
@@ -278,7 +278,7 @@ function flashForever(text: string): void {
  * `state.grid !== lastGrid` 的引用比较自然会认出来并重贴（闸门也就会重新封上）。
  */
 function restart(): void {
-  state = createSim(L2, L2_SPAWN);
+  state = createSim(L3, L3_SPAWN);
   // 重开要**把输入层那笔欠账销掉**（`latched`）：否则重开前刚按下的那一下会被
   // 欠到新一局，在第一步兑现成一个玩家没想要的方向。`consume` 只清 `latched`、
   // 不动 `held` —— 正按着不放的方向应当继续有效，这与 `input.ts` 里
