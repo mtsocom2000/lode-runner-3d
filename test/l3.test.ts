@@ -128,7 +128,7 @@ describe('T17 · L3 立柱：柱（四层高，宝物在顶）', () => {
   });
 
   it('从柱底连按三次 `Z` 到柱顶', () => {
-    const bottom = stateAt(level, deck(-9, -8));
+    const bottom = stateAt(level, deck(-8, -8));
     if (bottom === null) throw new Error('柱底应当站得住');
 
     let state = bottom;
@@ -139,7 +139,7 @@ describe('T17 · L3 立柱：柱（四层高，宝物在顶）', () => {
       state = r.state;
       visited.push(state.cell);
     }
-    expect(visited).toEqual([deck(-9, -8, 1), deck(-9, -8, 2), deck(-9, -8, 3)]);
+    expect(visited).toEqual([deck(-8, -8, 1), deck(-8, -8, 2), deck(-8, -8, 3)]);
     // 再往上没有东西了 —— 柱是四层高，顶就是顶。
     expect(stepLift(level, state, 'rise').kind).toBe('blocked');
   });
