@@ -56,6 +56,25 @@ export interface DeckCell {
    * 于是 `has(x, z, level)` 的语义与旧数据完全一致。
    */
   readonly hang?: boolean;
+  /**
+   * **梯子格**（省略 = 实心板）。T17 加的第三种甲板格 —— 这一格是**梯子**，不是方块。
+   *
+   * ## 为什么非有它不可（用户 2026-09-19 的追问）
+   *
+   * 一个整方块占满一整层，而角色站在方块**顶上** —— 也就是**上面那一层**。所以"把单位方块
+   * 往上叠"这件事有个硬后果：**第 L 层那块的顶面，正是第 L+1 层那块占掉的空间**。
+   * 实心柱于是只有顶面站得上人，想爬只能爬**侧面**，而 `Z` 是"同一 `(x,z)` 上一层"。
+   *
+   * 梯子格解开的正是这一处：梯子占的是**你所在的那一格**（与墙面上的梯子逐字同构 ——
+   * 梯子格是"可以待在里面"的，砖格是"踩在它上面"的），所以它上面**可以**再叠方块而不冲突。
+   * 于是"实心方块柱 + 侧面一条梯子"就成了自然的关卡数据，而不再是渲染层的补丁。
+   *
+   * ## 与 `hang` 的关系
+   *
+   * 两者都是"这一格不是实心板"，但停驻方式不同：`hang` → 吊着（`mode: 'hang'`），
+   * `ladder` → 站着（`mode: 'stand'`，与墙面梯子同一个口径）。同时写两个没有意义。
+   */
+  readonly ladder?: boolean;
 }
 
 export interface Deck {
@@ -90,6 +109,17 @@ export function deckCellAt(deck: readonly DeckCell[], cell: Cell): DeckCell | nu
 /** 这一格甲板是**横杆**吗（不是甲板、或是一块板 → `false`）。 */
 export function isHangCell(deck: readonly DeckCell[], cell: Cell): boolean {
   return deckCellAt(deck, cell)?.hang === true;
+}
+
+/** 这一格甲板是**梯子**吗（不是甲板、或是一块板 → `false`）。 */
+export function isLadderCell(deck: readonly DeckCell[], cell: Cell): boolean {
+  return deckCellAt(deck, cell)?.ladder === true;
+}
+
+/** 这一格甲板是**实心板**吗（板 = 既不是杆、也不是梯子）。 */
+export function isBoardCell(deck: readonly DeckCell[], cell: Cell): boolean {
+  const found = deckCellAt(deck, cell);
+  return found !== null && found.hang !== true && found.ladder !== true;
 }
 
 /**

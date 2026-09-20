@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import { deckKey, type DeckCell } from '../core/world/deck';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, CUBE, DECK_PLATFORM_T, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -251,52 +251,33 @@ export function islandAndJetties(level: Level): {
   const layerY = DECK_TOP_Y - CUBE / 2;
 
   const bricks: (Piece & { readonly color: number })[] = level.deck
-    .filter((cell) => cell.hang !== true) // 可吊格不是板 —— 它们是杆，归 `collectProps` 的 bars
-    .map((cell) => {
-      // **第一层是整块立方**（它就是岛面本身，顶面要正好与墙面"行 1"的行走面齐平）；
-      // **上面几层是薄板**（T17 修的）。
-      //
-      // 为什么上面几层必须薄：一层只有 `CUBE` 高，而角色有 `PLAYER_SIZE` 高 —— 如果每层都画成
-      // 整块立方，那么"站在第 L 层"的身体正好被第 L+1 层那块立方**包住**（人会消失在里面），
-      // 塔也就没法爬了。薄板贴在**这一层的最上面**（顶面 = `DECK_TOP_Y + level`），
-      // 于是它下面那一格是空的、站得下人 —— 与 `cellAnchor` 的口径（脚踩板顶）也正好对上。
-      const lv = cell.level ?? 0;
-      const thin = lv > 0;
-      return {
-        p: [
-          cell.x + DECK_SHIFT,
-          thin ? DECK_TOP_Y + lv * CUBE - DECK_PLATFORM_T / 2 : layerY,
-          cell.z + DECK_SHIFT,
-        ] as Vec3,
-        s: [CUBE, thin ? DECK_PLATFORM_T : CUBE, CUBE] as Vec3,
-        color: PALETTE.brick,
-      };
-    });
+    .filter((cell) => cell.hang !== true && cell.ladder !== true) // 杆与梯子都不是方块
+    .map((cell) => ({
+      // **整块立方**（T17 定稿）。第一版把上面几层画成薄板，是想绕开"站在第 L 层会被第 L+1 层
+      // 那块包住"—— 但那是**方块堆叠的几何事实**，不该靠改厚度糊过去（用户的原话：
+      // "砖块的厚度也比其他的砖块薄了一半，这是第二个不合理"）。
+      // 正确的解法是**梯子格**：梯子占的是你所在的那一格，所以它上面可以继续叠方块。
+      p: [cell.x + DECK_SHIFT, layerY + (cell.level ?? 0) * CUBE, cell.z + DECK_SHIFT],
+      s: [CUBE, CUBE, CUBE],
+      color: PALETTE.brick,
+    }));
 
-  // 塔的梯子标记：这一格的正上方也是甲板 → 画一段梯（rails 贯穿一格，rungs 落在下缘附近）。
-  const key = (x: number, z: number, level: number): string => `${x},${z}@${level}`;
-  const present = new Set(level.deck.map((c) => key(c.x, c.z, c.level ?? 0)));
+  // **梯子格**画梯子（见下面那段：判据是数据，不是推断）。
   const ladders: Piece[] = [];
   for (const cell of level.deck) {
-    const level_ = cell.level ?? 0;
-    if (!present.has(key(cell.x, cell.z, level_ + 1))) continue;
-
-    // 梯子画在**这一格自己身上**，而且只画**离相机最近的那一格**（用户 2026-09-19）。
+    // **梯子格**才画梯子 —— 这是 T17 定稿的判据（用户 2026-09-19 的追问逼出来的）。
     //
-    // 两个都是被用户纠正过的：
+    // 在这之前这里是**推断**的："上面那一层还是甲板 → 画一段梯子"。那条推断在"实心方块柱"
+    // 上必然出错：柱身每一格的上面都是方块，于是梯子被画进方块内部（用户："梯子位于一个砖块的
+    // 内部"）；我把它挪到外侧，它又指错了能爬的那一格（用户："走进梯子无法攀爬"）。
     //
-    // ① **不能往外挪**。第一版把梯子挪到柱子**外侧面**（"挂在左右两面"），结果玩家走进梯子那里
-    //    按 `Z` 毫无反应 —— 因为 `Z` 是"同一 `(x, z)` 上一层"，生效的是**柱子自己那一格**，
-    //    梯子画在隔壁就等于指错了地方。梯子在哪、就该站在哪。
-    // ② **不能每格都画**。柱子是 2×2，四格都画就是四把梯子并排；而且离相机远的那些会被挡住。
-    //    只画"没有被更近的同层柱格遮住"的那一格（`+x` / `+z` 方向都没有柱格）—— 于是
-    //    一座柱子只会得到**一把**梯子，正好落在玩家走过去时最先碰到的那一格上。
-    const free = (dx: number, dz: number): boolean =>
-      !present.has(key(cell.x + dx, cell.z + dz, level_ + 1));
-    if (!(free(1, 0) && free(0, 1))) continue; // 被更近的柱格遮住 → 不画
+    // 现在它**不是推断，是数据**：`ladder: true` 的格子才画梯子，而那也正是 `Z` 生效的地方 ——
+    // "画在哪"与"站哪能爬"不可能再错开，因为两者读的是同一个字段。
+    if (cell.ladder !== true) continue;
 
-    // 一格层高：从**这一层的落脚面**到**上一层的落脚面**（`DECK_TOP_Y + level` → `+ level + 1`）。
-    const y = DECK_TOP_Y + level_ * CUBE + CUBE / 2;
+    // 画在 `[level, level + 1]`：于是柱侧的三个梯子格连成**一根从岛面直达柱顶**的梯子
+    // （柱身方块在 `[level, level+1]` 上，最上一块顶面 = `DECK_TOP_Y + 3` = 梯子的顶端）。
+    const y = layerY + (cell.level ?? 0) * CUBE;
     ladders.push(...ladderParts([cell.x + DECK_SHIFT, y, cell.z + DECK_SHIFT], false));
   }
 

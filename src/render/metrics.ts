@@ -150,7 +150,7 @@ export const DECK_TOP_Y = 0.5 + CUBE / 2;
  * 薄板贴在**这一层的最上面**（顶面 = `DECK_TOP_Y + level`），它下面那一格就空得下一个人 ——
  * 与 `cellAnchor` 的口径（脚踩板顶）正好对上。
  */
-export const DECK_PLATFORM_T = 0.25;
+
 
 /**
  * 墙板比最高一行再高出这么多，免得顶行砖贴着板边。

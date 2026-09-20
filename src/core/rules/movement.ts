@@ -244,14 +244,15 @@ function stepOnDeck(level: Level, state: MoveState, dir: Dir): StepResult {
     (d) => d.x === x + step.dx && d.z === z + step.dz && (d.level ?? 0) === myLevel,
   );
   if (target !== undefined) {
-    // 落到**板**上就站着、落到**杆**上就吊着 —— 与墙上"杆格 → hang"同一个口径。
-    // （吊着的时候也照样能横移：`a`/`d` 的语义由 `DECK_DIR` 定，与"松手"是两件事。）
+    const cell = asCell({ x: x + step.dx, z: z + step.dz, level: myLevel });
+    // **站不住的甲板格 = 被方块占掉的空间** → 拦住（与墙上"撞实心砖"同一件事）。
+    // 不拦的话玩家会走进实心柱内部，然后因为"脚下没有支撑"被 `advance` 判成坠落 → 落水，
+    // 那是比走不进去严重得多的错。
+    if (supportOf(level, cell) === null) return blocked('solid');
+    // 落到**板**上就站着、落到**杆**上就吊着、落到**梯子格**里也是站着 —— 与墙面同一个口径。
     return {
       kind: 'move',
-      state: {
-        cell: asCell({ x: x + step.dx, z: z + step.dz, level: myLevel }),
-        mode: target.hang === true ? 'hang' : 'stand',
-      },
+      state: { cell, mode: target.hang === true ? 'hang' : 'stand' },
     };
   }
   if (state.mode === 'hang') return blocked('nothing-there'); // 吊着走到头了，杆外没有东西
@@ -328,7 +329,9 @@ export function stepLift(level: Level, state: MoveState, lift: Lift, opts: StepO
     level: (cell.level ?? 0) + (lift === 'rise' ? 1 : -1),
   });
   if (!isDeckCell(level, target)) return blocked('no-lift');
-  // 上面那一层是**杆**就吊着 —— 与 `stateAt` / `supportOf` 同一个口径（"脚下是什么"决定停驻方式）。
+  // 上面那一层**站不住**（被更上面那块板占掉了）→ 上不去。
+  if (supportOf(level, target) === null) return blocked('no-lift');
+  // 上面那一层是**杆**就吊着、是**梯子格**就站着 —— 与 `stateAt` / `supportOf` 同一个口径。
   return { kind: 'move', state: { cell: target, mode: isHangCell(level.deck, target) ? 'hang' : 'stand' } };
 }
 

@@ -5,7 +5,7 @@ import { walkReachable } from '../src/core/rules/reach';
 import { stateAt, step, stepLift, trail } from '../src/core/rules/movement';
 import { treasureAt } from '../src/core/rules/goals';
 import { cellKey, type Cell } from '../src/core/types';
-import { buildGraph } from '../src/core/world/graph';
+import { buildGraph, isStandable } from '../src/core/world/graph';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import { cellA } from './fixtures';
 
@@ -53,17 +53,32 @@ describe('T16 · L2 织网：结构校验', () => {
 });
 
 describe('T16 · L2 织网：第二座岛只能经岛间小道过去', () => {
-  it('两张岛 + 岛间小道 + 塔都在可达集里，甲板共 43 格（39 + 塔的 4 格）', () => {
+  it('两张岛 + 岛间小道 + 塔都在可达集里；塔身**占掉**的三格不是落脚点', () => {
     expect(L2.deck).toHaveLength(43);
-    for (const cell of L2.deck ?? []) {
+    // 每一个**站得住**的甲板格都要走得到（站不住的不算 —— 它们被塔身占掉了，见下一条）。
+    const standable = (L2.deck ?? []).filter(
+      (c) => isStandable(level, island(c.x, c.z, c.level ?? 0)),
+    );
+    for (const cell of standable) {
       expect(reach.cells.has(KEY(island(cell.x, cell.z, cell.level ?? 0)))).toBe(true);
     }
+    // 塔身（`level 1` 的三块方块）**正下方**那三格站不住：方块占的正是你要站的那点空间。
+    // 这是 T17 那条几何事实的现场证据，也是"塔必须有梯子格"的原因。
+    for (const [x, z] of [
+      [-5, -9],
+      [-4, -9],
+      [-5, -8],
+    ] as const) {
+      expect(isStandable(level, island(x, z))).toBe(false);
+    }
+    // 而**梯脚**那一格站得住（上面是梯子格，不是方块）—— 人就是从这儿上去的。
+    expect(isStandable(level, island(-4, -8))).toBe(true);
   });
 
   it('两颗宝物：一颗在 A 岛正中，一颗在 **B 岛塔顶**（`level = 1`），都走得到', () => {
     expect(L2.treasures).toEqual([
       { x: -8, z: -7 },
-      { x: -4, z: -8, level: 1 },
+      { x: -5, z: -9, level: 1 },
     ]);
     for (const t of L2.treasures ?? []) {
       expect(reach.cells.has(KEY(island(t.x, t.z, t.level ?? 0)))).toBe(true);
@@ -137,31 +152,37 @@ describe('T16 · L2 织网：落水缺口上的连杆（用户裁定的位置，
 });
 
 describe('T16 · L2 织网：塔（甲板加层之后的第一件东西）', () => {
-  it('B 岛上叠了 2×2 的一层（`level = 1`）', () => {
+  it('B 岛上叠了 2×2 的一层（`level = 1`）：三块方块 + 一格**梯子**', () => {
     const top = (L2.deck ?? []).filter((c) => (c.level ?? 0) === 1);
     expect(top.map((c) => `${c.x},${c.z}`).sort()).toEqual(['-4,-8', '-4,-9', '-5,-8', '-5,-9']);
+    // 靠相机那一角是梯子格 —— 没有它，塔下那一格会被塔身占掉，人上不去（T17 的几何事实）。
+    const ladder = top.filter((c) => c.ladder === true);
+    expect(ladder).toEqual([{ x: -4, z: -8, level: 1, ladder: true }]);
   });
 
-  it('`Z`/`X`（世界上下）能从塔底上到塔顶；塔外没有那一层 → 走不动', () => {
-    const base = stateAt(level, island(-4, -8)) ?? { cell: island(-4, -8), mode: 'stand' };
+  it('`Z`/`X`（世界上下）能从塔脚沿梯子上到塔顶；塔外没有那一层 → 走不动', () => {
+    const base = stateAt(level, island(-4, -8));
+    if (base === null) throw new Error('梯脚应当站得住');
     expect(base.cell.level ?? 0).toBe(0);
     const up = stepLift(level, base, 'rise');
     expect(up).toEqual({ kind: 'move', state: { cell: island(-4, -8, 1), mode: 'stand' } });
 
     // 塔顶再往上就没有甲板了 —— `no-lift`，不是"掉下去"。
-    const top = stateAt(level, island(-4, -8, 1)) ?? { cell: island(-4, -8, 1), mode: 'stand' };
+    const top = stateAt(level, island(-4, -8, 1));
+    if (top === null) throw new Error('塔顶应当站得住');
     expect(stepLift(level, top, 'rise')).toEqual({ kind: 'blocked', reason: 'no-lift' });
     // 塔外那一格（B 岛上有甲板、但没有 level 1）同样上不去。
-    const outside = stateAt(level, island(-3, -7)) ?? { cell: island(-3, -7), mode: 'stand' };
+    const outside = stateAt(level, island(-3, -7));
+    if (outside === null) throw new Error('B 岛面上应当站得住');
     expect(stepLift(level, outside, 'rise')).toEqual({ kind: 'blocked', reason: 'no-lift' });
   });
 
   it('塔顶站着**不会**误收塔底那颗宝物（层必须一起比）', () => {
-    // 塔底 `(-4,-8)@0` 与塔顶 `(-4,-8)@1` 的 `(x, z)` 相同 —— 层不比就会误判。
-    expect(treasureAt(L2.treasures ?? [], island(-4, -8))).toBeUndefined();
-    expect(treasureAt(L2.treasures ?? [], island(-4, -8, 1))).toEqual({
-      x: -4,
-      z: -8,
+    // 宝物在塔顶 `(-5,-9)@1`；站在**同一 `(x, z)` 的塔底**上不该收得到它。
+    expect(treasureAt(L2.treasures ?? [], island(-5, -9))).toBeUndefined();
+    expect(treasureAt(L2.treasures ?? [], island(-5, -9, 1))).toEqual({
+      x: -5,
+      z: -9,
       level: 1,
     });
   });

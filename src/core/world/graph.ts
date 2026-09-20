@@ -1,5 +1,5 @@
 import { cellKey, type Cell } from '../types';
-import { asCell, isHangCell, type DeckCell, type JointDir } from './deck';
+import { asCell, isBoardCell, isHangCell, isLadderCell, type DeckCell, type JointDir } from './deck';
 import { faceOf, fromFold, isConsistentCell, seamNeighbour, toFold } from './fold';
 import type { Level, TileKind } from './tiles';
 
@@ -179,10 +179,24 @@ export function isDeckCell(level: Level, c: Cell): boolean {
  */
 export function supportOf(level: Level, c: Cell, bridges?: ReadonlySet<string>): Support | null {
   if (c.face === 'I') {
-    // 甲板：**板**是实心（站着走），**可吊格**是横杆（吊着，见 `DeckCell.hang`）。
-    // 与墙上那两行同一套语义 —— "脚下是什么"决定停驻方式，而"能不能去"是移动规则的事。
+    // 甲板三种格，与墙面那三行同构：
+    // - **板** = 实心方块 → 踩着它（`'brick'`）；
+    // - **梯子格** = 你**待在它里面** → `'ladder'`（与墙面梯子同一个口径）；
+    // - **可吊格** = 横杆 → 吊着（`'bar'`）。
     if (!isDeckCell(level, c)) return null;
-    return isHangCell(level.deck, c) ? 'bar' : 'brick';
+    if (isHangCell(level.deck, c)) return 'bar';
+    if (isLadderCell(level.deck, c)) return 'ladder';
+
+    // **板上面还叠着一块板 → 这一格站不住**（用户 2026-09-19 逼出来的那条几何事实）。
+    //
+    // 板占满一整层，而角色站在板的**顶上**（也就是上面那一层）—— 所以上面那块板占掉的正是
+    // 你要站的那点空间。实心柱因此只有顶面站得上人；想爬它，就得在柱子侧面放**梯子格**
+    // （梯子格不占"你头上那一层"，所以它上面可以叠方块）。
+    //
+    // 不写这一条的话，玩家能站进实心柱**内部**（角色被方块包住、看不见），
+    // 而柱子的侧面梯子也就失去了存在的理由。
+    if (isBoardCell(level.deck, asCell({ x: c.col, z: c.row, level: (c.level ?? 0) + 1 }))) return null;
+    return 'brick';
   }
   if (!isConsistentCell(c, level.fold)) return null;
   const here = level.at(c.col, c.row);
@@ -229,7 +243,12 @@ export function buildGraph(level: Level, opts: GraphOptions = {}): Graph {
   // `decks: false` 时整块跳过 —— 于是"只在墙面内"的图连甲板**节点**都没有，
   // `has(甲板格)` 为 false、路径也不会从甲板穿过去（见 GraphOptions.decks）。
   const decksOn = opts.decks !== false;
-  const deckCells: Cell[] = decksOn ? level.deck.map(asCell) : [];
+  // **只把"站得住"的甲板格当节点**（T17）。实心柱的柱身把下面那几格的头顶占掉了，
+  // 那几格于是**站不住** —— 它们不该出现在图里：图是"人走得到哪儿"，而站不住的格不是落脚点。
+  // 不筛的话 `unreachable` 会把它们报成"孤岛"（它们确实到不了，因为谁也站不上去）。
+  const deckCells: Cell[] = decksOn
+    ? level.deck.map(asCell).filter((c) => isStandable(level, c))
+    : [];
   for (const cell of deckCells) {
     const key = cellKey(cell);
     if (adjacency.has(key)) continue; // 已去过重，这里再兜一层，避免重复节点
