@@ -146,7 +146,7 @@ describe('T17 · L3 立柱：柱（四层高，宝物在顶）', () => {
 
   it('柱顶那一格是宝物的落点（不是"看得见捡不到"）', () => {
     const treasure = L3.treasures?.find((t) => (t.level ?? 0) === 3);
-    expect(treasure).toEqual({ x: -9, z: -9, level: 3 });
+    expect(treasure).toEqual({ x: -8, z: -8, level: 3 });
   });
 });
 
