@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import { deckKey, type DeckCell } from '../core/world/deck';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_PLATFORM_T, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -178,7 +178,6 @@ export function collectProps(
   // **甲板上的横杆**（T17 的"断岛之间用连杆"）：它们不在摊平网格里，所以不在上面那个循环里 ——
   // 但它们与墙上的横杆是**同一种东西**（`PALETTE.bar`、同一根细杆），所以归同一个数组。
   // 分成两处画必然有一天会出现"墙上的杆是陶土红、甲板上的杆是别的色"。
-  const layerY = DECK_TOP_Y - CUBE / 2;
   const deckKeys = new Set(level.deck.map((c) => deckKey(c)));
   for (const cell of level.deck) {
     if (cell.hang !== true) continue;
@@ -190,9 +189,15 @@ export function collectProps(
     const level_ = cell.level ?? 0;
     const has = (dx: number): boolean => deckKeys.has(deckKey({ x: cell.x + dx, z: cell.z, level: level_ }));
     const alongX = has(-1) || has(1);
+    // **高度取"格心"**（= `cellAnchor` 的 y），不是板心。
+    //
+    // 甲板格与墙面格同口径：`level` 说的是**板**在第几层，而角色站在**板的上面那一格** ——
+    // 所以一格甲板的"格心"是 `DECK_TOP_Y + CUBE/2 + level`（墙面格同理：砖在 `row`、人占 `row + 1`）。
+    // 第一版按**板心**（`layerY`）画，于是杆躺在板厚里、脚下就是水面 ——
+    // 用户的原话："这个地板是最低一层了，下面就是水面了，所以这个连杆位置不对"。
     const p: Vec3 = [
       cell.x + DECK_SHIFT,
-      layerY + level_ * CUBE,
+      DECK_TOP_Y + CUBE / 2 + level_ * CUBE,
       cell.z + DECK_SHIFT,
     ];
     bars.push({ p, s: alongX ? [CUBE, 0.1, 0.1] : [0.1, 0.1, CUBE] });
@@ -245,15 +250,28 @@ function islandAndJetties(level: Level): {
   /** 一层砖厚：砖心落在**甲板顶面**下方半个立方体 —— 于是顶面正好与墙面最底那层砖齐平。 */
   const layerY = DECK_TOP_Y - CUBE / 2;
 
-  const bricks: (Piece & { color: number })[] = level.deck
+  const bricks: (Piece & { readonly color: number })[] = level.deck
     .filter((cell) => cell.hang !== true) // 可吊格不是板 —— 它们是杆，归 `collectProps` 的 bars
-    .map((cell) => ({
-      // `DECK_SHIFT`：往折痕方向挪半格，小道才正对墙砖中心（两套晶格相差 0.5，见 metrics.ts）。
-      // `level`：每高一整格 —— 塔就是这条式子叠出来的。
-      p: [cell.x + DECK_SHIFT, layerY + (cell.level ?? 0) * CUBE, cell.z + DECK_SHIFT],
-      s: [CUBE, CUBE, CUBE],
-      color: PALETTE.brick,
-    }));
+    .map((cell) => {
+      // **第一层是整块立方**（它就是岛面本身，顶面要正好与墙面"行 1"的行走面齐平）；
+      // **上面几层是薄板**（T17 修的）。
+      //
+      // 为什么上面几层必须薄：一层只有 `CUBE` 高，而角色有 `PLAYER_SIZE` 高 —— 如果每层都画成
+      // 整块立方，那么"站在第 L 层"的身体正好被第 L+1 层那块立方**包住**（人会消失在里面），
+      // 塔也就没法爬了。薄板贴在**这一层的最上面**（顶面 = `DECK_TOP_Y + level`），
+      // 于是它下面那一格是空的、站得下人 —— 与 `cellAnchor` 的口径（脚踩板顶）也正好对上。
+      const lv = cell.level ?? 0;
+      const thin = lv > 0;
+      return {
+        p: [
+          cell.x + DECK_SHIFT,
+          thin ? DECK_TOP_Y + lv * CUBE - DECK_PLATFORM_T / 2 : layerY,
+          cell.z + DECK_SHIFT,
+        ] as Vec3,
+        s: [CUBE, thin ? DECK_PLATFORM_T : CUBE, CUBE] as Vec3,
+        color: PALETTE.brick,
+      };
+    });
 
   // 塔的梯子标记：这一格的正上方也是甲板 → 画一段梯（rails 贯穿一格，rungs 落在下缘附近）。
   const key = (x: number, z: number, level: number): string => `${x},${z}@${level}`;
@@ -262,8 +280,24 @@ function islandAndJetties(level: Level): {
   for (const cell of level.deck) {
     const level_ = cell.level ?? 0;
     if (!present.has(key(cell.x, cell.z, level_ + 1))) continue;
-    const [x, y, z] = [cell.x + DECK_SHIFT, layerY + level_ * CUBE, cell.z + DECK_SHIFT];
-    ladders.push(...ladderParts([x, y, z], false));
+
+    // 梯子挂在**外侧**（用户 2026-09-19："左右两面加梯子"）。
+    //
+    // 第一版画在**格心**（`layerY + level*CUBE`）—— 那是板厚里，整段梯子被板包住、根本看不见，
+    // 用户看到的就是"4×4 台子上的宝物怎么上去？没有梯子"。
+    //
+    // 挑面的规矩：优先 `±z`、再 `±x`，取**上一层没有甲板邻居**的那一面（那面才是露出来的）。
+    // 挑 `±z` 在前是因为 `ladderParts(p, alongZ=false)` 画的梯子正好朝 `±z` ——
+    // 朝向与偏移必须是同一根轴，否则梯子会横着嵌进平台里。
+    const free = (dx: number, dz: number): boolean =>
+      !present.has(key(cell.x + dx, cell.z + dz, level_ + 1));
+    const [dx, dz] = free(0, 1) ? [0, 1] : free(0, -1) ? [0, -1] : free(1, 0) ? [1, 0] : [-1, 0];
+    const outward = CUBE / 2 + 0.02;
+    const x = cell.x + DECK_SHIFT + dx * outward;
+    const z = cell.z + DECK_SHIFT + dz * outward;
+    // 一格层高：从**这一层的落脚面**到**上一层的落脚面**（`DECK_TOP_Y + level` → `+ level + 1`）。
+    const y = DECK_TOP_Y + level_ * CUBE + CUBE / 2;
+    ladders.push(...ladderParts([x, y, z], dx !== 0));
   }
 
   // 水面要读的"甲板中心"：按甲板格的实际范围算，不再由 `fold` 推。

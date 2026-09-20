@@ -88,6 +88,10 @@ describe('T17 · L3 立柱：甲板上的连杆（两岛之间吊着过去）', 
   it('两岛之间的三格**不是板**，是杆（`hang: true`）', () => {
     for (const z of [-8, -7, -6]) {
       const cell = deck(-6, z);
+      if (z !== -7) {
+        expect(isStandable(level, cell)).toBe(false); // 只有中间那一格是杆，两侧是水
+        continue;
+      }
       expect(isStandable(level, cell)).toBe(true); // 能停（吊）
       expect(stateAt(level, cell)?.mode).toBe('hang');
     }
@@ -116,26 +120,33 @@ describe('T17 · L3 立柱：甲板上的连杆（两岛之间吊着过去）', 
   });
 });
 
-describe('T17 · L3 立柱：柱（三层高，宝物在顶）', () => {
+describe('T17 · L3 立柱：柱（四层高，宝物在顶）', () => {
   it('柱顶那一格真的存在，而且只能靠 `Z` 上去', () => {
-    const top = deck(-8, -8, 2);
+    const top = deck(-8, -8, 3);
     expect(isStandable(level, top)).toBe(true);
     expect(reach.cells.has(KEY(top))).toBe(true); // 可达性也认它
   });
 
-  it('从柱底连按两次 `Z` 到柱顶', () => {
+  it('从柱底连按三次 `Z` 到柱顶', () => {
     const bottom = stateAt(level, deck(-9, -8));
     if (bottom === null) throw new Error('柱底应当站得住');
-    const one = stepLift(level, bottom, 'rise');
-    expect(one).toEqual({ kind: 'move', state: { cell: deck(-9, -8, 1), mode: 'stand' } });
-    if (one.kind !== 'move') throw new Error('unreachable');
-    const two = stepLift(level, one.state, 'rise');
-    expect(two).toEqual({ kind: 'move', state: { cell: deck(-9, -8, 2), mode: 'stand' } });
+
+    let state = bottom;
+    const visited: Cell[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = stepLift(level, state, 'rise');
+      if (r.kind !== 'move') throw new Error(`第 ${i + 1} 次 Z 应当上得去，实际 ${r.kind}`);
+      state = r.state;
+      visited.push(state.cell);
+    }
+    expect(visited).toEqual([deck(-9, -8, 1), deck(-9, -8, 2), deck(-9, -8, 3)]);
+    // 再往上没有东西了 —— 柱是四层高，顶就是顶。
+    expect(stepLift(level, state, 'rise').kind).toBe('blocked');
   });
 
   it('柱顶那一格是宝物的落点（不是"看得见捡不到"）', () => {
-    const treasure = L3.treasures?.find((t) => (t.level ?? 0) === 2);
-    expect(treasure).toEqual({ x: -8, z: -8, level: 2 });
+    const treasure = L3.treasures?.find((t) => (t.level ?? 0) === 3);
+    expect(treasure).toEqual({ x: -8, z: -8, level: 3 });
   });
 });
 

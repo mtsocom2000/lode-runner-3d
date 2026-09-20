@@ -50,7 +50,7 @@ describe('道具层：折痕那一对只画一根（那根"粉红十字"的回�
     // "两岛之间只有一根杆，这个没看到"就是那一段的回归。
     const level = load(L3);
     const bars = collectProps(level, level.grid).bars;
-    expect(bars).toHaveLength(9); // 3（墙 A）+ 3（墙 B）+ 3（甲板杆桥）
+    expect(bars).toHaveLength(7); // 3（墙 A）+ 3（墙 B）+ 1（甲板杆桥）
   });
 
   it('甲板杆的**朝向**由邻居决定：杆桥沿 x → 横着画（`[CUBE, 0.1, 0.1]`）', () => {
@@ -58,10 +58,8 @@ describe('道具层：折痕那一对只画一根（那根"粉红十字"的回�
     const bars = collectProps(level, level.grid).bars;
     // 甲板杆桥在 `x = -6`、`z ∈ {-8,-7,-6}`，世界坐标带 `DECK_SHIFT`(0.5)。
     // 必须**连 z 一起筛**：B 面缺口那根墙杆恰好也在 `x = -5.5`（两套坐标系在那里重合）。
-    const bridge = bars.filter(
-      (b) => b.p[0] === -6 + 0.5 && b.p[2] >= -8 + 0.5 && b.p[2] <= -6 + 0.5,
-    );
-    expect(bridge).toHaveLength(3);
+    const bridge = bars.filter((b) => b.p[0] === -6 + 0.5 && b.p[2] === -7 + 0.5);
+    expect(bridge).toHaveLength(1);
     for (const rod of bridge) expect(rod.s).toEqual([CUBE, 0.1, 0.1]);
   });
 });
