@@ -108,6 +108,16 @@ export interface LevelDef {
    * 只有 HUD 要读 —— 在 `main.ts` 里从 `LevelDef` 读一次即可。
    */
   readonly hints?: readonly string[];
+  /**
+   * **玩家出生格**（T21，编辑器加）。可选 —— 既有关卡把出生点放在旁边的 `*_SPAWN` 常量里。
+   *
+   * 为什么现在要收进 `LevelDef`：编辑器保存的关卡必须**自包含** —— 一个 JSON 文件要能完整
+   * 描述"从哪儿开始玩"，否则加载之后还得让调用方另配一个出生点，那正是"同一件事两个来源"。
+   *
+   * 与 `enemies` / `hints` 同一条理由**不进 `Level`**：出生点不参与任何规则运算，
+   * `createSim(def, spawn)` 拿它建初态就够。
+   */
+  readonly spawn?: Cell;
 }
 
 export type LoadError =

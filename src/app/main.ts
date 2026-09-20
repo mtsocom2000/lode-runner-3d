@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import { L3, L3_SPAWN } from '../core/level/levels/l3';
+import { BLANK } from '../core/level/levels/blank';
+import { clearStoredLevel, decodeLevel, loadStoredLevel, storeLevel } from './levelstore';
+import { createEditor } from './editor';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
-import { parseLevel } from '../core/world/tiles';
-import { surfaceOf, cellKey, type Surface } from '../core/types';
+import { parseLevel, type LevelDef } from '../core/world/tiles';
+import { surfaceOf, cellKey, type Cell, type Surface } from '../core/types';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
 import { createFx } from '../render/fx';
@@ -21,11 +24,21 @@ const host = document.getElementById('app');
 if (!host) throw new Error('找不到 #app 挂载点（index.html 被改坏了？）');
 
 // 关卡先过 parseLevel —— 数据不合法就没有"渲染一个关"这回事，早点炸比看着像空关卡强。
-const parsed = parseLevel(L3);
+//
+// **关卡从哪儿来**（T21）：优先读编辑器存下的草稿（`localStorage`），读不到才用内置的 L3。
+// 草稿坏了就**退回 L3**，而不是白屏 —— 编辑器里手改 JSON 很容易改坏，那时最需要的是
+// "还能打开、还能改回去"。
+const storedDef = loadStoredLevel();
+const baseDef: LevelDef = storedDef ?? L3;
+const parsedBase = parseLevel(baseDef);
+const parsed = parsedBase.ok ? parsedBase : parseLevel(L3);
 if (!parsed.ok) {
-  throw new Error(`关卡 ${L3.id} 数据不合法：${JSON.stringify(parsed.errors)}`);
+  throw new Error(`关卡数据不合法（连内置的 L3 都不合法）：${JSON.stringify(parsed.errors)}`);
 }
 const level = parsed.level;
+/** 这一局的关卡数据（编辑器读写的就是它）。 */
+const levelDef: LevelDef = parsed === parsedBase ? baseDef : L3;
+const spawn: Cell = levelDef.spawn ?? L3_SPAWN;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -36,7 +49,7 @@ const camera = createCamera();
 const stage = createStage(level);
 
 /** sim 初态。出生点由关卡文件给出 —— 摆错位置是关卡 bug，`createSim` 会当场抛。 */
-let state: SimState = createSim(L3, L3_SPAWN);
+let state: SimState = createSim(levelDef, spawn);
 
 /** 实体层（角色）。它只读 state，不推进 sim。 */
 const syncer = createSyncer(stage.scene, level);
@@ -125,7 +138,7 @@ function actedOn(frame: { readonly events: readonly SimEvent[] }): boolean {
  * 它内部会再 parse 一次 —— 启动时这点开销换来的是"关卡数据只有一个入口"，
  * 不值得为了省这一次而把 parse 结果在几层之间传来传去。
  */
-const levelIssues = validateLevel(L3, L3_SPAWN);
+const levelIssues = validateLevel(levelDef, spawn);
 
 const hud = createHud(host);
 
@@ -142,9 +155,41 @@ window.addEventListener('unhandledrejection', (e) => {
   hud.log(`✗ 未处理的 Promise：${String(e.reason)}`);
 });
 hud.log(`构建 ${__BUILD_STAMP__}`);
-hud.log(`关卡 ${L3.id}（${level.cols}×${level.rows}, fold=${level.fold}）`);
+hud.log(`关卡 ${levelDef.id}（${level.cols}×${level.rows}, fold=${level.fold}）`);
 if (levelIssues.length === 0) hud.log('关卡校验：通过');
 else for (const issue of levelIssues) hud.log(`✗ 关卡校验 ${issue.rule}：${issue.detail}`);
+
+/**
+ * **关卡编辑器**（T21，按 `Tab` 开关）。
+ *
+ * 阶段 1 只做"**存取 + 校验**"：把这一关的 JSON 摆在一个能改的地方，改完按"应用并重载"。
+ * 场景是模块加载时一次性建起来的，所以"应用"= 写草稿 + `location.reload()` ——
+ * 见 `./editor` 里那段"为什么不是热替换"（热替换是阶段 2）。
+ *
+ * 编辑期间**把 sim 停住**（见下面 tick 循环里的 `editor.isOpen()`）：不然玩家站在原地，
+ * 追兵会把他抓住、屏幕上闪一个 GAME OVER，而用户正在改 JSON。
+ */
+const editor = createEditor(host, {
+  apply(text: string): string | null {
+    const decoded = decodeLevel(text);
+    if (!decoded.ok) return decoded.error;
+    if (!storeLevel(decoded.def)) return '存不进浏览器存储（隐私模式 / 配额满）';
+    location.reload();
+    return null;
+  },
+  createBlank(): void {
+    clearStoredLevel();
+    storeLevel(BLANK);
+    location.reload();
+  },
+});
+hud.log('按 Tab 打开关卡编辑器');
+
+// `#edit` 直接打开编辑器：方便收藏、也方便无头截图验它（`Tab` 是按键，截图工具按不了）。
+if (window.location.hash === '#edit') {
+  editor.toggle();
+  editor.show(levelDef, spawn, levelIssues);
+}
 
 /**
  * 值得进日志的 sim 事件 —— 挑的都是"玩法上出了事"的那种。
@@ -215,7 +260,7 @@ function refreshHud(): void {
     // 教学提示（T14）：来自**关卡数据**（`LevelDef.hints`），不写死在 app 里 ——
     // 换一关就换一套（写死会变成一串 `if (levelId === …)`，那是把数据藏进代码）。
     // 原先那两行写死的"挖开的地板 4 秒后…""取到宝物后闸门变梯子"已并入 L1 的 hints。
-    ...(L3.hints ?? []).map((hint) => `· ${hint}`),
+    ...(levelDef.hints ?? []).map((hint) => `· ${hint}`),
     // 构建时间戳：`dist-single/index.html` 是**产物**，不 `npm run pack` 就不会跟着源码变。
     // 这一行让"我现在跑的到底是哪个构建"变成一眼可见（已经因为这个白绕过两次）。
     `构建 ${__BUILD_STAMP__}（改了源码要 npm run pack 才会变）`,
@@ -278,7 +323,7 @@ function flashForever(text: string): void {
  * `state.grid !== lastGrid` 的引用比较自然会认出来并重贴（闸门也就会重新封上）。
  */
 function restart(): void {
-  state = createSim(L3, L3_SPAWN);
+  state = createSim(levelDef, spawn);
   // 重开要**把输入层那笔欠账销掉**（`latched`）：否则重开前刚按下的那一下会被
   // 欠到新一局，在第一步兑现成一个玩家没想要的方向。`consume` 只清 `latched`、
   // 不动 `held` —— 正按着不放的方向应当继续有效，这与 `input.ts` 里
@@ -298,8 +343,27 @@ const RESTART_KEY = 'r';
 
 window.addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() !== RESTART_KEY) return;
+  // 编辑器开着的时候不抢键：那时用户可能在 JSON 里写 `"r"`。
+  if (editor.isOpen()) return;
   e.preventDefault();
   restart();
+});
+
+/**
+ * `Tab` 开关编辑器；`Esc` 关掉。
+ *
+ * **焦点在编辑器里时不抢 `Tab`** —— 那里面有 `<textarea>`，`Tab` 该是正常的焦点移动。
+ * 所以判据是"事件目标在编辑器面板之外"。
+ */
+window.addEventListener('keydown', (e) => {
+  const insideEditor = editor.el.contains(e.target as Node | null);
+  if (e.key === 'Escape' && editor.isOpen()) {
+    editor.toggle();
+    return;
+  }
+  if (e.key !== 'Tab' || insideEditor) return;
+  e.preventDefault();
+  if (editor.toggle()) editor.show(levelDef, spawn, levelIssues);
 });
 
 function resize(): void {
@@ -443,6 +507,9 @@ function loop(now: number): void {
   let snapped: Set<number> | null = null;
   // 玩家是谁 —— 死亡提示只该为**玩家**亮。见下面那段"必须看是谁"。
   const playerId = state.entities.find((e) => e.kind === 'player')?.id;
+  // 编辑器开着 → **sim 停住**（见 `editor` 那段）。`acc` 照样清空：留着它的话，关掉编辑器的
+  // 那一帧会一次性补跑几十个 tick（追兵瞬间扑上来），那是"暂停"最经典的坑。
+  if (editor.isOpen()) acc = 0;
   while (acc >= STEP_MS) {
     const intents = input.intents();
     const frame = tick(state, intents);

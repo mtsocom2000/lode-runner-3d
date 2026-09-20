@@ -67,6 +67,9 @@ import type { Cell } from '../../types';
  *   （相机在 `+x+z`，近的东西挡远的；柱要是放在 B 岛，杆桥就正好在它后面）。
  * - 两颗宝物：B 岛正中 `(-4,-7)`、**柱顶** `(-8,-8, level 3)`。
  */
+/** 出生点：面 A 底层走廊最西端（与 L1/L2 同一处；`r1` 的 `col 0` 脚下 `r0` 是砖）。 */
+const SPAWN: Cell = { face: 'A', col: 0, row: 1 };
+
 export const L3: LevelDef = {
   id: 'L3',
   name: '立柱',
@@ -137,6 +140,8 @@ export const L3: LevelDef = {
   ],
   /** 一个攀爬者（T15）：放在 B 面最远端 —— 它**会吊杆**（甲板横杆进它的通行图），别在杆上磨蹭。 */
   enemies: [{ kind: 'stalker', cell: { face: 'B', col: 26, row: 1 } }],
+  /** 出生点也收进关卡数据（T21）：编辑器保存的 JSON 要能自包含。 */
+  spawn: SPAWN,
   hints: [
     '目标：两颗宝物分别在水中的**两座岛**上 → 取齐才开出口闸门',
     '两座岛之间**没有板**，只有一根**连杆**：走到岛边朝对岸走就吊上去，横移过去（`A`/`D` 是横向；`W`/`S` 是纵深）',
@@ -147,5 +152,5 @@ export const L3: LevelDef = {
   ],
 };
 
-/** 出生点：面 A 底层走廊最西端（与 L1/L2 同一处；`r1` 的 `col 0` 脚下 `r0` 是砖）。 */
-export const L3_SPAWN: Cell = { face: 'A', col: 0, row: 1 };
+/** 出生点（导出给测试用）。**它就是 `L3.spawn`** —— 一处定义，不再各写一份。 */
+export const L3_SPAWN: Cell = SPAWN;
