@@ -179,14 +179,17 @@ export function collectProps(
   // 但它们与墙上的横杆是**同一种东西**（`PALETTE.bar`、同一根细杆），所以归同一个数组。
   // 分成两处画必然有一天会出现"墙上的杆是陶土红、甲板上的杆是别的色"。
   const layerY = DECK_TOP_Y - CUBE / 2;
-  const hangKeys = new Set(level.deck.filter((c) => c.hang === true).map((c) => deckKey(c)));
+  const deckKeys = new Set(level.deck.map((c) => deckKey(c)));
   for (const cell of level.deck) {
     if (cell.hang !== true) continue;
-    // 杆的**朝向**由邻居说了算：沿 x 有邻居就横着画，否则竖着。两端都空（孤零零一根杆）
-    // 就按 z 画 —— 那只是个记号，走不走得过去由 core 判，画错不会造成"看得见走不到"。
+    // 杆的**朝向** = 它连出去的那条轴：沿 x 有甲板邻居就横着画，否则竖着。
+    //
+    // ⚠ **邻居要按"甲板格"找，不是按"杆格"找**（第一版就是按杆格找的，当场画错）：
+    // 杆桥的**两端接的是板**，只在中间才接杆 —— 只认同类的话，两头那两根会被画成横的、
+    // 中间那根竖的，整条桥看起来像一道栅栏。这个 bug 是 `test/props.test.ts` 抓出来的。
     const level_ = cell.level ?? 0;
-    const alongX = hangKeys.has(deckKey({ x: cell.x - 1, z: cell.z, level: level_ })) ||
-      hangKeys.has(deckKey({ x: cell.x + 1, z: cell.z, level: level_ }));
+    const has = (dx: number): boolean => deckKeys.has(deckKey({ x: cell.x + dx, z: cell.z, level: level_ }));
+    const alongX = has(-1) || has(1);
     const p: Vec3 = [
       cell.x + DECK_SHIFT,
       layerY + level_ * CUBE,
@@ -270,11 +273,18 @@ function islandAndJetties(level: Level): {
   // 宝物**逐颗**照 `level.treasures` 摆。**必须落在格心** —— core 的采集判定是"玩家所在格 ==
   // 宝物格"，而玩家只能站在格心；画在别处（比如岛台的几何中心，那是砖缝）就是"看得见捡不到"。
   //
+  // **高度必须带层**（T17 修）：`level` 是"柱顶那颗"与"岛面那颗"的**唯一区别**，
+  // 漏掉它就等于把柱顶那颗画进柱身里 —— 用户的原话是"宝物在柱顶，这个没看到"。
+  //
   // **以前这里只取 `treasures[0]`**：L2 有两颗，于是第一颗根本没画出来；而画出来那颗收走之后
   // 也不会消失。两处都在用户那条"取了宝物没有任何反应、闸门没移走"的反馈里。
   const prizes = level.treasures.map((t) => ({
     cell: t,
-    p: [t.x + DECK_SHIFT, DECK_TOP_Y + 0.3, t.z + DECK_SHIFT] as Vec3,
+    p: [
+      t.x + DECK_SHIFT,
+      DECK_TOP_Y + (t.level ?? 0) * CUBE + 0.3,
+      t.z + DECK_SHIFT,
+    ] as Vec3,
   }));
 
   return { bricks, ladders, prizes, centre };

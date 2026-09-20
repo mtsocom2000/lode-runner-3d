@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { L1 } from '../src/core/level/levels/l1';
 import { L2 } from '../src/core/level/levels/l2';
+import { L3 } from '../src/core/level/levels/l3';
+import { CUBE } from '../src/render/metrics';
 import { openGates } from '../src/core/rules/goals';
 import { collectProps } from '../src/render/scene';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
@@ -41,6 +43,26 @@ describe('道具层：折痕那一对只画一根（那根"粉红十字"的回�
   it('对照：L1 没有连杆 → 0 个件', () => {
     const level = load(L1);
     expect(collectProps(level, level.grid).bars).toHaveLength(0);
+  });
+
+  it('L3：两处三格缺口各三根杆 + **甲板上的三根杆**，一共 9 件', () => {
+    // 甲板上的杆不在摊平网格里，所以它们走的是 `collectProps` 里另一段 —— 用户报的
+    // "两岛之间只有一根杆，这个没看到"就是那一段的回归。
+    const level = load(L3);
+    const bars = collectProps(level, level.grid).bars;
+    expect(bars).toHaveLength(9); // 3（墙 A）+ 3（墙 B）+ 3（甲板杆桥）
+  });
+
+  it('甲板杆的**朝向**由邻居决定：杆桥沿 x → 横着画（`[CUBE, 0.1, 0.1]`）', () => {
+    const level = load(L3);
+    const bars = collectProps(level, level.grid).bars;
+    // 甲板杆桥在 `x = -6`、`z ∈ {-8,-7,-6}`，世界坐标带 `DECK_SHIFT`(0.5)。
+    // 必须**连 z 一起筛**：B 面缺口那根墙杆恰好也在 `x = -5.5`（两套坐标系在那里重合）。
+    const bridge = bars.filter(
+      (b) => b.p[0] === -6 + 0.5 && b.p[2] >= -8 + 0.5 && b.p[2] <= -6 + 0.5,
+    );
+    expect(bridge).toHaveLength(3);
+    for (const rod of bridge) expect(rod.s).toEqual([CUBE, 0.1, 0.1]);
   });
 });
 

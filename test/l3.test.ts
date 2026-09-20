@@ -118,24 +118,24 @@ describe('T17 · L3 立柱：甲板上的连杆（两岛之间吊着过去）', 
 
 describe('T17 · L3 立柱：柱（三层高，宝物在顶）', () => {
   it('柱顶那一格真的存在，而且只能靠 `Z` 上去', () => {
-    const top = deck(-4, -8, 2);
+    const top = deck(-8, -8, 2);
     expect(isStandable(level, top)).toBe(true);
     expect(reach.cells.has(KEY(top))).toBe(true); // 可达性也认它
   });
 
   it('从柱底连按两次 `Z` 到柱顶', () => {
-    const bottom = stateAt(level, deck(-5, -8));
+    const bottom = stateAt(level, deck(-9, -8));
     if (bottom === null) throw new Error('柱底应当站得住');
     const one = stepLift(level, bottom, 'rise');
-    expect(one).toEqual({ kind: 'move', state: { cell: deck(-5, -8, 1), mode: 'stand' } });
+    expect(one).toEqual({ kind: 'move', state: { cell: deck(-9, -8, 1), mode: 'stand' } });
     if (one.kind !== 'move') throw new Error('unreachable');
     const two = stepLift(level, one.state, 'rise');
-    expect(two).toEqual({ kind: 'move', state: { cell: deck(-5, -8, 2), mode: 'stand' } });
+    expect(two).toEqual({ kind: 'move', state: { cell: deck(-9, -8, 2), mode: 'stand' } });
   });
 
   it('柱顶那一格是宝物的落点（不是"看得见捡不到"）', () => {
     const treasure = L3.treasures?.find((t) => (t.level ?? 0) === 2);
-    expect(treasure).toEqual({ x: -4, z: -8, level: 2 });
+    expect(treasure).toEqual({ x: -8, z: -8, level: 2 });
   });
 });
 
