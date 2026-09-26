@@ -83,7 +83,18 @@ export type RuleId =
    * 判据直接用 `gridStep` —— 与 `step` 内部**同一个函数**，不在这里重写一遍近似
    * （重写就等于给"这一步能不能走"造了第二个出处）。
    */
-  | 'jointNeverEntered';
+  | 'jointNeverEntered'
+  /**
+   * **出口走不到，而这一关又没声明闸门**（T21，规则⑨）—— 这一关**赢不了**。
+   *
+   * 为什么单开一条：`exitGated` 只管"**声明了**闸门"的关卡（它验"封住 / 开了能到"两个方向）。
+   * 一张**没声明闸门**的关卡里出口却走不到，以前只会以 `unreachable` 的**提醒**露一小脸 ——
+   * 而它其实是**错误**：玩家集齐宝物也没用，出口根本去不了。
+   *
+   * 真实案例（用户的 L4）：出口在折痕 B 侧，而 B 侧整片走不到（过折痕那一列没有地板），
+   * 校验却只说"有格子走不到，可以不管"。那是我把严重程度判错了，不是文案问题。
+   */
+  | 'exitUnreachable';
 
 /**
  * 每条规则的**人话标题**（T21）。用户在编辑器里的原话是"校验出来的问题看的不是很明白"：
@@ -106,6 +117,7 @@ export const RULE_TITLES: Readonly<Record<RuleId, string>> = {
   deckJointDangling: '接头指不到实地',
   exitGated: '出口闸门没封住 / 封住了出不去',
   jointNeverEntered: '接头永远进不去（方向被走廊占了）',
+  exitUnreachable: '出口走不到（这一关赢不了）',
 };
 
 export interface LevelIssue {
@@ -236,6 +248,8 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
     // 上面那个 `spawnOk` 门槛 —— 出生点自己站不住时可达集是空的，那会让**每个**出口
     // 都报"未开时到不了"，把真正的问题（出生点摆错）淹掉。
     issues.push(...exitGating(level, spawn));
+    // ⑨ 没有闸门却走不到出口 = **赢不了**（与 `exitGating` 互斥，见 `exitUnreachable` 的注释）。
+    issues.push(...exitReachableWithoutGates(level, spawn));
   }
 
   // 甲板接头不依赖出生点，所以放在 `spawn` 判断之外：没有出生点也该查得出坏接头。
@@ -336,6 +350,33 @@ function jointShadowed(level: Level): readonly LevelIssue[] {
     });
   }
 
+  return issues;
+}
+
+/**
+ * 规则⑨：**没声明闸门时，出口必须从出生点走得到**（T21）。
+ *
+ * 与 `exitGating` 的分工：声明了闸门 → 那边管（它验"封住 / 开了能到"两个方向）；
+ * **没声明闸门** → 这里管"能不能走到"。两边都跑也无害（闸门那半边在没闸门时直接返回）。
+ *
+ * 判据用 `walkReachable` —— 与"格子走不到"和"闸门开了能不能到"是**同一个**函数，
+ * 三处不各算一套。
+ */
+function exitReachableWithoutGates(level: Level, spawn: Cell): readonly LevelIssue[] {
+  if (level.gates.length > 0) return []; // 交给 `exitGating`
+  const exits = cellsOf(level, 'exit');
+  if (exits.length === 0) return []; // 没出口由 `noExit` 报
+  const reachable = walkReachable(level, spawn).cells;
+  const issues: LevelIssue[] = [];
+  for (const exit of exits) {
+    if (reachable.has(cellKey(exit))) continue;
+    issues.push({
+      rule: 'exitUnreachable',
+      severity: 'error',
+      detail: `出口 ${where(exit)} 从出生点**走不到**（这一关又没声明闸门）—— 集齐宝物也没用，这一关赢不了`,
+      at: exit,
+    });
+  }
   return issues;
 }
 

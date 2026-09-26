@@ -82,11 +82,24 @@ describe('validateLevel —— 结构规则', () => {
     expect(rules(validateLevel(def(2, ['X..X', '.E..']), { face: 'A', col: 0, row: 1 }))).toEqual([
       'exitStandable',
       'unreachable',
+      // 顺带**赢不了**：没声明闸门，出口又走不到 → 错误级（规则⑨）。
+      'exitUnreachable',
     ]);
   });
 
   it('没有出口 → noExit', () => {
     expect(rules(validateLevel(def(2, ['XXXX', '....']), { face: 'A', col: 0, row: 1 }))).toEqual(['noExit']);
+  });
+
+  it('**没声明闸门，出口却走不到** → exitUnreachable（错误级：这一关赢不了）', () => {
+    // 用户的真实案例：出口在折痕另一面，而那一整片走不到（过折痕那一列没有地板），
+    // 校验却只报了"有格子走不到"的**提醒** —— 严重程度判错了。规则⑨补上这一条。
+    // 夹具：地板在 col1 缺口，出口在 col2 那一侧 → 从出生点（col0）过不去。
+    const issues = validateLevel(def(3, ['X.XXXX', 'E.E...']), { face: 'A', col: 0, row: 1 });
+    expect(rules(issues)).toContain('exitUnreachable');
+    expect(issues.find((i) => i.rule === 'exitUnreachable')?.severity).toBe('error');
+    // 而且是**那一个**出口（col2），不是出生点脚下那个（col0）。
+    expect(issues.find((i) => i.rule === 'exitUnreachable')?.at).toEqual({ face: 'A', col: 2, row: 1 });
   });
 
   it('梯子中间断一格 → ladderContinuous（并连带 unreachable）', () => {
