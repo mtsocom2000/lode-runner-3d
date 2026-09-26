@@ -36,6 +36,13 @@ export interface EditorCallbacks {
   /** 新建一张空白关卡（两面板墙 + 水面，别的都空）。 */
   createBlank(): void;
   /**
+   * **试玩**：把这段文本应用掉，并**关掉编辑器** —— 于是"我画完了，想玩玩看"是一下点击。
+   *
+   * 返回 `null` = 成功；返回字符串 = 给用户看的错误。**出错时编辑器不关** ——
+   * 否则刚写坏的 JSON 连改的地方都没了。
+   */
+  play(text: string): string | null;
+  /**
    * **体检**：把这段文本当一张关卡查一遍，返回给人看的结论（一行一条）。
    *
    * 为什么查的是**文本框里的**而不是"已经生效的"：文本才是编辑面 —— 你可能刚手改完还没应用，
@@ -71,6 +78,16 @@ const BRUSHES: readonly { readonly label: string; readonly hint: string; readonl
   { label: '板·杆', hint: '甲板：可吊的横杆', brush: { kind: 'deck', mode: 'hang' } },
   { label: '板·梯', hint: '甲板：梯子格（实心柱靠它爬）', brush: { kind: 'deck', mode: 'ladder' } },
   { label: '出生点', hint: '玩家从这一格开始', brush: { kind: 'spawn' } },
+  {
+    label: '看守·无人机',
+    hint: '巡逻无人机（只在墙面内活动，不会上岛）—— 点一次放、再点一次撤',
+    brush: { kind: 'enemy', enemyKind: 'drone' },
+  },
+  {
+    label: '看守·攀爬者',
+    hint: '攀爬者（比玩家慢，但会上岛、也会吊杆）—— 点一次放、再点一次撤',
+    brush: { kind: 'enemy', enemyKind: 'stalker' },
+  },
   { label: '宝物', hint: '甲板上的宝物（再点一次收走）', brush: { kind: 'treasure' } },
   { label: '橡皮', hint: '墙上抹成空、甲板上删格', brush: { kind: 'erase' } },
 ];
@@ -178,6 +195,10 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
     if (error !== null) setNotes([`✗ ${error}`]);
   });
   const blankBtn = button('新建空白关卡', () => cb.createBlank());
+  const playBtn = button('试玩（关掉编辑器）', () => {
+    const error = cb.play(area.value);
+    if (error !== null) setNotes([`✗ ${error}`]);
+  });
   /**
    * 体检：**只报告、不改动**（与「应用」分开）。
    *
@@ -211,7 +232,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   });
   const importBtn = button('导入 JSON…', () => importInput.click());
 
-  bar.append(applyBtn, checkBtn, blankBtn, exportBtn, importBtn, importInput);
+  bar.append(applyBtn, playBtn, checkBtn, blankBtn, exportBtn, importBtn, importInput);
   el.append(head, cellLine, toolbar, notes, area, bar);
 
   const setNotes = (lines: readonly string[]): void => {

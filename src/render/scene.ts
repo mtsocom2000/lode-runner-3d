@@ -166,7 +166,7 @@ export function collectProps(
           bars.push({ p, s: alongZ ? [0.1, 0.1, CUBE] : [CUBE, 0.1, 0.1] });
           break;
         case 'treasure':
-          chips.push({ p, s: [0.38, 0.38, 0.38] }); // 八面体半径 0.19 → 直径 0.38
+          chips.push({ p, s: [CHIP_SIZE, CHIP_SIZE, CHIP_SIZE] });
           break;
         case 'exit':
           exits.push({ p, s: [CUBE, CUBE, CUBE] });
@@ -464,6 +464,15 @@ export interface Stage {
  * `scene` 可注入（T21）：**场景对象本身由调用方持有**，重建关卡时只清空内容、不换容器 ——
  * 于是泛光那套（它抓着 `scene` 的引用）不必跟着重建。不传就自己造一个（旧行为不变）。
  */
+/**
+ * 芯片（墙上宝物 `G`）的直径。
+ *
+ * 曾经是 **0.38**，用户的原话是"场景右侧中部有三个芯片，但是大小很小一点点" ——
+ * 一格是 1.0，0.38 在一屏里就是个点。取 0.6：还是一眼看得出"这是个可以拿的物件"，
+ * 又没有大到与相邻的砖混在一起。
+ */
+const CHIP_SIZE = 0.6;
+
 export function createStage(level: Level, scene: THREE.Scene = new THREE.Scene()): Stage {
   const half = halfExtent(level.fold);
   const wallTop = level.rows + HEADROOM;
@@ -500,7 +509,7 @@ const faceCentre = -half + level.fold / 2;
   scene.add(rim);
 
   const box = new THREE.BoxGeometry(1, 1, 1);
-  const chipGeo = new THREE.OctahedronGeometry(0.19);
+  const chipGeo = new THREE.OctahedronGeometry(CHIP_SIZE / 2);
   const mat = {
     // 砖块材质给**白色**：真正的颜色由逐实例色乘上去（见 createBrickLayer）。
     white: new THREE.MeshLambertMaterial({ color: 0xffffff }),

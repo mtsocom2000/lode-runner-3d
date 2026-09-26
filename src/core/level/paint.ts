@@ -1,6 +1,6 @@
-import type { Cell } from '../types';
+import { cellKey, type Cell } from '../types';
 import { deckKey, type DeckCell } from '../world/deck';
-import { TILE_CHARS, type LevelDef, type TileKind } from '../world/tiles';
+import { TILE_CHARS, type EnemyKind, type LevelDef, type TileKind } from '../world/tiles';
 
 /**
  * **编辑器的"落笔"**（T21 阶段 3）—— 全部是**纯函数**：`(关卡, 笔, 格子) → 新关卡`。
@@ -32,10 +32,17 @@ export type DeckMode = 'board' | 'hang' | 'ladder';
  * 于是 UI 换皮、加快捷键、加撤销都不用碰这一段。
  */
 export type Brush =
-  /** 往墙上写一个字形（`X` / `=` / `.` / `H` / `-` / `G` / `E`）。 */
+  /** 出厂：墙上写一个字形（`X` / `=` / `.` / `H` / `-` / `G` / `E`）。 */
   | { readonly kind: 'tile'; readonly glyph: string }
   /** 甲板：板 / 杆 / 梯子（画在**这一格自己的层**上）。 */
   | { readonly kind: 'deck'; readonly mode: DeckMode }
+  /**
+   * **看守**（电脑控制的敌人）：这一格有就撤掉、没有就放一个（`kind` 决定放哪种）。
+   *
+   * 用户问："为什么不能指定电脑控制的看守位置？" —— 现在能了。一个键既是"放"也是"撤"，
+   * 与宝物那支笔同一个手势。
+   */
+  | { readonly kind: 'enemy'; readonly enemyKind: EnemyKind }
   /** 橡皮：墙上抹成空、甲板上删掉。 */
   | { readonly kind: 'erase' }
   /** 玩家出生点。 */
@@ -61,6 +68,8 @@ export function paint(def: LevelDef, brush: Brush, at: Cell): LevelDef {
       return { ...def, spawn: { face: at.face, col: at.col, row: at.row } };
     case 'treasure':
       return toggleTreasure(def, at);
+    case 'enemy':
+      return toggleEnemy(def, at, brush.enemyKind);
   }
 }
 
@@ -138,4 +147,31 @@ export function toggleTreasure(def: LevelDef, at: Cell): LevelDef {
   const rest = before.filter((t) => deckKey(t) !== key);
   if (rest.length !== before.length) return { ...def, treasures: rest };
   return { ...def, treasures: [...before, { x: at.col, z: at.row, ...(level === 0 ? {} : { level }) }] };
+}
+
+/**
+ * **看守**（电脑控制的敌人）：这一格有就撤掉、没有就放一个。
+ *
+ * 与宝物那支笔同一套手势（一个键既是"放"也是"撤"）。`kind` 由**笔**决定，不由这里猜 ——
+ * 于是"这一关该放无人机还是攀爬者"是**用户的选择**，而"这一格有没有敌人"是**数据的现状**。
+ *
+ * 敌人的出生格**可以不在墙上**（甲板塔上也行，攀爬者会上岛）；站不住由校验的
+ * `enemyStandable` 报出来 —— 那是**错误**级（`createSim` 会当场抛）。
+ */
+export function toggleEnemy(def: LevelDef, at: Cell, kind: EnemyKind): LevelDef {
+  // **层也要带上**（甲板塔上的看守）：`Cell` 的层只有面 `'I'` 有意义，省略 = 0。
+  const level = at.level ?? 0;
+  const cell: Cell = {
+    face: at.face,
+    col: at.col,
+    row: at.row,
+    ...(at.face === 'I' && level !== 0 ? { level } : {}),
+  };
+  const key = cellKey(cell);
+  const before = def.enemies ?? [];
+  const existing = before.find((e) => cellKey(e.cell) === key);
+  const rest = before.filter((e) => cellKey(e.cell) !== key);
+  // 同一种 → 撤掉（"点一次放、再点一次撤"）；换了一种 → **替换**（与甲板那支笔同一条规矩）。
+  if (existing !== undefined && existing.kind === kind) return { ...def, enemies: rest };
+  return { ...def, enemies: [...rest, { kind, cell }] };
 }

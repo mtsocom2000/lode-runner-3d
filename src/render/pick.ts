@@ -29,8 +29,16 @@ export type PickPoint = readonly [number, number, number];
 export function cellFromPoint(level: Level, p: PickPoint): Cell | null {
   const h = halfExtent(level.fold);
   const [x, y, z] = p;
-  // 墙上：砖心在 `-h + BRICK_N`（`cellAnchor` 的偏移），背板在更里面一点 —— 都在 `[-h, -h+1]` 内。
-  const wallReach = -h + CUBE;
+  // 墙上：砖心在 `-h + BRICK_N`（`cellAnchor` 的偏移），背板在更里面一点。
+  //
+  // ⚠ **边界要向外让一点**（`+ EPS`）：砖的**正面**（朝房间那一侧）正好落在 `-h + CUBE` 上，
+  // 而射线打在正面时 `point.x` 恰好等于它 —— 判据写成"严格小于"就会把那一下判成**甲板**，
+  // 于是在墙上擦不掉砖（用户："橡皮对大多数物品擦除都不成功"：正面正是最常点到的那一面，
+  // 顶面才偶尔点到）。这不是浮点抖动的边角情形，是**最常见的一条路径**。
+  //
+  // 让出去的这一丁点与"甲板最靠墙那一列"重合 —— 那一列的两面本来就在同一个平面上，
+  // 几何上分不开，取墙那一侧（甲板那边还能点顶面）。
+  const wallReach = -h + CUBE + 1e-3;
 
   if (x < wallReach) return wallCell(level, 'A', h, y, z);
   if (z < wallReach) return wallCell(level, 'B', h, y, x);

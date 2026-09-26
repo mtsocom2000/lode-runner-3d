@@ -128,6 +128,32 @@ describe('T21·3 落笔：出生点与宝物', () => {
   });
 });
 
+describe('T21·3 落笔：看守（敌人）', () => {
+  it('点一次放一个；同一格再点一次撤掉（与宝物同一套手势）', () => {
+    const b: Brush = { kind: 'enemy', enemyKind: 'stalker' };
+    const one = paint(BLANK, b, A(5, 1));
+    expect(one.enemies).toEqual([{ kind: 'stalker', cell: A(5, 1) }]);
+    expect(paint(one, b, A(5, 1)).enemies).toEqual([]);
+  });
+
+  it('`kind` 由**笔**决定：同一格用另一支笔点会换成那种', () => {
+    const one = paint(BLANK, { kind: 'enemy', enemyKind: 'drone' }, A(5, 1));
+    const two = paint(one, { kind: 'enemy', enemyKind: 'stalker' }, A(5, 1));
+    expect(two.enemies).toEqual([{ kind: 'stalker', cell: A(5, 1) }]);
+  });
+
+  it('多个看守各自独立，不互相顶掉', () => {
+    let def = paint(BLANK, { kind: 'enemy', enemyKind: 'drone' }, A(5, 1));
+    def = paint(def, { kind: 'enemy', enemyKind: 'stalker' }, A(9, 3));
+    expect(def.enemies).toHaveLength(2);
+  });
+
+  it('甲板塔上也能放（攀爬者会上岛）', () => {
+    const def = paint(BLANK, { kind: 'enemy', enemyKind: 'stalker' }, D(-7, -7, 1));
+    expect(def.enemies?.[0]?.cell).toEqual({ face: 'I', col: -7, row: -7, level: 1 });
+  });
+});
+
 describe('T21·3 落笔：橡皮与整体', () => {
   it('橡皮：墙上抹成空、甲板上删格', () => {
     const wall = setWallGlyph(BLANK, A(3, 1), 'X');

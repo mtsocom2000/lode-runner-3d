@@ -330,6 +330,20 @@ const editor = createEditor(host, {
     buildWorld(BLANK);
     editor.show(levelDef, spawn, levelIssues);
   },
+  play(text: string): string | null {
+    // 与「应用」同一条路：先在文本框那张上过 `decodeLevel`，再热重建。
+    const decoded = decodeLevel(text);
+    if (!decoded.ok) return decoded.error;
+    storeLevel(decoded.def);
+    buildWorld(decoded.def);
+    // **关掉编辑器**才算"试玩"（它挡着画面、还停着 sim）。会话控制在这里讲一遍 ——
+    // 用户问的"如何加载并测试这一关"要的正是这条：按一下就能玩，不用知道内部发生了什么。
+    editor.toggle();
+    syncIssueMarks();
+    hud.flash(null);
+    hud.log('试玩：WASD / 方向键走，Q 后挖 / E 前挖，Z 上 / X 下，S 拐上小道，R 重开，Tab 回编辑器');
+    return null;
+  },
   check(text: string): readonly string[] {
     // 查的是**文本框里的那张**（见 `./editor` 里那条注释）：先用同一个 `decodeLevel` 过字形层，
     // 再拿**同一个** `validateLevel` 查规则 —— 与「应用」走的是同一条判据，不另写一份近似。

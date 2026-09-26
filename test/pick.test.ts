@@ -63,6 +63,19 @@ describe('T21·3 拾取：墙上', () => {
     expect(cell?.row).toBe(1);
   });
 
+  it('**砖的正面**（最常点到的那一面）也要认成墙格 —— 橡皮擦不掉的根因', () => {
+    // 砖的正面正好落在 `-h + CUBE` 上。第一版判据是严格小于，于是打在正面上会被判成**甲板**，
+    // 擦除于是扑空（用户："橡皮对大多数物品擦除都不成功"）。
+    const h = halfExtent(level.fold);
+    for (const row of [0, 1, 5, 11]) {
+      const point: readonly [number, number, number] = [-h + CUBE, row + 0.5, -h + 3.5];
+      const cell = cellFromPoint(level, point);
+      expect(cell?.face).toBe('A');
+      expect(cell?.col).toBe(level.fold - 1 - 3);
+      expect(cell?.row).toBe(row);
+    }
+  });
+
   it('墙外 / 关卡外 → null（不编格子）', () => {
     const h = halfExtent(level.fold);
     expect(cellFromPoint(level, [-h + 0.5, -3, -h + 3.5])).toBeNull(); // 地面以下
