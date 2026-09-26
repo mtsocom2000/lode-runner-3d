@@ -1,31 +1,37 @@
 import type { LevelIssue } from '../core/level/validate';
+import type { Brush } from '../core/level/paint';
 import type { Cell } from '../core/types';
+import { cellKey } from '../core/types';
 import type { LevelDef } from '../core/world/tiles';
 import { PALETTE } from '../render/palette';
 
 /**
  * **关卡编辑器面板**（T21，按 `Tab` 开关）。
  *
- * ## 这一版只做"存取 + 校验"，不做落笔
+ * | 阶段 | 做了什么 |
+ * |---|---|
+ * | 1 | 存取 + 校验：JSON 摆出来、可导出/导入、校验清单列在旁边 |
+ * | 2 | "应用" = **热重建**（不刷新页面） |
+ * | 3 | **工具栏 + 在场景里点格子落笔**（本阶段的重点） |
  *
- * 阶段 1 的目标是让关卡**能从外面进来**：把 `LevelDef` 的 JSON 摆在一个能改的地方，
- * 改完按"应用"就重载成那一关；同时把 `validateLevel` 的结果**列在旁边**。
- * 有了这个，用户今天就能手写/粘贴关卡并立刻看到它 —— 而"在 3D 场景里点格子落笔"
- * 是阶段 3 的事（射线拾取 + 工具栏）。
+ * ## 落笔的判据不在这一层
  *
- * ## 为什么"应用"是**重载页面**而不是热替换
+ * 点一下鼠标，实际发生三件事，各归各的层：
  *
- * 场景是模块加载时**一次性**建起来的（`createStage(level)`），要热替换就得先做"关卡一换、
- * 场景重建"那件事 —— 那是阶段 2。在那之前，重载是最诚实的做法：**它不会假装已经生效**，
- * 也不会把半旧的场景留在屏幕上。
+ * 1. **命中点 → 格子**：`render/pick.ts`（纯几何，与摆位读同一组常量）；
+ * 2. **格子 + 笔 → 新关卡**：`core/level/paint.ts`（纯函数，可单测）；
+ * 3. **把新关卡画出来**：`main.ts` 的 `buildWorld`。
  *
- * ## 校验是**提示**，不是闸门
+ * 这个文件只负责**中间那件"用户选的是哪支笔"** —— 工具栏是 UI 状态，不是规则。
+ * 所以它导出 `brush()` 让 main 在点击时来问，而不是自己去做落笔。
  *
- * 编辑过程中关卡必然长期处于"还不合法"的状态（没出口、出生点悬空……）。所以这里只**列出来**，
- * 绝不阻止应用 —— 阻止的话就没法边改边看了。
+ * ## 面板上必须显示"当前是哪一格"
+ *
+ * 折痕那一对（`A:fold-1` 与 `B:fold`）在世界里**重合**，拾取只能确定性地给一个。
+ * 于是"我到底改到了哪一格"必须**看得见** —— 否则用户会遇到"我画的是这面墙、改的是那面墙"。
  */
 export interface EditorCallbacks {
-  /** 应用这段文本。返回 `null` = 成功（调用方负责重载）；返回字符串 = 给用户看的错误。 */
+  /** 应用这段文本。返回 `null` = 成功；返回字符串 = 给用户看的错误。 */
   apply(text: string): string | null;
   /** 新建一张空白关卡（两面板墙 + 水面，别的都空）。 */
   createBlank(): void;
@@ -36,32 +42,55 @@ export interface Editor {
   /** 开关面板；返回打开与否。 */
   toggle(): boolean;
   isOpen(): boolean;
-  /** 打开时把当前关卡与校验结果灌进去。 */
+  /** 打开 / 落笔之后把当前关卡与校验结果灌进去。 */
   show(def: LevelDef, spawn: Cell | undefined, issues: readonly LevelIssue[]): void;
+  /** 当前选中的笔（工具栏状态）。**落笔由调用方执行** —— 见文件头。 */
+  brush(): Brush;
+  /** 报告"刚刚点到哪一格 / 悬停在哪一格"（`null` = 没点到）。 */
+  noteCell(cell: Cell | null): void;
   dispose(): void;
 }
 
-/** 数字色值 → `#rrggbb`（与 `hud.ts` 同一个口径，理由见那边）。 */
+/** 工具栏。顺序按"墙面 → 甲板 → 标记 → 橡皮"分组，与新用户的上手顺序一致。 */
+const BRUSHES: readonly { readonly label: string; readonly hint: string; readonly brush: Brush }[] = [
+  { label: '砖 X', hint: '可挖砖', brush: { kind: 'tile', glyph: 'X' } },
+  { label: '硬砖 =', hint: '挖不动、挡路', brush: { kind: 'tile', glyph: '=' } },
+  { label: '空 .', hint: '抹掉', brush: { kind: 'tile', glyph: '.' } },
+  { label: '梯 H', hint: '梯子（上下爬）', brush: { kind: 'tile', glyph: 'H' } },
+  { label: '杆 -', hint: '横杆（吊着走）', brush: { kind: 'tile', glyph: '-' } },
+  { label: '芯片 G', hint: '墙上的宝物', brush: { kind: 'tile', glyph: 'G' } },
+  { label: '出口 E', hint: '过关的门', brush: { kind: 'tile', glyph: 'E' } },
+  { label: '板', hint: '甲板：实心方块（点方块顶面 = 往上叠一层）', brush: { kind: 'deck', mode: 'board' } },
+  { label: '板·杆', hint: '甲板：可吊的横杆', brush: { kind: 'deck', mode: 'hang' } },
+  { label: '板·梯', hint: '甲板：梯子格（实心柱靠它爬）', brush: { kind: 'deck', mode: 'ladder' } },
+  { label: '出生点', hint: '玩家从这一格开始', brush: { kind: 'spawn' } },
+  { label: '宝物', hint: '甲板上的宝物（再点一次收走）', brush: { kind: 'treasure' } },
+  { label: '橡皮', hint: '墙上抹成空、甲板上删格', brush: { kind: 'erase' } },
+];
+
+/** 数字色值 → `#rrggbb`（与 `hud.ts` 同一个口径）。 */
 function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
 }
+
+const BORDER = `1px solid ${hex(PALETTE.edge)}`;
 
 export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   const el = document.createElement('div');
   el.style.cssText = [
     'position:fixed',
-    'inset:0 0 0 auto', // 贴右边一整条
-    'width:min(560px, 46vw)',
+    'inset:0 0 0 auto',
+    'width:min(520px, 42vw)',
     'z-index:10',
     'display:none',
     'flex-direction:column',
-    'gap:8px',
+    'gap:6px',
     'padding:10px 12px',
     'font-size:12px',
     'line-height:1.5',
     `color:${hex(PALETTE.hard)}`,
     `background:${hex(PALETTE.bg)}f2`,
-    `border-left:1px solid ${hex(PALETTE.edge)}`,
+    `border-left:${BORDER}`,
     'font-family:ui-monospace,SFMono-Regular,Consolas,monospace',
   ].join(';');
   host.appendChild(el);
@@ -76,21 +105,27 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   hint.textContent = '（Tab 关闭）';
   head.append(title, spacer, hint);
 
-  /** 校验清单 / 错误行。两者共用一块，谁有话说谁显示。 */
+  /** "当前是哪一格" —— 折痕那一对重合，这条必须看得见。 */
+  const cellLine = document.createElement('div');
+  cellLine.style.cssText = 'opacity:.85';
+
+  const toolbar = document.createElement('div');
+  toolbar.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap';
+
   const notes = document.createElement('div');
-  notes.style.cssText = `max-height:22vh;overflow:auto;padding:6px 8px;border:1px solid ${hex(PALETTE.edge)};white-space:pre-wrap`;
+  notes.style.cssText = `max-height:20vh;overflow:auto;padding:6px 8px;border:${BORDER};white-space:pre-wrap`;
 
   const area = document.createElement('textarea');
   area.spellcheck = false;
   area.style.cssText = [
     'flex:1',
-    'min-height:40vh',
+    'min-height:30vh',
     'resize:none',
     'padding:8px',
     'font:inherit',
     `color:${hex(PALETTE.hard)}`,
     `background:${hex(PALETTE.bg)}`,
-    `border:1px solid ${hex(PALETTE.edge)}`,
+    `border:${BORDER}`,
   ].join(';');
 
   const bar = document.createElement('div');
@@ -106,11 +141,30 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
       'cursor:pointer',
       `color:${hex(PALETTE.hard)}`,
       `background:${hex(PALETTE.bg)}`,
-      `border:1px solid ${hex(PALETTE.edge)}`,
+      `border:${BORDER}`,
     ].join(';');
     b.addEventListener('click', onClick);
     return b;
   };
+
+  // ── 工具栏：选中态靠背景色，不引入新色（`shell` 是现成的一档灰） ──
+  let index = 0;
+  const brushButtons = BRUSHES.map((entry, i) => {
+    const b = button(entry.label, () => select(i));
+    b.title = entry.hint;
+    b.style.minWidth = '52px';
+    toolbar.appendChild(b);
+    return b;
+  });
+  const select = (i: number): void => {
+    index = i;
+    brushButtons.forEach((b, k) => {
+      b.style.background = k === i ? hex(PALETTE.shell) : hex(PALETTE.bg);
+      b.style.fontWeight = k === i ? '700' : '400';
+    });
+    cellLine.textContent = `笔：${BRUSHES[i]?.label ?? '?'} —— ${BRUSHES[i]?.hint ?? ''}`;
+  };
+  select(0);
 
   const applyBtn = button('应用并重载', () => {
     const error = cb.apply(area.value);
@@ -142,7 +196,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   const importBtn = button('导入 JSON…', () => importInput.click());
 
   bar.append(applyBtn, blankBtn, exportBtn, importBtn, importInput);
-  el.append(head, notes, area, bar);
+  el.append(head, cellLine, toolbar, notes, area, bar);
 
   const setNotes = (lines: readonly string[]): void => {
     notes.replaceChildren();
@@ -170,6 +224,14 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
         ...issues.map((i) => `  · [${i.rule}] ${i.detail}`),
       ];
       setNotes(lines);
+    },
+    brush: () => BRUSHES[index]?.brush ?? { kind: 'erase' },
+    noteCell(cell): void {
+      const which = BRUSHES[index]?.label ?? '?';
+      cellLine.textContent =
+        cell === null
+          ? `笔：${which} —— 未指到格子`
+          : `笔：${which} ｜ 格子 ${cellKey(cell)}${cell.level === undefined ? '' : `（第 ${cell.level} 层）`}`;
     },
     dispose(): void {
       el.remove();

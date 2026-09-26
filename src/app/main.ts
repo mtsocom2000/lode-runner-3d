@@ -11,6 +11,8 @@ import type { DeckCell } from '../core/world/deck';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer, type Syncer } from '../render/meshSync';
 import { createFx, type Fx } from '../render/fx';
+import { cellFromPoint } from '../render/pick';
+import { paint } from '../core/level/paint';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
 import { createStage, type Stage } from '../render/scene';
@@ -340,6 +342,59 @@ if (window.location.hash === '#edit') {
   editor.toggle();
   editor.show(levelDef, spawn, levelIssues);
 }
+
+/**
+ * **编辑器落笔**（T21 阶段 3）：鼠标点一下 → 命中点 → 格子 → 落笔 → 热重建。
+ *
+ * 三层各司其职（见 `./editor` 的文件头）：命中点 → 格子是 `render/pick.ts`（纯几何），
+ * 格子 + 笔 → 新关卡是 `core/level/paint.ts`（纯函数），画出来是 `buildWorld`。
+ * **这里只做连接**，一条判据都不重新推。
+ *
+ * 两个刻意的选择：
+ *
+ * - **只认左键**：右键留给"擦除"这类后续手势，现在按了什么都不做（比"误画一笔"好）；
+ * - **悬停实时报格子**：折痕那一对在世界里重合、拾取只能给一个，所以"我到底指着哪一格"
+ *   必须看得见 —— 那条信息就显示在工具栏下面。
+ */
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+
+/** 屏幕坐标 → 场景里的格子。没射中任何东西 → `null`。 */
+function cellUnderPointer(e: MouseEvent): Cell | null {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointerNdc.set(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  raycaster.setFromCamera(pointerNdc, camera);
+  const first = raycaster.intersectObjects(scene.children, true)[0];
+  if (first === undefined) return null;
+  return cellFromPoint(level, [first.point.x, first.point.y, first.point.z]);
+}
+
+/** 编辑器开着、而且不是在点面板的时候，才回答"指着哪一格"。 */
+function editorTarget(e: MouseEvent): Cell | null {
+  if (!editor.isOpen()) return null;
+  if (editor.el.contains(e.target as Node | null)) return null;
+  return cellUnderPointer(e);
+}
+
+window.addEventListener('mousemove', (e) => {
+  if (!editor.isOpen()) return;
+  editor.noteCell(editorTarget(e));
+});
+
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  const at = editorTarget(e);
+  if (at === null) return;
+  const next = paint(levelDef, editor.brush(), at);
+  if (next === levelDef) return; // 画不动（越界 / 画在同一个字形上）→ 不重建、不存
+  storeLevel(next);
+  buildWorld(next);
+  editor.show(levelDef, spawn, levelIssues);
+  editor.noteCell(at);
+});
 
 /**
  * 值得进日志的 sim 事件 —— 挑的都是"玩法上出了事"的那种。
