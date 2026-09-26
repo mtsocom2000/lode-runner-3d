@@ -1,0 +1,28 @@
+{
+  "id": "L4",
+  "name": "我的关卡（折痕已修）",
+  "fold": 14,
+  "tiles": [
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "XXXXX.HH...H...H.HXXXXXXXXXX",
+    "...H...H...H...HHHXXXXXXXXXX",
+    "...H...H...H....HH....H.HXXX",
+    "...H...H...H....HH....H.H.HH",
+    "...H...H...H....HH....H...HH",
+    "..HH...HH..HXXXXH---------HH",
+    "..HH....H..H....H.........HH",
+    "..HH....H..H..............HH",
+    "..HH....H..HHX.XXXXXXXXXXXHH",
+    "..HH....H---HXXXXXXXXXXXXXHH",
+    "..H---------H.......E.....HH"
+  ],
+  "spawn": {
+    "face": "A",
+    "col": 0,
+    "row": 2
+  },
+  "hints": [
+    "折痕两侧最内列各补了一块砖（col 14），于是第 1 / 7 / 11 行都能过折痕",
+    "出口在 B 面顶行 col 20 —— 从第 11 行过折痕，往右一路走到头"
+  ]
+}
