@@ -262,10 +262,23 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
         issues.length === 0
           ? '校验：通过'
           : `校验：${errors.length} 个错误${warns.length > 0 ? `、${warns.length} 条提醒` : ''}（都不阻止你继续编辑）`;
+      // **列号尺子**（T21）。用户连着两次在"col 14 是哪个字符"上卡住 —— JSON 里只有一串字符，
+      // 没有列号可数，而他看到的每一行都差不多长。把关卡文件里那三行注释尺子搬进面板，
+      // 并用 `↑` 把**折痕那两列**点出来：过折痕就是这两列之间那一步。
+      const cols = def.tiles[0]?.length ?? 0;
+      const base = '      '; // 给"列号"两个汉字留位（等宽字体下 2 个汉字 ≈ 4 格 + 2 空）
+      const tens = Array.from({ length: cols }, (_, i) => (i % 10 === 0 ? String(Math.floor(i / 10)) : ' ')).join('');
+      const ones = Array.from({ length: cols }, (_, i) => String(i % 10)).join('');
+      const foldMarks = Array.from({ length: cols }, (_, i) =>
+        i === def.fold - 1 || i === def.fold ? '↑' : ' ',
+      ).join('');
       const lines: string[] = [
-        `关卡 ${def.id}「${def.name}」 · ${def.tiles[0]?.length ?? 0}×${def.tiles.length} · fold=${def.fold}`,
+        `关卡 ${def.id}「${def.name}」 · ${cols}×${def.tiles.length} · fold=${def.fold}`,
         `出生点 ${spawn === undefined ? '（没声明）' : `${spawn.face}:${spawn.col},${spawn.row}`}`,
         summary,
+        `列号${base}${tens}`,
+        `${base}${ones}`,
+        `${base}${foldMarks}  ← fold=${def.fold}：左 A 面 / 右 B 面，**过折痕跨的就是这两列**`,
         // 场景里**红框 = 错误、灰框 = 提醒**（见 `render/fx.ts`），与这里的记号一一对应。
         ...issues.map((i) => `  ${i.severity === 'error' ? '✗' : '⚠'} ${RULE_TITLES[i.rule]}：${i.detail}`),
       ];
