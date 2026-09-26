@@ -104,14 +104,29 @@ export function setDeck(def: LevelDef, at: Cell, mode: DeckMode): LevelDef {
   return { ...def, deck: [...rest, cell] };
 }
 
-/** 删掉甲板某一格（只删**那一层**）。不在那儿就原样返回。 */
+/**
+ * 删掉甲板某一格。**点方块顶面时抹掉的是方块本身** —— 见下面那段。
+ *
+ * ## "顶面 = 上一层"是**画**的规矩，不是**擦**的规矩（用户 2026-09-21）
+ *
+ * 拾取把"点方块顶面"翻译成**上面那一层**（那是叠方块的手势）。画东西时这条正是我们要的，
+ * 但**擦**的时候，用户点的是"这块方块"，而顶层 `L+1` 通常是空的 —— 于是
+ * `removeDeck` 扑空、什么都没发生。用户的原话：*"橡皮似乎不怎么工作，很难擦掉已经画好的物体。"*
+ *
+ * 所以擦除多一步**回退到下面一层**：`L` 上没东西就试 `L-1`。一层足够 —— 方块是一层一层叠的，
+ * 而"隔着两层去擦"只可能是点歪了，那时**不动**比动更安全。
+ */
 export function removeDeck(def: LevelDef, at: Cell): LevelDef {
   if (at.face !== 'I') return def;
   const level = at.level ?? 0;
   const before = def.deck ?? [];
   const rest = before.filter((c) => !(c.x === at.col && c.z === at.row && (c.level ?? 0) === level));
-  if (rest.length === before.length) return def;
-  return { ...def, deck: rest };
+  if (rest.length !== before.length) return { ...def, deck: rest };
+  // 回退一层（只在"顶面拾取"把目标抬高了时才会走到这里）。
+  if (level <= 0) return def;
+  const below = before.filter((c) => !(c.x === at.col && c.z === at.row && (c.level ?? 0) === level - 1));
+  if (below.length === before.length) return def;
+  return { ...def, deck: below };
 }
 
 /** 宝物：这一格有就收走、没有就放一颗。 */

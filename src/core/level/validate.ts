@@ -110,6 +110,20 @@ export const RULE_TITLES: Readonly<Record<RuleId, string>> = {
 
 export interface LevelIssue {
   readonly rule: RuleId;
+  /**
+   * **这条到底算"错"还是"提醒"**（T21 加）。
+   *
+   * 用户的追问："这个场景里红色框框我都不认为是非法的，哪里不对了？" —— 他说得对：
+   * 这张表里混着两种完全不同的东西，
+   *
+   * - **错误**：这一关**玩不了**（出生点悬空、没有出口、闸门封死……）—— 必须改；
+   * - **提醒**：这一关**能玩**，但有些地方大概是手误或没画完（梯子断了一截、有格子走不到、
+   *   杆底下是实心砖……）—— **可以不管**，尤其是"留白/装饰"本来就走不到。
+   *
+   * 两者都用红框标出来，就等于把"提醒"喊成了"错误" —— 那会让人不信这套校验。
+   * 所以编辑器里**红框只标错误**，提醒用灰框（`render/fx.ts`），列表里也分开数。
+   */
+  readonly severity: 'error' | 'warn';
   /** 人读的一句话，直接进 HUD / 报错信息。 */
   readonly detail: string;
   /** 问题落在哪一格（能定位时给）。 */
@@ -133,6 +147,7 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
     return [
       {
         rule: 'parse',
+        severity: 'error',
         detail: `字形层不合法：${describeErrors(parsed.errors)}`,
         stranded: undefined,
       },
@@ -150,6 +165,7 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
   if (level.rows % 2 !== 0) {
     issues.push({
       rule: 'rowsEven',
+      severity: 'error',
       detail: `高度 ${level.rows} 是奇数：砖行隔行布置要求总高为 2k，否则最顶层砖的行走面落到网格外`,
       stranded: undefined,
     });
@@ -163,6 +179,7 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
   if (spawn !== undefined && !spawnOk) {
     issues.push({
       rule: 'spawnStandable',
+      severity: 'error',
       detail: `出生点 ${where(spawn)} 站不住（那一格不是梯/杆，且正下方不是实心）`,
       at: spawn,
     });
@@ -176,6 +193,7 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
     if (isStandable(level, enemy.cell)) continue;
     issues.push({
       rule: 'enemyStandable',
+      severity: 'error',
       detail: `敌人 #${index}（${enemy.kind}）出生格 ${where(enemy.cell)} 站不住（那一格不是梯/杆，且正下方不是实心）`,
       at: enemy.cell,
     });
@@ -184,12 +202,13 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
   // ③ 至少一个出口，且每个出口都得站得住。
   const exits = cellsOf(level, 'exit');
   if (exits.length === 0) {
-    issues.push({ rule: 'noExit', detail: '这张关卡没有出口（E）：赢了也出不去' });
+    issues.push({ rule: 'noExit', severity: 'error', detail: '这张关卡没有出口（E）：赢了也出不去' });
   }
   for (const exit of exits) {
     if (isStandable(level, exit)) continue;
     issues.push({
       rule: 'exitStandable',
+      severity: 'error',
       detail: `出口 ${where(exit)} 悬空：玩家走到那儿停不住（正下方不是实心）`,
       at: exit,
     });
@@ -270,6 +289,7 @@ function danglingJoints(level: Level): readonly LevelIssue[] {
     if (!declared.has(deckSide)) {
       issues.push({
         rule: 'deckJointDangling',
+        severity: 'error',
         detail: `接头的甲板端 (${joint.deck.x}, ${joint.deck.z}) 不在 level.deck 里：这条边连不上，岛台会变成走不到的孤岛`,
         at: asCell(joint.deck),
       });
@@ -278,6 +298,7 @@ function danglingJoints(level: Level): readonly LevelIssue[] {
     if (!isStandable(level, joint.wall)) {
       issues.push({
         rule: 'deckJointDangling',
+        severity: 'error',
         detail: `接头的墙面端 ${where(joint.wall)} 站不住（越界、实心、或下方没有支撑）：小道得从一块能站人的砖接出去`,
         at: joint.wall,
       });
@@ -306,6 +327,7 @@ function jointShadowed(level: Level): readonly LevelIssue[] {
 
     issues.push({
       rule: 'jointNeverEntered',
+      severity: 'error',
       detail:
         `接头 ${where(joint.wall)} 声明用 \`${joint.enterDir}\` 上小道，可是那一格这个方向**走得通**` +
         `（${grid.kind === 'fall' ? '会掉下去' : '是一步正常的移动'}）—— ` +
@@ -346,6 +368,7 @@ function exitGating(level: Level, spawn: Cell): readonly LevelIssue[] {
     if (before.has(key)) {
       issues.push({
         rule: 'exitGated',
+        severity: 'error',
         detail: `出口 ${where(exit)} 一开始就走得到：闸门没封住它（集齐宝物前它必须是到不了的）`,
         at: exit,
       });
@@ -354,6 +377,7 @@ function exitGating(level: Level, spawn: Cell): readonly LevelIssue[] {
     if (!after.has(key)) {
       issues.push({
         rule: 'exitGated',
+        severity: 'error',
         detail: `出口 ${where(exit)} 闸门全开之后仍然到不了：这一关赢不了（查 gates 是不是声明全了）`,
         at: exit,
       });
@@ -381,6 +405,7 @@ function ladderGaps(level: Level): readonly LevelIssue[] {
       if (above === below + 1) continue;
       issues.push({
         rule: 'ladderContinuous',
+        severity: 'warn',
         detail: `第 ${col} 列的梯子在 r${below} 与 r${above} 之间断了（缺 r${below + 1}）：climb 边要求上下两格都是梯，这一列被劈成两截`,
         at: cellOf(level, col, below + 1),
       });
@@ -412,6 +437,7 @@ function unsupportedBars(level: Level): readonly LevelIssue[] {
       if (!isSolid(level.at(col, row - 1))) continue; // 下方不是实心 → 吊得住
       issues.push({
         rule: 'barHangable',
+        severity: 'warn',
         detail: `横杆 ${where(cellOf(level, col, row))} 的正下方是实心砖：吊着的人会卡在砖里（规则⑦"连杆下方非实心"）`,
         at: cellOf(level, col, row),
       });
@@ -449,7 +475,11 @@ function findUnreachable(level: Level, spawn: Cell): LevelIssue | undefined {
   const { count, largest } = componentsAmong(level, stranded);
   return {
     rule: 'unreachable',
-    detail: `${stranded.length}/${graph.nodes.length} 个可站立格到不了出生点，且它们彼此碎成 ${count} 块（最大 ${largest} 格）`,
+    severity: 'warn',
+    // 文案按用户的追问改写过："红色框框我都不认为是非法的" —— 这条**不是非法**，
+    // 它说的是"从出生点走不过去"。留白、装饰、暂时没接上的平台都长这样，所以把
+    // "可以不管"直接写进话里，别让人以为非改不可。
+    detail: `${stranded.length}/${graph.nodes.length} 个可站立格从出生点走不过去（彼此碎成 ${count} 块，最大 ${largest} 格）；如果那些格子本来就只是留白 / 装饰，可以不管`,
     at: first,
     stranded: stranded.length,
     components: count,

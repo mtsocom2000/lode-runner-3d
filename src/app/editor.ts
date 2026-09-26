@@ -233,11 +233,20 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
     },
     show(def, spawn, issues): void {
       area.value = JSON.stringify(def, null, 2);
+      const errors = issues.filter((i) => i.severity === 'error');
+      const warns = issues.filter((i) => i.severity === 'warn');
+      // **错误与提醒分开数**（用户的追问："这些红框我都不认为是非法的"）：
+      // "玩不了"和"大概没画完"混在一句"N 条问题"里，就没有轻重了。
+      const summary =
+        issues.length === 0
+          ? '校验：通过'
+          : `校验：${errors.length} 个错误${warns.length > 0 ? `、${warns.length} 条提醒` : ''}（都不阻止你继续编辑）`;
       const lines: string[] = [
         `关卡 ${def.id}「${def.name}」 · ${def.tiles[0]?.length ?? 0}×${def.tiles.length} · fold=${def.fold}`,
         `出生点 ${spawn === undefined ? '（没声明）' : `${spawn.face}:${spawn.col},${spawn.row}`}`,
-        issues.length === 0 ? '校验：通过' : `校验：${issues.length} 条问题（不阻止你继续编辑）`,
-        ...issues.map((i) => `  · ${RULE_TITLES[i.rule]}：${i.detail}`),
+        summary,
+        // 场景里**红框 = 错误、灰框 = 提醒**（见 `render/fx.ts`），与这里的记号一一对应。
+        ...issues.map((i) => `  ${i.severity === 'error' ? '✗' : '⚠'} ${RULE_TITLES[i.rule]}：${i.detail}`),
       ];
       setNotes(lines);
     },

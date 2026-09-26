@@ -95,6 +95,16 @@ describe('T21·3 落笔：甲板三态', () => {
     expect(b.deck).toEqual([{ x: -7, z: -7 }]);
     expect(removeDeck(b, D(5, 5))).toBe(b);
   });
+
+  it('**擦除会回退一层**：点方块顶面（拾取给的是上一层）也能抹掉方块本身', () => {
+    // 用户报的"橡皮似乎不怎么工作"就是这个：拾取把"点顶面"翻成上面那一层，
+    // 而顶层是空的 → 擦除扑空 → 什么都不发生。擦除因此多一步回退。
+    const stack = setDeck(setDeck(BLANK, D(-7, -7), 'board'), D(-7, -7, 1), 'board');
+    // 点第 1 层的顶面 → 拾取给第 2 层（空的）→ 回退到第 1 层，把它抹掉。
+    expect(removeDeck(stack, D(-7, -7, 2)).deck).toEqual([{ x: -7, z: -7 }]);
+    // 一层足够：隔着两层不动（那多半是点歪了）。
+    expect(removeDeck(stack, D(-7, -7, 3))).toBe(stack);
+  });
 });
 
 describe('T21·3 落笔：出生点与宝物', () => {

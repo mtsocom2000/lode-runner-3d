@@ -40,8 +40,11 @@ export interface Fx {
    * 为什么需要它：`validateLevel` 给的每条问题本来就带 `at`（哪一格），但只印在面板文字里，
    * 用户得自己把 `A:0,1` 在场景里找出来 —— 用户的原话是"校验出来的问题看的不是很明白"。
    * 把格子**画出来**，文字与场景才对得上。
+   *
+   * **红框只给"错误"**（`severity: 'error'`）：用户的追问是"这些红框我都不认为是非法的" ——
+   * 他说得对，`validate` 里混着"玩不了"和"大概没画完"两种。提醒用**灰框**：看得见、不喊叫。
    */
-  markIssues(cells: readonly Cell[]): void;
+  markIssues(marks: readonly { readonly at: Cell; readonly severity: 'error' | 'warn' }[]): void;
   /** 每帧推进：衰减、到点移除、常驻记号呼吸。`dt` 是**真实秒数**（与 `meshSync.update` 同一口径）。 */
   update(dt: number): void;
   dispose(): void;
@@ -59,12 +62,20 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
     opacity: 1,
   });
   /**
-   * 常驻的"问题格"记号材质。**同色**（`blocked` = "这里不对"），但**不共用**：
-   * `opacity` 长在材质上，而这一类记号要一起呼吸 —— 与闪烁那一族共用的话，
-   * 两者会互相改写对方的不透明度。
+   * 常驻的"问题格"材质，**两种严重程度两个材质**：
+   *
+   * - **错误**（玩不了）用 `blocked` 深红 —— 与"这个动作被拒绝"同一个色，一个含义；
+   * - **提醒**（大概没画完）用 `shell` 灰 —— 看得见、不喊叫。
+   *
+   * 与闪烁那一族**不共用**材质：`opacity` 长在材质上，共用的话两边会互相改写。
    */
   const issueMat = new THREE.LineBasicMaterial({
     color: PALETTE.blocked,
+    transparent: true,
+    opacity: 0.9,
+  });
+  const warnMat = new THREE.LineBasicMaterial({
+    color: PALETTE.shell,
     transparent: true,
     opacity: 0.9,
   });
@@ -96,17 +107,14 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
       group.add(line);
       live.set(key, { line, left: BLOCKED_FLASH_SECONDS });
     },
-    markIssues(cells: readonly Cell[]): void {
+    markIssues(marks): void {
       // 整批替换：先把上一次的清掉。**不做差分** —— 问题的集合每次校验都可能整体变，
       // 差分的收益（省几个线框）远小于"残留一个旧记号"的代价。
-      for (const line of marked) {
-        group.remove(line);
-        line.geometry = frameGeo; // 几何是共用的，别跟着销毁
-      }
+      for (const line of marked) group.remove(line);
       marked.length = 0;
-      for (const at of cells) {
-        const line = new THREE.LineSegments(frameGeo, issueMat);
-        const anchor = cellAnchor(level, at);
+      for (const mark of marks) {
+        const line = new THREE.LineSegments(frameGeo, mark.severity === 'error' ? issueMat : warnMat);
+        const anchor = cellAnchor(level, mark.at);
         line.position.set(anchor.p[0], anchor.p[1], anchor.p[2]);
         line.renderOrder = 997;
         group.add(line);
@@ -119,7 +127,9 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
       // 常驻记号：慢呼吸（0.6~1.0 之间来回），让人一眼看出"这是标出来的，不是画错的"。
       if (marked.length > 0) {
         pulse += step;
-        issueMat.opacity = 0.6 + 0.4 * Math.abs(Math.sin(pulse * 1.6));
+        const breathe = 0.6 + 0.4 * Math.abs(Math.sin(pulse * 1.6));
+        issueMat.opacity = breathe;
+        warnMat.opacity = breathe;
       }
 
       if (live.size === 0) return;

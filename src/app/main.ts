@@ -3,7 +3,7 @@ import { L3, L3_SPAWN } from '../core/level/levels/l3';
 import { BLANK } from '../core/level/levels/blank';
 import { clearStoredLevel, decodeLevel, loadStoredLevel, storeLevel } from './levelstore';
 import { createEditor } from './editor';
-import { RULE_TITLES } from '../core/level/validate';
+import { RULE_TITLES, type LevelIssue } from '../core/level/validate';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel, type Level, type LevelDef, type TileKind } from '../core/world/tiles';
@@ -298,7 +298,11 @@ function syncIssueMarks(): void {
     fx.markIssues([]);
     return;
   }
-  fx.markIssues(levelIssues.map((i) => i.at).filter((c): c is Cell => c !== undefined));
+  fx.markIssues(
+    levelIssues
+      .filter((i): i is LevelIssue & { readonly at: Cell } => i.at !== undefined)
+      .map((i) => ({ at: i.at, severity: i.severity })),
+  );
 }
 
 /**
@@ -334,9 +338,12 @@ const editor = createEditor(host, {
     const def = decoded.def;
     const issues = validateLevel(def, def.spawn);
     if (issues.length === 0) return ['✓ 合法：字形层通过，全部规则通过', `  （${def.id}）`];
+    const errors = issues.filter((i) => i.severity === 'error');
+    const warns = issues.filter((i) => i.severity === 'warn');
     return [
-      `✗ ${issues.length} 条问题：`,
-      ...issues.map((i) => `  · ${RULE_TITLES[i.rule]}：${i.detail}`),
+      `✗ ${errors.length} 个错误、${warns.length} 条提醒：`,
+      // **红框 = 错误、灰框 = 提醒**（见 `render/fx.ts`）：提醒可以在，错误必须改。
+      ...issues.map((i) => `  ${i.severity === 'error' ? '✗' : '⚠'} ${RULE_TITLES[i.rule]}：${i.detail}`),
     ];
   },
 });
