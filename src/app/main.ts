@@ -5,8 +5,9 @@ import { clearStoredLevel, decodeLevel, loadStoredLevel, storeLevel } from './le
 import { createEditor } from './editor';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
-import { parseLevel, type LevelDef } from '../core/world/tiles';
+import { parseLevel, type Level, type LevelDef, type TileKind } from '../core/world/tiles';
 import { surfaceOf, cellKey, type Cell, type Surface } from '../core/types';
+import type { DeckCell } from '../core/world/deck';
 import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer } from '../render/meshSync';
 import { createFx } from '../render/fx';
@@ -23,21 +24,37 @@ import { feedbackFor } from '../render/feedback';
 const host = document.getElementById('app');
 if (!host) throw new Error('找不到 #app 挂载点（index.html 被改坏了？）');
 
-// 关卡先过 parseLevel —— 数据不合法就没有"渲染一个关"这回事，早点炸比看着像空关卡强。
-//
-// **关卡从哪儿来**（T21）：优先读编辑器存下的草稿（`localStorage`），读不到才用内置的 L3。
-// 草稿坏了就**退回 L3**，而不是白屏 —— 编辑器里手改 JSON 很容易改坏，那时最需要的是
-// "还能打开、还能改回去"。
-const storedDef = loadStoredLevel();
-const baseDef: LevelDef = storedDef ?? L3;
-const parsedBase = parseLevel(baseDef);
-const parsed = parsedBase.ok ? parsedBase : parseLevel(L3);
-if (!parsed.ok) {
-  throw new Error(`关卡数据不合法（连内置的 L3 都不合法）：${JSON.stringify(parsed.errors)}`);
+/**
+ * **这一局用哪张关卡**（T21）。
+ *
+ * 优先读编辑器存下的草稿，读不到用内置的 L3；**草稿坏掉也退回 L3** —— 编辑器里手改 JSON
+ * 很容易改坏，那时最需要的是"还能打开、还能改回去"，而不是白屏。
+ *
+ * 注意这里只管**字形层**（`parseLevel`）。"玩不玩得了"（出生点站不住）在下面另一处兜 ——
+ * 那是编辑器新建空白关卡时的常态，绝不能让它白屏。
+ */
+function pickLevel(): { readonly def: LevelDef; readonly level: Level } {
+  const fallback = parseLevel(L3);
+  if (!fallback.ok) {
+    throw new Error(`连内置的 L3 都不合法：${JSON.stringify(fallback.errors)}`);
+  }
+  // `#blank` = 直接从空白关卡开始（不碰草稿）。给编辑器当一个"干净起点"的入口，
+  // 也让无头截图能验"空白关卡不会白屏"这一条（`Tab` 是按键，截图工具按不了）。
+  if (window.location.hash === '#blank') {
+    const blank = parseLevel(BLANK);
+    if (blank.ok) return { def: BLANK, level: blank.level };
+  }
+  const stored = loadStoredLevel();
+  if (stored === null) return { def: L3, level: fallback.level };
+  const parsedStored = parseLevel(stored);
+  if (!parsedStored.ok) return { def: L3, level: fallback.level };
+  return { def: stored, level: parsedStored.level };
 }
-const level = parsed.level;
+
+const picked = pickLevel();
 /** 这一局的关卡数据（编辑器读写的就是它）。 */
-const levelDef: LevelDef = parsed === parsedBase ? baseDef : L3;
+const levelDef: LevelDef = picked.def;
+const level: Level = picked.level;
 const spawn: Cell = levelDef.spawn ?? L3_SPAWN;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -48,8 +65,16 @@ host.appendChild(renderer.domElement);
 const camera = createCamera();
 const stage = createStage(level);
 
-/** sim 初态。出生点由关卡文件给出 —— 摆错位置是关卡 bug，`createSim` 会当场抛。 */
-let state: SimState = createSim(levelDef, spawn);
+/**
+ * sim 初态。出生点摆错、或者整张关卡还没有可站立的位置，`createSim` 都会**当场抛** ——
+ * 那是给"内置关卡写错了"准备的闸门。
+ *
+ * 但**草稿**不一样：编辑器新建的空白关卡必然是这样的（两面板墙 + 水面，一个落脚点都没有）。
+ * 那时候白屏是最糟的结局 —— 用户刚按下"新建空白关卡"，最需要的恰恰是**还能看见编辑器**。
+ * 所以这里兜住：抛了就进"**只能看、不能玩**"的状态（`state === null`），
+ * 场景照旧渲染、编辑器照旧打开、问题照旧列出来。
+ */
+let state: SimState | null = null;
 
 /** 实体层（角色）。它只读 state，不推进 sim。 */
 const syncer = createSyncer(stage.scene, level);
@@ -69,7 +94,7 @@ const sfx = createSfx();
  * 出处只有 `surfaceOf`；这里只负责"玩家是谁"（与 HUD 那段用的是同一个找法）。
  */
 function playerSurface(): Surface {
-  const walker = state.entities.find((e) => e.kind === 'player');
+  const walker = state?.entities.find((e) => e.kind === 'player');
   return walker === undefined ? 'wall' : surfaceOf(walker.cell);
 }
 
@@ -185,6 +210,21 @@ const editor = createEditor(host, {
 });
 hud.log('按 Tab 打开关卡编辑器');
 
+/**
+ * **试着起一局**（T21）。起不来就进"只能看、不能玩"。
+ *
+ * `createSim` 对"出生点站不住"是**当场抛**的 —— 那是给内置关卡写错准备的闸门。
+ * 但草稿不一样：编辑器"新建空白关卡"给的正是两面板墙 + 水面、一个落脚点都没有，
+ * 而那一刻用户最需要的恰恰是**还能看见编辑器**。所以这里兜住：
+ * `state` 留 `null`，场景照旧渲染、编辑器照旧能开、问题照旧列出来。
+ */
+try {
+  state = createSim(levelDef, spawn);
+} catch (e) {
+  hud.log(`✗ 这一关现在不能玩：${e instanceof Error ? e.message : String(e)}`);
+  hud.log('按 Tab 打开编辑器，补上地面 / 出生点，再按「应用并重载」。');
+}
+
 // `#edit` 直接打开编辑器：方便收藏、也方便无头截图验它（`Tab` 是按键，截图工具按不了）。
 if (window.location.hash === '#edit') {
   editor.toggle();
@@ -228,6 +268,22 @@ function screenAxes(): ScreenAxes {
 }
 
 function refreshHud(): void {
+  // `state === null` = 这一关"只能看、不能玩"（见 `state` 那段）。HUD 照旧有内容 ——
+  // 用户这时最需要的是**知道为什么不能玩**，而不是一片空白。
+  if (state === null) {
+    hud.set([
+      `立方角隙 · ${level.name}（折面 · 浅色版）`,
+      `${level.id}：${level.cols}×${level.rows}，fold=${level.fold}`,
+      '⚠ 这一关现在**不能玩**：还没有可站立的出生点。',
+      '按 Tab 打开编辑器补上地面 / 出生点，再按「应用并重载」。',
+      `构建 ${__BUILD_STAMP__}`,
+      ...(levelIssues.length === 0
+        ? []
+        : [`⚠ 关卡校验 ${levelIssues.length} 条：`, ...levelIssues.map((i) => `  · ${i.detail}`)]),
+    ]);
+    return;
+  }
+
   const player = state.entities[0];
   const at =
     player === undefined
@@ -323,6 +379,8 @@ function flashForever(text: string): void {
  * `state.grid !== lastGrid` 的引用比较自然会认出来并重贴（闸门也就会重新封上）。
  */
 function restart(): void {
+  // "只能看、不能玩"的关卡没有可重开的东西 —— 别在这里再抛一次（那会把白屏换成一个崩溃提示）。
+  if (state === null) return;
   state = createSim(levelDef, spawn);
   // 重开要**把输入层那笔欠账销掉**（`latched`）：否则重开前刚按下的那一下会被
   // 欠到新一局，在第一步兑现成一个玩家没想要的方向。`consume` 只清 `latched`、
@@ -396,7 +454,12 @@ function reportProbe(): void {
     // 场景（砖/梯/杆/芯片/出口/宝物）来自 `stage`，**实体**（玩家/无人机）来自 `syncer` ——
     // 两边都是**渲染层自己的账**，探针据此判断"声明了就该画出来"。
     counts: { ...stage.counts, ...syncer.counts() },
-    sim: { tick: state.tick, status: state.status, entities: state.entities.length },
+    // "只能看、不能玩"的关卡没有 sim —— 探针照旧出数（`null` 就是它的答案），
+    // 而不是让探针自己崩掉。
+    sim:
+      state === null
+        ? null
+        : { tick: state.tick, status: state.status, entities: state.entities.length },
     playerExpect: playerExpectation(),
     ...summary,
   };
@@ -430,7 +493,7 @@ function playerExpectation(): {
   /** `meshSync` 真正写进 mesh 的那个位置（补间之后）。 */
   mesh: { x: number; y: number } | null;
 } | null {
-  const player = state.entities[0];
+  const player = state?.entities[0];
   if (player === undefined) return null;
 
   const gl = renderer.getContext();
@@ -478,9 +541,25 @@ let frames = 0;
  * `SimState.grid` 是不可变数组，只有 `applyDig` / `applyBackfill` 会换出新数组，
  * 其余每一帧都原样沿用 `prev.grid`。所以"引用变了"⇔"内容变了"，比逐格 diff 便宜且精确。
  */
-let lastGrid = state.grid;
+/**
+ * **现在**该画哪张网格 / 哪张宝物表（T21）。
+ *
+ * 写成函数而不是就地取值的理由很实在：`state` 在模块顶层被 TS 收窄成 `null`（它只在后面的
+ * 函数里被赋值，TS 不做跨函数推断），于是 `state.grid` 在那里是 `never`。放进函数里读，
+ * TS 用的是**声明类型**（`SimState | null`），收窄问题自然消失。
+ *
+ * `state === null`（只能看不能玩）时给的就是**关卡原始数据** —— 那正是"编辑器里的样子"。
+ */
+function currentGrid(): readonly TileKind[] {
+  return state?.grid ?? level.grid;
+}
+function currentTreasures(): readonly DeckCell[] {
+  return state?.treasures ?? level.treasures;
+}
+
+let lastGrid: readonly TileKind[] = currentGrid();
 /** 上一次贴给岛台的宝物表（T13）。引用比较的理由与 `lastGrid` 完全相同。 */
-let lastTreasures = state.treasures;
+let lastTreasures: readonly DeckCell[] = currentTreasures();
 
 /**
  * 把关卡的**初始状态**推给渲染层。
@@ -490,14 +569,26 @@ let lastTreasures = state.treasures;
  * （比如闸门已开）都可能与关卡文件不同。少了这一步，会看到"闸门开了却没有梯子"
  * "宝物已经取走了却还画着" —— 两件都真实发生过（用户："取了宝物没有任何反应"。）
  */
-stage.setGrid(state.grid);
-stage.setTreasures(state.treasures);
+stage.setGrid(lastGrid);
+stage.setTreasures(lastTreasures);
 
 function loop(now: number): void {
   if (last === 0) last = now;
   const elapsedMs = Math.min(Math.max(now - last, 0), MAX_CATCHUP_MS);
   last = now;
   acc += elapsedMs;
+
+  // "只能看、不能玩"（出生点站不住）→ 没有 sim 可推，只画场景。
+  // 编辑器开着 → **sim 停住**（见 `editor` 那段）。`acc` 照样清空：留着它的话，关掉编辑器的
+  // 那一帧会一次性补跑几十个 tick（追兵瞬间扑上来），那是"暂停"最经典的坑。
+  if (state === null || editor.isOpen()) acc = 0;
+  if (state === null) {
+    fx.update(elapsedMs / 1000);
+    stage.update(now / 1000);
+    bloom.render();
+    requestAnimationFrame(loop);
+    return;
+  }
 
   // 每个 tick 采一次输入**电平**：一次 dt 可能跨好几个 tick，"按住"在这几个 tick 里都有效。
   // 输入锁存：兑现了才销账 —— 否则轻点会被冷却窗口吃掉。
@@ -507,9 +598,6 @@ function loop(now: number): void {
   let snapped: Set<number> | null = null;
   // 玩家是谁 —— 死亡提示只该为**玩家**亮。见下面那段"必须看是谁"。
   const playerId = state.entities.find((e) => e.kind === 'player')?.id;
-  // 编辑器开着 → **sim 停住**（见 `editor` 那段）。`acc` 照样清空：留着它的话，关掉编辑器的
-  // 那一帧会一次性补跑几十个 tick（追兵瞬间扑上来），那是"暂停"最经典的坑。
-  if (editor.isOpen()) acc = 0;
   while (acc >= STEP_MS) {
     const intents = input.intents();
     const frame = tick(state, intents);
