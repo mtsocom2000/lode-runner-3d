@@ -1,4 +1,4 @@
-import type { LevelIssue } from '../core/level/validate';
+import { RULE_TITLES, type LevelIssue } from '../core/level/validate';
 import type { Brush } from '../core/level/paint';
 import type { Cell } from '../core/types';
 import { cellKey } from '../core/types';
@@ -237,7 +237,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
         `关卡 ${def.id}「${def.name}」 · ${def.tiles[0]?.length ?? 0}×${def.tiles.length} · fold=${def.fold}`,
         `出生点 ${spawn === undefined ? '（没声明）' : `${spawn.face}:${spawn.col},${spawn.row}`}`,
         issues.length === 0 ? '校验：通过' : `校验：${issues.length} 条问题（不阻止你继续编辑）`,
-        ...issues.map((i) => `  · [${i.rule}] ${i.detail}`),
+        ...issues.map((i) => `  · ${RULE_TITLES[i.rule]}：${i.detail}`),
       ];
       setNotes(lines);
     },

@@ -3,6 +3,7 @@ import { L3, L3_SPAWN } from '../core/level/levels/l3';
 import { BLANK } from '../core/level/levels/blank';
 import { clearStoredLevel, decodeLevel, loadStoredLevel, storeLevel } from './levelstore';
 import { createEditor } from './editor';
+import { RULE_TITLES } from '../core/level/validate';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel, type Level, type LevelDef, type TileKind } from '../core/world/tiles';
@@ -280,6 +281,24 @@ function buildWorld(def: LevelDef): void {
   resize();
   input.consume();
   refreshHud();
+  syncIssueMarks();
+}
+
+/**
+ * 把"**有问题的格子**"画到场景里（只在编辑器开着时）。
+ *
+ * 用户在编辑器里的原话是"校验出来的问题看的不是很明白" —— 面板上每条问题都写着 `A:0,1`，
+ * 但那要他自己在场景里找。把格子框出来，文字与画面才对得上。
+ *
+ * 只列 `at` **存在**的那些：有些问题（`noExit`、`unreachable` 的汇总）落不到某一格上，
+ * 硬指一格比不指更误导。
+ */
+function syncIssueMarks(): void {
+  if (!editor.isOpen()) {
+    fx.markIssues([]);
+    return;
+  }
+  fx.markIssues(levelIssues.map((i) => i.at).filter((c): c is Cell => c !== undefined));
 }
 
 /**
@@ -317,7 +336,7 @@ const editor = createEditor(host, {
     if (issues.length === 0) return ['✓ 合法：字形层通过，全部规则通过', `  （${def.id}）`];
     return [
       `✗ ${issues.length} 条问题：`,
-      ...issues.map((i) => `  · [${i.rule}] ${i.detail}`),
+      ...issues.map((i) => `  · ${RULE_TITLES[i.rule]}：${i.detail}`),
     ];
   },
 });
@@ -350,10 +369,12 @@ try {
   hud.log('按 Tab 打开编辑器，补上地面 / 出生点，再按「应用并重载」。');
 }
 
-// `#edit` 直接打开编辑器：方便收藏、也方便无头截图验它（`Tab` 是按键，截图工具按不了）。
-if (window.location.hash === '#edit') {
+// `#edit` 直接打开编辑器（方便收藏、也方便无头截图验它 —— `Tab` 是按键，截图工具按不了）。
+// `#blank` 也一并打开：从空白起手本来就是"我要开始画一张"，编辑器不开没有意义。
+if (window.location.hash === '#edit' || window.location.hash === '#blank') {
   editor.toggle();
   editor.show(levelDef, spawn, levelIssues);
+  syncIssueMarks();
 }
 
 /**
@@ -656,11 +677,13 @@ window.addEventListener('keydown', (e) => {
   const insideEditor = editor.el.contains(e.target as Node | null);
   if (e.key === 'Escape' && editor.isOpen()) {
     editor.toggle();
+    syncIssueMarks();
     return;
   }
   if (e.key !== 'Tab' || insideEditor) return;
   e.preventDefault();
   if (editor.toggle()) editor.show(levelDef, spawn, levelIssues);
+  syncIssueMarks();
 });
 
 function resize(): void {

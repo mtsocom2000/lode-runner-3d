@@ -33,7 +33,16 @@ export interface Fx {
    * 每 tick 新建一个框的话，0.15 秒里会堆出十来个重叠的线框，反而糊成一团。
    */
   blockedFlash(at: Cell): void;
-  /** 每帧推进：衰减、到点移除。`dt` 是**真实秒数**（与 `meshSync.update` 同一个口径）。 */
+  /**
+   * 把"**有问题的格子**"整批标出来（T21，编辑器用）—— 与 `blockedFlash` 的区别是它**常驻**：
+   * 一直亮到下一次调用换掉它。`[]` = 全清。
+   *
+   * 为什么需要它：`validateLevel` 给的每条问题本来就带 `at`（哪一格），但只印在面板文字里，
+   * 用户得自己把 `A:0,1` 在场景里找出来 —— 用户的原话是"校验出来的问题看的不是很明白"。
+   * 把格子**画出来**，文字与场景才对得上。
+   */
+  markIssues(cells: readonly Cell[]): void;
+  /** 每帧推进：衰减、到点移除、常驻记号呼吸。`dt` 是**真实秒数**（与 `meshSync.update` 同一口径）。 */
   update(dt: number): void;
   dispose(): void;
 }
@@ -49,9 +58,24 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
     transparent: true,
     opacity: 1,
   });
+  /**
+   * 常驻的"问题格"记号材质。**同色**（`blocked` = "这里不对"），但**不共用**：
+   * `opacity` 长在材质上，而这一类记号要一起呼吸 —— 与闪烁那一族共用的话，
+   * 两者会互相改写对方的不透明度。
+   */
+  const issueMat = new THREE.LineBasicMaterial({
+    color: PALETTE.blocked,
+    transparent: true,
+    opacity: 0.9,
+  });
 
   /** 正在闪的记号。键用 `cellKey` 的风格（同格重复调用要能认出来是同一处）。 */
   const live = new Map<string, { line: THREE.LineSegments; left: number }>();
+
+  /** 常驻的"问题格"记号（编辑器用）。与 `live` 分开：一个是过客、一个是常驻。 */
+  const marked: THREE.LineSegments[] = [];
+  /** 呼吸用的累计时间 —— 常驻记号要有一点动静，否则在一屏浅色里容易被当成画错了的线。 */
+  let pulse = 0;
 
   const keyOf = (c: Cell): string => `${c.face}:${c.col},${c.row}@${c.level ?? 0}`;
 
@@ -72,9 +96,33 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
       group.add(line);
       live.set(key, { line, left: BLOCKED_FLASH_SECONDS });
     },
+    markIssues(cells: readonly Cell[]): void {
+      // 整批替换：先把上一次的清掉。**不做差分** —— 问题的集合每次校验都可能整体变，
+      // 差分的收益（省几个线框）远小于"残留一个旧记号"的代价。
+      for (const line of marked) {
+        group.remove(line);
+        line.geometry = frameGeo; // 几何是共用的，别跟着销毁
+      }
+      marked.length = 0;
+      for (const at of cells) {
+        const line = new THREE.LineSegments(frameGeo, issueMat);
+        const anchor = cellAnchor(level, at);
+        line.position.set(anchor.p[0], anchor.p[1], anchor.p[2]);
+        line.renderOrder = 997;
+        group.add(line);
+        marked.push(line);
+      }
+    },
     update(dt: number): void {
-      if (live.size === 0) return;
       const step = dt > 0 ? dt : 0;
+
+      // 常驻记号：慢呼吸（0.6~1.0 之间来回），让人一眼看出"这是标出来的，不是画错的"。
+      if (marked.length > 0) {
+        pulse += step;
+        issueMat.opacity = 0.6 + 0.4 * Math.abs(Math.sin(pulse * 1.6));
+      }
+
+      if (live.size === 0) return;
       for (const [key, entry] of live) {
         entry.left -= step;
         if (entry.left <= 0) {
@@ -91,8 +139,11 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
     dispose(): void {
       for (const [, entry] of live) group.remove(entry.line);
       live.clear();
+      for (const line of marked) group.remove(line);
+      marked.length = 0;
       frameGeo.dispose();
       frameMat.dispose();
+      issueMat.dispose();
     },
   };
 }

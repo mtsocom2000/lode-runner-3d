@@ -85,6 +85,29 @@ export type RuleId =
    */
   | 'jointNeverEntered';
 
+/**
+ * 每条规则的**人话标题**（T21）。用户在编辑器里的原话是"校验出来的问题看的不是很明白"：
+ * 面板上原来写的是 `[spawnStandable] 出生点 A:0,1 站不住…` —— 前面那个驼峰 id 是给代码看的，
+ * 对人不该要求他先学会这套命名。
+ *
+ * 放在这里（而不是编辑器里）的理由与 `RuleId` 一样：**一个出处**。
+ * 面板、HUD、日志三处都在印同一个 `rule`，谁印谁查这张表。
+ */
+export const RULE_TITLES: Readonly<Record<RuleId, string>> = {
+  parse: '字形层不合法',
+  rowsEven: '高度必须是偶数',
+  spawnStandable: '出生点站不住',
+  enemyStandable: '敌人出生格站不住',
+  exitStandable: '出口格站不住',
+  ladderContinuous: '梯子断了',
+  barHangable: '横杆下方是实心砖（吊不住）',
+  unreachable: '有格子走不到',
+  noExit: '没有出口',
+  deckJointDangling: '接头指不到实地',
+  exitGated: '出口闸门没封住 / 封住了出不去',
+  jointNeverEntered: '接头永远进不去（方向被走廊占了）',
+};
+
 export interface LevelIssue {
   readonly rule: RuleId;
   /** 人读的一句话，直接进 HUD / 报错信息。 */
