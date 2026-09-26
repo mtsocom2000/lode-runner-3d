@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import { deckKey, type DeckCell } from '../core/world/deck';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, glintStrips, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -614,7 +614,8 @@ const faceCentre = -half + level.fold / 2;
   // 往**开口那侧**铺（不是往折痕那侧）是因为折痕那边的接缝要靠砖块挡住。
   // 这个值是**外观参数**，改它不牵连任何逻辑。
   const island = islandAndJetties(level);
-  const islandCentre = island.centre;
+  // `island.centre` 现在只给**注释掉的**高光条用（见下面那几行）—— 留着比删了又加便宜。
+  void island.centre;
   const waterFar = -half + 0.2;
   /** 墙口：最外一列格子的中心在 `-half + fold - 0.5`，再加半个立方体就是砖的外表面。 */
   const wallOuter = -half + level.fold;
@@ -646,10 +647,16 @@ const faceCentre = -half + level.fold / 2;
   //
   // `mat.waterRim` 与 `PALETTE.rim` 都**留着不删** —— 这样还原是"粘回四行"，
   // 而不是"还要把材质和色板条目重新加回来"。多留一个未被引用的材质，比删了又加便宜。
-  // 高光条：沿海面铺 5 条，长度与位置都跟着水面尺寸走（位置见 `glintStrips`，那里有为什么）。
-  for (const strip of glintStrips(islandCentre, waterH)) {
-    put(mat.glint, [strip.p[0], strip.p[1], strip.p[2]], [strip.s[0], strip.s[1], strip.s[2]], false);
-  }
+  // 高光条：**已撤**（用户 2026-09-21："现在这根白线分成了 4 根" —— 他要的是**不要这几条**）。
+  //
+  // 上一版把它修成"真的是 5 条、彼此不重叠"，但那仍然是一组**凭空画在水面上的亮条**：
+  // 空白关卡上水面是主角，它们看起来就像画错了。要还原就取消下面这行的注释
+  //（`glintStrips` 与 `PALETTE.glint` / `mat.glint` 都留着 —— 与 `rim` 同一套处置：
+  // 多留一个未被引用的东西，比删了又加便宜）。
+  //
+  //   for (const strip of glintStrips(island.centre, waterH)) {
+  //     put(mat.glint, [strip.p[0], strip.p[1], strip.p[2]], [strip.s[0], strip.s[1], strip.s[2]], false);
+  //   }
 
   // ── 折面关卡本体 + 岛台/小道 ──
   // 砖走 `createBrickLayer`（每格一个槽位，供 T11 的挖/回填差分）。
