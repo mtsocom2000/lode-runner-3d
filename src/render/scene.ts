@@ -458,7 +458,13 @@ export interface Stage {
   dispose(): void;
 }
 
-export function createStage(level: Level): Stage {
+/**
+ * 造一关的场景。
+ *
+ * `scene` 可注入（T21）：**场景对象本身由调用方持有**，重建关卡时只清空内容、不换容器 ——
+ * 于是泛光那套（它抓着 `scene` 的引用）不必跟着重建。不传就自己造一个（旧行为不变）。
+ */
+export function createStage(level: Level, scene: THREE.Scene = new THREE.Scene()): Stage {
   const half = halfExtent(level.fold);
   const wallTop = level.rows + HEADROOM;
 /**
@@ -476,7 +482,6 @@ const faceCentre = -half + level.fold / 2;
 
   // 内容包围盒（取景用，见 `Stage.bounds` 的说明）在函数末尾算 —— 它要用到水面外沿。
 
-  const scene = new THREE.Scene();
   scene.background = new THREE.Color(PALETTE.bg);
 
   // 灯光按**浅色**场景重新配过：上一版是给深蓝夜色调的（冷色天光 + 强蓝补光），

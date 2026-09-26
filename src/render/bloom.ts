@@ -80,6 +80,13 @@ export interface SelectiveBloom {
   readonly render: () => void;
   /** 视口变化时同步两个 composer 的缓冲尺寸。 */
   readonly setSize: (width: number, height: number) => void;
+  /**
+   * 释放两个 composer 名下的 **GPU 缓冲**（T21）。
+   *
+   * 换关卡时场景要重建，而泛光抓着的是**场景对象的引用** —— 场景容器不换，泛光就不必重建；
+   * 但万一哪天要重建它，这里得有个正经的释放口，否则每换一次关卡就漏一组 render target。
+   */
+  readonly dispose: () => void;
 }
 
 export function createSelectiveBloom(
@@ -136,5 +143,20 @@ export function createSelectiveBloom(
     finalComposer.setSize(width, height);
   };
 
-  return { render, setSize };
+  /**
+   * `EffectComposer.dispose()` 会释放它自己的 render target；泛光那张纹理是
+   * `bloomComposer.renderTarget2` 的纹理 —— 归 `dispose()` 管，这里不重复释放。
+   * 两种情况都包在 `try` 里：不同 three 版本上 composer 的方法名不完全一样，
+   * 而"释放不掉"远不该让换关卡失败。
+   */
+  const dispose = (): void => {
+    try {
+      bloomComposer.dispose();
+      finalComposer.dispose();
+    } catch {
+      // 见上。
+    }
+  };
+
+  return { render, setSize, dispose };
 }

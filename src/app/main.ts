@@ -9,11 +9,11 @@ import { parseLevel, type Level, type LevelDef, type TileKind } from '../core/wo
 import { surfaceOf, cellKey, type Cell, type Surface } from '../core/types';
 import type { DeckCell } from '../core/world/deck';
 import { createCamera, fitCamera } from '../render/camera';
-import { createSyncer } from '../render/meshSync';
-import { createFx } from '../render/fx';
+import { createSyncer, type Syncer } from '../render/meshSync';
+import { createFx, type Fx } from '../render/fx';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
-import { createStage } from '../render/scene';
+import { createStage, type Stage } from '../render/scene';
 import { createHud } from './hud';
 import { createInput, keyLabel } from './input';
 import { createSfx } from './sfx';
@@ -52,10 +52,15 @@ function pickLevel(): { readonly def: LevelDef; readonly level: Level } {
 }
 
 const picked = pickLevel();
-/** 这一局的关卡数据（编辑器读写的就是它）。 */
-const levelDef: LevelDef = picked.def;
-const level: Level = picked.level;
-const spawn: Cell = levelDef.spawn ?? L3_SPAWN;
+
+/**
+ * 这一局的关卡数据（编辑器读写的就是它）。
+ *
+ * **是 `let`**（T21）：编辑器"应用"时要**当场换一关**（阶段 2 的热重建），而不是刷新页面。
+ */
+let levelDef: LevelDef = picked.def;
+let level: Level = picked.level;
+let spawn: Cell = levelDef.spawn ?? L3_SPAWN;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -63,7 +68,31 @@ renderer.shadowMap.enabled = true;
 host.appendChild(renderer.domElement);
 
 const camera = createCamera();
-const stage = createStage(level);
+
+/**
+ * **场景容器由这里持有、一生只有一个**（T21）。
+ *
+ * 换关卡时重建的是**内容**（`createStage(level, scene)` + `dispose()` 清空），容器不换 ——
+ * 于是抓着 `scene` 引用的泛光、相机取景都不必跟着重建。这是"热重建"能便宜的前提。
+ */
+const scene = new THREE.Scene();
+
+/**
+ * 选择性泛光（用户裁定"需要"，第二次返工）。
+ *
+ * **它取代了 `renderer.render(...)`** —— 两条路只能走一条。为什么不能靠调 threshold：
+ * 背景板线性亮度 ≈0.81 比所有物体（≈0.20–0.50）都亮，阈值分不开，见 `bloom.ts` 的推导。
+ *
+ * 声明**放在这里**（scene 一就位就建）而不是文件后半段：它抓着 `scene` 的引用，
+ * 而 `resize()`（`buildWorld` 会调）要读它 —— 放在后面就会踩 TDZ
+ * （`buildWorld` 可能在模块求值期间就被调用）。冒烟测抓到过这一条。
+ */
+const bloom = createSelectiveBloom(renderer, scene, camera, {
+  width: window.innerWidth,
+  height: window.innerHeight,
+});
+
+let stage: Stage = createStage(level, scene);
 
 /**
  * sim 初态。出生点摆错、或者整张关卡还没有可站立的位置，`createSim` 都会**当场抛** ——
@@ -77,7 +106,7 @@ const stage = createStage(level);
 let state: SimState | null = null;
 
 /** 实体层（角色）。它只读 state，不推进 sim。 */
-const syncer = createSyncer(stage.scene, level);
+let syncer: Syncer = createSyncer(scene, level);
 
 /**
  * 特效层（临时记号）与音效（2026-09-19，用户要的"哑火反馈"）。
@@ -85,8 +114,18 @@ const syncer = createSyncer(stage.scene, level);
  * 两者都**只吃事件流**，与 `syncer` 吃状态是两种东西：`syncer` 每帧对账"现在是什么样"，
  * 这两个只关心"刚刚发生了一件事"。
  */
-const fx = createFx(stage.scene, level);
+let fx: Fx = createFx(scene, level);
 const sfx = createSfx();
+
+/**
+ * **上一帧贴给渲染层的网格 / 宝物表**（引用比较用）。
+ *
+ * 声明在这里（而不是贴着 `stage.setGrid` 那几句）是因为 `buildWorld` 也要读写它们 ——
+ * 而 `buildWorld` 可能在模块求值**期间**就被调用。放在后面会踩 TDZ：
+ * `ReferenceError: Cannot access '...' before initialization`（冒烟测当场抓到的）。
+ */
+let lastGrid: readonly TileKind[] = currentGrid();
+let lastTreasures: readonly DeckCell[] = currentTreasures();
 
 /** 键盘（T7）。它只产出 `Intents`，不碰 sim —— 方向映射与"轻点锁存"都在 `./input` 里。 */
 /**
@@ -163,7 +202,7 @@ function actedOn(frame: { readonly events: readonly SimEvent[] }): boolean {
  * 它内部会再 parse 一次 —— 启动时这点开销换来的是"关卡数据只有一个入口"，
  * 不值得为了省这一次而把 parse 结果在几层之间传来传去。
  */
-const levelIssues = validateLevel(levelDef, spawn);
+let levelIssues = validateLevel(levelDef, spawn);
 
 const hud = createHud(host);
 
@@ -185,11 +224,67 @@ if (levelIssues.length === 0) hud.log('关卡校验：通过');
 else for (const issue of levelIssues) hud.log(`✗ 关卡校验 ${issue.rule}：${issue.detail}`);
 
 /**
+ * **换一关**（T21 阶段 2）：数据换掉、场景**当场重建**、sim 重开 —— 不刷新页面。
+ *
+ * ## 哪些换、哪些不换
+ *
+ * 不换的是**与关卡无关**的那些：`renderer` / `camera` / `scene`（容器）/ `bloom` / `input` /
+ * `hud` / `editor` / `sfx`。换的是**与关卡有关**的：`levelDef` / `level` / `spawn` /
+ * `levelIssues` / `stage` / `syncer` / `fx` / `state`。
+ *
+ * 顺序有讲究：**先解析、再拆旧、最后建新**。反过来的话，一次解析失败就会留下一个**空场景** ——
+ * 比报错更难看，而且用户不知道发生了什么。
+ *
+ * `state` 可能又是 `null`（新关卡仍然"只能看不能玩"）—— 那正是编辑过程中的常态。
+ */
+function buildWorld(def: LevelDef): void {
+  const parsedDef = parseLevel(def);
+  if (!parsedDef.ok) {
+    // 调用方（编辑器）已经用 `decodeLevel` 拦过一道，走到这里说明是内部调用写错了。
+    hud.log(`✗ 换关失败：字形层不合法（${parsedDef.errors.length} 条）`);
+    return;
+  }
+
+  // ① 数据
+  levelDef = def;
+  level = parsedDef.level;
+  spawn = levelDef.spawn ?? L3_SPAWN;
+  levelIssues = validateLevel(levelDef, spawn);
+
+  // ② 拆旧
+  syncer.dispose();
+  fx.dispose();
+  stage.dispose();
+
+  // ③ 建新（同一个 `scene` 容器）
+  syncer = createSyncer(scene, level);
+  fx = createFx(scene, level);
+  stage = createStage(level, scene);
+
+  try {
+    state = createSim(levelDef, spawn);
+  } catch (e) {
+    state = null;
+    hud.log(`✗ 这一关现在不能玩：${e instanceof Error ? e.message : String(e)}`);
+    hud.log('补上地面 / 出生点，再按「应用」。');
+  }
+
+  lastGrid = currentGrid();
+  lastTreasures = currentTreasures();
+  stage.setGrid(lastGrid);
+  stage.setTreasures(lastTreasures);
+
+  // ④ 收尾：关卡尺寸可能变了 → 重新取景；HUD 与输入锁存也要跟上。
+  resize();
+  input.consume();
+  refreshHud();
+}
+
+/**
  * **关卡编辑器**（T21，按 `Tab` 开关）。
  *
- * 阶段 1 只做"**存取 + 校验**"：把这一关的 JSON 摆在一个能改的地方，改完按"应用并重载"。
- * 场景是模块加载时一次性建起来的，所以"应用"= 写草稿 + `location.reload()` ——
- * 见 `./editor` 里那段"为什么不是热替换"（热替换是阶段 2）。
+ * 阶段 1 做"存取 + 校验"，阶段 2 让"应用"变成**热重建**（`buildWorld`，不刷新页面）——
+ * 于是改完立刻看到，"所见即所得"。
  *
  * 编辑期间**把 sim 停住**（见下面 tick 循环里的 `editor.isOpen()`）：不然玩家站在原地，
  * 追兵会把他抓住、屏幕上闪一个 GAME OVER，而用户正在改 JSON。
@@ -198,17 +293,32 @@ const editor = createEditor(host, {
   apply(text: string): string | null {
     const decoded = decodeLevel(text);
     if (!decoded.ok) return decoded.error;
-    if (!storeLevel(decoded.def)) return '存不进浏览器存储（隐私模式 / 配额满）';
-    location.reload();
-    return null;
+    // 存草稿失败**不阻止换关** —— 编辑器照样热重建，只是下次打开时读不到这一版。
+    const stored = storeLevel(decoded.def);
+    buildWorld(decoded.def);
+    editor.show(levelDef, spawn, levelIssues);
+    return stored ? null : '已应用，但**存不进浏览器存储**（隐私模式 / 配额满）：下次打开会读不到这一版';
   },
   createBlank(): void {
     clearStoredLevel();
     storeLevel(BLANK);
-    location.reload();
+    buildWorld(BLANK);
+    editor.show(levelDef, spawn, levelIssues);
   },
 });
 hud.log('按 Tab 打开关卡编辑器');
+
+/**
+ * **探针跑之前先原地热重建一次**（T21）。
+ *
+ * `createStage` / `dispose` / `syncer` / `fx` 这一整套重建路径**没有任何单测能覆盖**
+ * （它们都要 three，而架构红线禁止测试里 import three）。而 `?probe` 走的是**真实产物** ——
+ * 于是最便宜的守门办法就是：探针模式下先重建一遍再出图。
+ *
+ * 这条不是"为了测试而写的代码"，而是**把探针的范围扩到它本来就该覆盖的地方**：
+ * 换关卡之后场景还画不画得出来，是产物级的问题，只有产物级的手段能验。
+ */
+if (new URLSearchParams(window.location.search).has('probe')) buildWorld(levelDef);
 
 /**
  * **试着起一局**（T21）。起不来就进"只能看、不能玩"。
@@ -517,18 +627,6 @@ function playerExpectation(): {
   };
 }
 
-/**
- * 选择性泛光（用户裁定"需要"，第二次返工）。创建在这里是因为 `renderer` / `stage` /
- * `camera` 到这一步都已就位，而它必须在 `resize()`（文件末尾那次调用）之前存在。
- *
- * **它取代了 `renderer.render(...)`** —— 两条路只能走一条。为什么不能靠调 threshold：
- * 背景板线性亮度 ≈0.81 比所有物体（≈0.20–0.50）都亮，阈值分不开，见 `bloom.ts` 的推导。
- */
-const bloom = createSelectiveBloom(renderer, stage.scene, camera, {
-  width: window.innerWidth,
-  height: window.innerHeight,
-});
-
 const STEP_MS = 1000 / TICK_HZ;
 const MAX_CATCHUP_MS = 250;
 
@@ -556,10 +654,6 @@ function currentGrid(): readonly TileKind[] {
 function currentTreasures(): readonly DeckCell[] {
   return state?.treasures ?? level.treasures;
 }
-
-let lastGrid: readonly TileKind[] = currentGrid();
-/** 上一次贴给岛台的宝物表（T13）。引用比较的理由与 `lastGrid` 完全相同。 */
-let lastTreasures: readonly DeckCell[] = currentTreasures();
 
 /**
  * 把关卡的**初始状态**推给渲染层。
