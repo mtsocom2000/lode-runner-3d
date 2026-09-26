@@ -7,6 +7,7 @@ import { RULE_TITLES, type LevelIssue } from '../core/level/validate';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
 import { parseLevel, type Level, type LevelDef, type TileKind } from '../core/world/tiles';
+import { supportOf } from '../core/world/graph';
 import { surfaceOf, cellKey, type Cell, type Surface } from '../core/types';
 import type { DeckCell } from '../core/world/deck';
 import { createCamera, fitCamera } from '../render/camera';
@@ -434,6 +435,52 @@ function editorTarget(e: MouseEvent): Cell | null {
   return cellUnderPointer(e);
 }
 
+/**
+ * **这一格站得住吗、为什么**（T21）。
+ *
+ * 用户的原话："我实在不明白哪里全空" —— `A:13,1` 这种记号对人不直观，而"脚下那一格是空的"
+ * 是**可直接行动**的一句话。所以悬停时把判据翻译成人话：
+ *
+ * - 站得住（砖/梯/杆）→ 直说；
+ * - 站不住 → 指出**是哪一格空**（多半是脚下）；越界就说越界；
+ * - 折痕两侧的最内列**在世界里重合**，所以额外报一句"对面是哪一格"—— 过折痕落水
+ *   十有八九是**对面那一列没有地板**（用户的 L4 正是如此）。
+ */
+function diagnose(at: Cell): string {
+  if (at.face === 'I') return at.level === undefined ? '甲板（第 0 层）' : `甲板（第 ${at.level} 层）`;
+
+  const support = supportOf(level, at);
+  const here =
+    support === 'brick'
+      ? '站得住'
+      : support === 'ladder'
+        ? '梯子格（站得住、能上下爬）'
+        : support === 'bar'
+          ? '横杆（吊着）'
+          : '';
+
+  // 折痕对面那一格：只在最内列报（其余列没有"对面"）。
+  const foldPair =
+    at.col === level.fold - 1
+      ? { face: 'B' as const, col: level.fold, row: at.row }
+      : at.col === level.fold
+        ? { face: 'A' as const, col: level.fold - 1, row: at.row }
+        : null;
+  const pairNote =
+    foldPair === null
+      ? ''
+      : `；折痕对面是 ${cellKey(foldPair)}（那边${supportOf(level, foldPair) === null ? '**站不住**' : '站得住'}）`;
+
+  if (support !== null) return `${here}${pairNote}`;
+
+  const below = { face: at.face, col: at.col, row: at.row - 1 };
+  const why =
+    at.row <= 0 || level.at(at.col, at.row - 1) === undefined
+      ? '越界（这一列没有下一行）'
+      : `${cellKey(below)} 是空的`;
+  return `**站不住**：脚下 ${why}${pairNote}`;
+}
+
 // ── 拖笔：按住左键划过的地方连续落笔（用户 2026-09-21 要的） ──
 //
 // 两个问题各有各的解，都不是"调个参数"能糊过去的：
@@ -476,13 +523,13 @@ function paintAt(at: Cell): void {
   const next = paint(base, editor.brush(), at);
   if (next === base) return; // 画不动（越界 / 同一个字形）→ 不进队列
   schedule(next);
-  editor.noteCell(at);
+  editor.noteCell(at, diagnose(at));
 }
 
 window.addEventListener('mousemove', (e) => {
   if (!editor.isOpen()) return;
   const at = editorTarget(e);
-  editor.noteCell(at);
+  editor.noteCell(at, at === null ? undefined : diagnose(at));
   if (painting && at !== null) paintAt(at);
 });
 

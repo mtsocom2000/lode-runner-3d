@@ -60,8 +60,8 @@ export interface Editor {
   show(def: LevelDef, spawn: Cell | undefined, issues: readonly LevelIssue[]): void;
   /** 当前选中的笔（工具栏状态）。**落笔由调用方执行** —— 见文件头。 */
   brush(): Brush;
-  /** 报告"刚刚点到哪一格 / 悬停在哪一格"（`null` = 没点到）。 */
-  noteCell(cell: Cell | null): void;
+  /** 报告"刚刚点到哪一格 / 悬停在哪一格"（`null` = 没点到）。`diagnosis` = 关于这一格的一句话诊断。 */
+  noteCell(cell: Cell | null, diagnosis?: string): void;
   dispose(): void;
 }
 
@@ -272,12 +272,17 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
       setNotes(lines);
     },
     brush: () => BRUSHES[index]?.brush ?? { kind: 'erase' },
-    noteCell(cell): void {
+    noteCell(cell, diagnosis): void {
       const which = BRUSHES[index]?.label ?? '?';
+      if (cell === null) {
+        cellLine.textContent = `笔：${which} —— 未指到格子`;
+        return;
+      }
+      const where = `格子 ${cellKey(cell)}${cell.level === undefined ? '' : `（第 ${cell.level} 层）`}`;
+      // 诊断一句话（站得住吗 / 为什么）—— 用户的追问"我实在不明白哪里全空"要的就是它：
+      // `A:13,1` 这种记号对人不直观，但"**脚下 A:13,0 是空的**"是可直接行动的。
       cellLine.textContent =
-        cell === null
-          ? `笔：${which} —— 未指到格子`
-          : `笔：${which} ｜ 格子 ${cellKey(cell)}${cell.level === undefined ? '' : `（第 ${cell.level} 层）`}`;
+        diagnosis === undefined ? `笔：${which} ｜ ${where}` : `笔：${which} ｜ ${where} —— ${diagnosis}`;
     },
     dispose(): void {
       el.remove();
