@@ -130,8 +130,13 @@ export function createSelectiveBloom(
   finalComposer.addPass(new OutputPass());
 
   // 背景开关：**只在泛光那一遍**摘掉它；合成那一遍必须恢复，否则背景会变黑。
-  const background = scene.background;
+  //
+  // 每一帧**现读** `scene.background`，不在创建时抓一次存着（T21 修）。
+  // 抓一次是个隐藏耦合：谁先建谁后建、背景什么时候被设上，都会悄悄决定画面是浅色还是黑的。
+  // （真实事故：把泛光提到 `createStage` 之前 —— 那时 `scene.background` 还是 `null`，
+  // 于是它每帧都把背景擦成空，用户看到的就是"场景背景变成黑色了"。）
   const render = (): void => {
+    const background = scene.background;
     scene.background = null;
     bloomComposer.render();
     scene.background = background;

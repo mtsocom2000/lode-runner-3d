@@ -127,6 +127,25 @@ if (typeof summary.whiteRatio !== 'number' || summary.whiteRatio > 0.05) {
   failures.push(`近白像素占比 ${summary.whiteRatio} —— 超过 5%，疑似白块`);
 }
 
+// **背景色回归**（T21）：画面里**占比最大**的那一档必须够亮。
+//
+// 背景（`PALETTE.bg`）、砖、水面都是浅色，所以"最大的一档是近黑"只可能意味着一件事：
+// **背景被擦掉了**。真实事故：泛光在**创建时**抓走了 `scene.background`，而那时它还是 `null`
+// —— 于是它每帧都把背景设成空，用户看到的就是"场景背景变成黑色了"。
+//
+// 那条 bug 当时**没被探针拦住**（规则只查"有没有玩家 / 有没有砖 / 白块"），而它恰恰是
+// **产物级**的：源码全对，是渲染管线的时序错了。所以这条补在这里，用产物验。
+const top = (summary.dominant ?? [])[0];
+if (top !== undefined) {
+  const r = parseInt(top.hex.slice(1, 3), 16);
+  const g = parseInt(top.hex.slice(3, 5), 16);
+  const b = parseInt(top.hex.slice(5, 7), 16);
+  const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  if (!(luma > 100)) {
+    failures.push(`画面占比最大的一档是 ${top.hex}（亮度 ${luma.toFixed(0)}）—— 太暗，背景多半被擦掉了`);
+  }
+}
+
 // ── 位置对账：分两层，别混为一谈 ──
 //
 // ① 代码级（必须严）：`meshSync` 真正写进 mesh 的位置，必须**就是** `playerAnchor` 算出的那个点。
