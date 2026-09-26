@@ -35,6 +35,13 @@ export interface EditorCallbacks {
   apply(text: string): string | null;
   /** 新建一张空白关卡（两面板墙 + 水面，别的都空）。 */
   createBlank(): void;
+  /**
+   * **体检**：把这段文本当一张关卡查一遍，返回给人看的结论（一行一条）。
+   *
+   * 为什么查的是**文本框里的**而不是"已经生效的"：文本才是编辑面 —— 你可能刚手改完还没应用，
+   * 也可能拖笔时刚画完。查它才能回答"我**现在写的**这张合不合法"，而不是"上一次应用的那张"。
+   */
+  check(text: string): readonly string[];
 }
 
 export interface Editor {
@@ -171,6 +178,15 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
     if (error !== null) setNotes([`✗ ${error}`]);
   });
   const blankBtn = button('新建空白关卡', () => cb.createBlank());
+  /**
+   * 体检：**只报告、不改动**（与「应用」分开）。
+   *
+   * 编辑过程中关卡长期不合法，所以"合法"这件事必须能**随时问一次** —— 而不是等到应用之后
+   * 从 HUD 角落里看出来。结论直接铺在下面的清单区里（通过时也写一句，免得空着看不出跑没跑）。
+   */
+  const checkBtn = button('校验是否合法', () => {
+    setNotes(cb.check(area.value));
+  });
   const exportBtn = button('导出 JSON', () => {
     const blob = new Blob([area.value], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -195,7 +211,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   });
   const importBtn = button('导入 JSON…', () => importInput.click());
 
-  bar.append(applyBtn, blankBtn, exportBtn, importBtn, importInput);
+  bar.append(applyBtn, checkBtn, blankBtn, exportBtn, importBtn, importInput);
   el.append(head, cellLine, toolbar, notes, area, bar);
 
   const setNotes = (lines: readonly string[]): void => {

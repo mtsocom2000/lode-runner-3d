@@ -307,6 +307,19 @@ const editor = createEditor(host, {
     buildWorld(BLANK);
     editor.show(levelDef, spawn, levelIssues);
   },
+  check(text: string): readonly string[] {
+    // 查的是**文本框里的那张**（见 `./editor` 里那条注释）：先用同一个 `decodeLevel` 过字形层，
+    // 再拿**同一个** `validateLevel` 查规则 —— 与「应用」走的是同一条判据，不另写一份近似。
+    const decoded = decodeLevel(text);
+    if (!decoded.ok) return [`✗ 读不出来：${decoded.error}`];
+    const def = decoded.def;
+    const issues = validateLevel(def, def.spawn);
+    if (issues.length === 0) return ['✓ 合法：字形层通过，全部规则通过', `  （${def.id}）`];
+    return [
+      `✗ ${issues.length} 条问题：`,
+      ...issues.map((i) => `  · [${i.rule}] ${i.detail}`),
+    ];
+  },
 });
 hud.log('按 Tab 打开关卡编辑器');
 
@@ -379,21 +392,82 @@ function editorTarget(e: MouseEvent): Cell | null {
   return cellUnderPointer(e);
 }
 
+// ── 拖笔：按住左键划过的地方连续落笔（用户 2026-09-21 要的） ──
+//
+// 两个问题各有各的解，都不是"调个参数"能糊过去的：
+//
+// - **同一格被重复画**：鼠标停在一格里会连发 `mousemove`。所以记下**这一笔里画过哪些格**，
+//   同一格只画一次 —— 否则每次 `mousemove` 都重写一遍同一个字形；
+// - **卡顿**：每落一笔就 `buildWorld`（整场重建，几毫秒）。快划一下会连做几十次，
+//   于是重建**按帧合并**：落笔立刻进数据（下一笔接着算），画面在下一帧追上。
+//   关键是"下一笔"必须从**待建的那一份**接着算（`queued ?? levelDef`），
+//   否则同一帧里的几笔会各自从旧数据出发，只剩最后一笔生效。
+//
+// 状态声明在这些监听器**之前**：延迟执行的函数里读到后面声明的变量，是这类改动最经典的
+// TDZ 事故（这一轮已经栽过一次：`buildWorld` 读到后面的 `bloom`）。
+let painting = false;
+let paintedThisStroke = new Set<string>();
+let queued: LevelDef | null = null;
+let queuedRaf = 0;
+
+function flushQueued(): void {
+  queuedRaf = 0;
+  const def = queued;
+  queued = null;
+  if (def === null) return;
+  buildWorld(def);
+  editor.show(levelDef, spawn, levelIssues);
+}
+
+function schedule(next: LevelDef): void {
+  queued = next;
+  storeLevel(next);
+  if (queuedRaf === 0) queuedRaf = requestAnimationFrame(flushQueued);
+}
+
+/** 在某一格落一笔（同一笔里同一格只画一次）。 */
+function paintAt(at: Cell): void {
+  const key = cellKey(at);
+  if (paintedThisStroke.has(key)) return;
+  paintedThisStroke.add(key);
+  const base = queued ?? levelDef;
+  const next = paint(base, editor.brush(), at);
+  if (next === base) return; // 画不动（越界 / 同一个字形）→ 不进队列
+  schedule(next);
+  editor.noteCell(at);
+}
+
 window.addEventListener('mousemove', (e) => {
   if (!editor.isOpen()) return;
-  editor.noteCell(editorTarget(e));
+  const at = editorTarget(e);
+  editor.noteCell(at);
+  if (painting && at !== null) paintAt(at);
 });
 
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   const at = editorTarget(e);
   if (at === null) return;
-  const next = paint(levelDef, editor.brush(), at);
-  if (next === levelDef) return; // 画不动（越界 / 画在同一个字形上）→ 不重建、不存
-  storeLevel(next);
-  buildWorld(next);
-  editor.show(levelDef, spawn, levelIssues);
-  editor.noteCell(at);
+  painting = true;
+  paintedThisStroke = new Set();
+  paintAt(at);
+});
+
+window.addEventListener('mouseup', () => {
+  if (!painting) return;
+  painting = false;
+  paintedThisStroke.clear();
+  // 松手立刻把队列里那一版画出来，不等下一帧 —— 否则最后落下的几笔要等一拍才出现。
+  if (queuedRaf !== 0) {
+    cancelAnimationFrame(queuedRaf);
+    flushQueued();
+  }
+});
+
+// 拖出窗口 / 切走标签页时也要收笔，否则回来还在"按住"状态、鼠标一动就落笔。
+window.addEventListener('blur', () => {
+  painting = false;
+  paintedThisStroke.clear();
 });
 
 /**
