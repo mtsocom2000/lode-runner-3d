@@ -143,6 +143,32 @@ export const WATER_Y = 0.35;
 export const DECK_TOP_Y = 0.5 + CUBE / 2;
 
 /**
+ * **水面高光条**的位置与尺寸（T21 修）。
+ *
+ * 本意是"沿海面铺 5 条淡淡的横纹"（把一整片平水面打散），但第一版把它们**沿着自己的长度方向
+ * 排** —— 于是首尾相叠、合成**一根长白线**，在空白关卡上尤其像画错了（用户："在场景中下部有根白线"）。
+ *
+ * 判据落在这里而不是留在 `scene.ts` 里，是为了让它**可测**：那一版能出问题，正是因为
+ * "5 条"与"叠成一条"都能画得出来，而没有任何东西盯着它。现在
+ * `test/metrics.test.ts` 断言：条数对、**彼此不重叠**、而且沿**垂直于长度的那条轴**排开。
+ *
+ * `centre` / `half` 是水面的中心与半宽（跟着关卡尺寸走，见 `scene.ts` 的 `waterFar` / `waterNear`）。
+ */
+export function glintStrips(centre: number, half: number): readonly { readonly p: Vec3; readonly s: Vec3 }[] {
+  const out: { p: Vec3; s: Vec3 }[] = [];
+  for (let i = 0; i < 5; i++) {
+    const t = (i - 2) / 2; // -1 .. +1
+    out.push({
+      // 沿 **z** 排开，而每条自身沿着 **x** —— 长度方向与排列方向**垂直**，这才是"5 条"。
+      p: [centre, WATER_Y + 0.02, centre + t * half * 0.6],
+      s: [half * 0.5, 0.02, 0.16],
+    });
+  }
+  return out;
+}
+
+
+/**
  * 甲板**第二层及以上**的板厚（T17）。第一层是整块立方（它就是岛面本身），上面几层是**薄板**。
  *
  * 为什么上面几层必须薄：一层只有 `CUBE` 高，而角色有 `PLAYER_SIZE` 高 —— 每层都画成整块立方的话，

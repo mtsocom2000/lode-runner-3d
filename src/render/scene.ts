@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { faceOf, halfExtent } from '../core/world/fold';
 import { deckKey, type DeckCell } from '../core/world/deck';
 import type { Level, TileKind } from '../core/world/tiles';
-import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, type Anchor } from './metrics';
+import { BRICK_FACE, CUBE, DECK_SHIFT, DECK_TOP_Y, HEADROOM, INK, PIT_DEPTH, PIT_RECESS, WATER_Y, cellAnchor, glintStrips, type Anchor } from './metrics';
 import type { Bounds } from './camera';
 import { PALETTE } from './palette';
 import type { Vec3 } from './tween';
@@ -646,17 +646,9 @@ const faceCentre = -half + level.fold / 2;
   //
   // `mat.waterRim` 与 `PALETTE.rim` 都**留着不删** —— 这样还原是"粘回四行"，
   // 而不是"还要把材质和色板条目重新加回来"。多留一个未被引用的材质，比删了又加便宜。
-  // 高光条：沿海面铺 5 条，长度与位置都跟着水面尺寸走（不再是写死的 2.4 / 1.9）。
-  // 位置相对**岛心**取（那是画面中心），而不是相对水面中心 —— 水面偏向开口那侧之后，
-  // 两者不再重合，用水面中心会把高光推到画面外。
-  for (let i = 0; i < 5; i++) {
-    const t = (i - 2) / 2; // -1 .. +1
-    put(
-      mat.glint,
-      [islandCentre + t * waterH * 0.6, WATER_Y + 0.02, islandCentre],
-      [waterH * 0.5, 0.02, 0.16],
-      false,
-    );
+  // 高光条：沿海面铺 5 条，长度与位置都跟着水面尺寸走（位置见 `glintStrips`，那里有为什么）。
+  for (const strip of glintStrips(islandCentre, waterH)) {
+    put(mat.glint, [strip.p[0], strip.p[1], strip.p[2]], [strip.s[0], strip.s[1], strip.s[2]], false);
   }
 
   // ── 折面关卡本体 + 岛台/小道 ──

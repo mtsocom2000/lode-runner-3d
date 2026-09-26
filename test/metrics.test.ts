@@ -4,7 +4,7 @@ import { DIRS, OPPOSITE_DIR, step } from '../src/core/rules/movement';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, glintStrips, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -257,6 +257,32 @@ describe('metrics：stepDelta —— 一步的世界位移（HUD 提示与朝向
  * **门**（甲板 ↔ 墙面）两侧的键含义不同 → 掐；**折痕**（A ↔ B）是同一条走廊折了一下 → 不掐
  * （"沿走廊一直走就能过去"那条教学照旧）。
  */
+describe('metrics：水面高光条（"5 条"必须真的是 5 条）', () => {
+  it('条数 5、**彼此不重叠**：沿 z 排开，而且间隔大于自身厚度', () => {
+    const strips = glintStrips(-7, 8);
+    expect(strips).toHaveLength(5);
+    const zs = strips.map((s) => s.p[2]).sort((a, b) => a - b);
+    for (let i = 1; i < zs.length; i++) {
+      const gap = (zs[i] ?? 0) - (zs[i - 1] ?? 0);
+      // 自身在 z 上的厚度是 0.16 —— 间隔必须明显大于它，否则首尾相叠就又是一根长线。
+      expect(gap).toBeGreaterThan(0.16 * 2);
+    }
+  });
+
+  it('**长度方向与排列方向垂直**：每条沿 x 长、沿 z 薄（第一版正是这一条反了）', () => {
+    for (const s of glintStrips(0, 10)) {
+      expect(s.s[0]).toBeGreaterThan(s.s[2]); // 长在 x
+      expect(s.s[2]).toBeLessThan(0.2); // 薄在 z
+    }
+  });
+
+  it('居中：最中间那条落在中心上，两侧对称', () => {
+    const zs = glintStrips(-3, 6).map((s) => s.p[2]);
+    expect(zs[2]).toBe(-3);
+    expect((zs[0] ?? 0) + (zs[4] ?? 0)).toBeCloseTo(-6, 10); // 关于中心对称
+  });
+});
+
 describe('metrics：跨面的那一步之后，按住的键还有没有意义', () => {
   it('门（甲板 → 墙面）：按住的键在新表面上**不再指向原方向** → 该掐', () => {
     const lv = load(CONCEPT_MINIMAL);
