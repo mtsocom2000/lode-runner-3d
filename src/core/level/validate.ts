@@ -1,5 +1,5 @@
 import { cellKey, type Cell } from '../types';
-import { openGates } from '../rules/goals';
+import { gateHolds, openGates } from '../rules/goals';
 import { gridStep } from '../rules/movement';
 import { walkNeighbours, walkReachable } from '../rules/reach';
 import { asCell, deckKey } from '../world/deck';
@@ -313,14 +313,17 @@ function gateKinds(level: Level): readonly LevelIssue[] {
     if (gate.face === 'I') continue; // 甲板格：`openGates` 自己会跳过，不必在这里重复报
     const cell = cellOf(level, gate.col, gate.row);
     const here = level.at(gate.col, gate.row);
-    if (here === 'hard') continue;
+    // 判据与出口笔共用一处（`gateHolds`）—— 报的和清的是同一条规则。
+    if (gateHolds(here, gate)) continue;
     issues.push({
       rule: 'gateNotBrick',
       severity: 'error',
       detail:
         `闸门 ${where(cell)} 那一格现在是「${here ?? '越界'}」而不是硬砖 —— ` +
         `开闸会把它换成空格，等于**把它抹掉**。` +
-        (here === 'exit' ? '（出口被抹掉之后，走到那儿也不过关。）' : ''),
+        (here === 'exit' ? '（出口被抹掉之后，走到那儿也不过关。）' : '') +
+        `把 \`gates\` 里这一条删掉即可；或者用「出口」笔把出口**重画一次**，` +
+        `落笔时会顺手清掉这类残留声明。`,
       at: cell,
     });
   }

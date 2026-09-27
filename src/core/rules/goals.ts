@@ -32,6 +32,19 @@ import type { Level, TileKind } from '../world/tiles';
  */
 
 /**
+ * 一条闸门声明**成立**吗：那格现在必须真的是硬砖。
+ *
+ * 开闸的语义就是"把它换成空格"（见文件头），所以声明落在**出口 / 梯子 / 宝物 / 空格**上
+ * 都不成立 —— 那一格会被抹掉，或是本来就能走、闸门形同虚设。
+ *
+ * **判据只有这一处**：`validate` 的规则⑪（报出来）与 `paint` 的出口笔（落笔时顺手清掉）
+ * 都调它。甲板格不判 —— `openGates` 自己会跳过，这里只管墙上的格子。
+ */
+export function gateHolds(kind: TileKind | undefined, gate: Cell): boolean {
+  return gate.face === 'I' || kind === 'hard';
+}
+
+/**
  * 打开出口闸门：那些**假砖消失**（换成空格）。返回**新**网格，不改入参。
  *
  * ## 为什么校验层也用这个函数

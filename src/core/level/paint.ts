@@ -1,5 +1,6 @@
 import { cellKey, type Cell } from '../types';
 import { deckKey, type DeckCell } from '../world/deck';
+import { gateHolds } from '../rules/goals';
 import { faceOf } from '../world/fold';
 import { TILE_CHARS, type EnemyKind, type LevelDef, type TileKind } from '../world/tiles';
 
@@ -167,7 +168,7 @@ export function placeExit(def: LevelDef, at: Cell): LevelDef {
     flank.push(cell);
   }
   /**
-   * 名单去重 + **把这一格自己剔出去**。
+   * 名单去重 + **把这一格自己剔出去** + **顺手清掉已经失效的声明**。
    *
    * ⚠ 比较只看 **(col, row)**，不看 `face` —— 因为 `openGates` 就是按 `row * cols + col`
    * 取格的（`gate.face` 只用来排掉甲板格）。按 `face` 比会让"同一个格子的两种写法"
@@ -175,10 +176,21 @@ export function placeExit(def: LevelDef, at: Cell): LevelDef {
    *
    * "把自己剔出去"防的是一个真事故：出口挨着出口画（或手改 JSON 留下旧名单）时，
    * 名单里会留着**出口那一格**，开闸就把出口本身清掉 —— 用户看到的正是"出口变成了梯子"。
+   *
+   * "清掉失效声明"防的是同一个事故的**另一半**：出口从 col 12 挪到 col 11 之后，
+   * 12 的两侧（11、13）里有一条会留在名单上，而那一格现在是**空格**（用户报的 `A:13,11`）。
+   * 判据与校验规则⑪**同一条**：闸门格必须是硬砖。这不是"猜哪条声明属于哪个已消失的出口"，
+   * 而是把**本来就不成立**的声明删掉 —— 它开闸时只会多清一格作者画的东西。
    */
   const sameCell = (a: Cell, b: Cell): boolean => a.col === b.col && a.row === b.row;
   const kept = (next.gates ?? []).filter(
-    (g) => !flank.some((f) => sameCell(f, g)) && !sameCell(g, { face: at.face, col: at.col, row: at.row }),
+    (g) =>
+      !flank.some((f) => sameCell(f, g)) &&
+      !sameCell(g, { face: at.face, col: at.col, row: at.row }) &&
+      gateHolds(
+        glyphTileAt(next, { face: faceOf(g.col, next.fold), col: g.col, row: g.row }) ?? undefined,
+        g,
+      ),
   );
   return { ...next, gates: [...kept, ...flank] };
 }

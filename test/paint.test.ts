@@ -189,6 +189,27 @@ it('把出口抹掉 → 它两侧那对闸门不再登记（砖留着，叫"闸�
     // 不去猜"哪些旧声明属于哪个已消失的出口"，那种推断一旦猜错就是把别人的砖清掉。
   });
 
+  it('失效的旧声明：那一格**不再是硬砖**时，重画出口会把它清掉（用户报的 `A:13,11`）', () => {
+    // 用户那一关的残留正是这个形状：出口曾在 col 12（它登记 11 与 13），后来挪到 11；
+    // `A:11,11` 死在**出口本身**上（被"剔掉自己"那条清掉），`A:13,11` 死在**空格**上。
+    const at12 = paint(BLANK, exitBrush, A(12, 3));
+    expect(at12.gates?.map((g) => g.col).sort()).toEqual([11, 13]);
+
+    // 13 那格的砖后来被抹掉（用户那一关就是空的）—— 登记还在，但已经不成立。
+    // 注：`fold = 14` 时 col 13 是折痕列，擦它会**两面一起擦**（见上一条 describe）。
+    let def = paint(at12, { kind: 'erase' }, A(13, 3));
+    expect(def.tiles[3]?.[13]).toBe('.');
+    expect(def.gates?.map((g) => g.col).sort()).toEqual([11, 13]); // 擦除不清名单
+
+    // 把出口挪到 11：11 变成出口（剔掉自己），13 已经不是硬砖（失效）→ 两条都清掉。
+    def = paint(def, exitBrush, A(11, 3));
+    expect((def.gates ?? []).map((g) => g.col).sort()).toEqual([10, 12]);
+    // 留下的每一条都真的指向硬砖 —— 这就是"成立"的判据本身。
+    for (const g of def.gates ?? []) {
+      expect(def.tiles[g.row]?.[g.col]).toBe('=');
+    }
+  });
+
   it('L3 手工排的四个闸门**正好**是两对出口的两侧 —— 房规在真数据里也成立', () => {
     const flanks = new Set<string>();
     L3.tiles.forEach((line, row) => {
