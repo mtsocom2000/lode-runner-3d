@@ -96,6 +96,14 @@ export type RuleId =
    * 校验却只说"有格子走不到，可以不管"。那是我把严重程度判错了，不是文案问题。
    */
   | 'exitUnreachable'
+  /**
+   * **折痕两侧对不上**（规则⑥）：一边站得住，对面"能进但站不住" —— 走过去就是落水。
+   *
+   * 同一处坑已经栽过**三次**（L4、`l4-fixed`、用户 2026-09-23 的第三关），每次都是作者
+   * 在 `fold-1` / `fold` 这两列里留了一个 `.` —— 而这两列**在画面里是同一个点**，
+   * 所以"对面那格是空的"这件事**在画面上完全看不出来**。靠人眼盯不出来，就得由规则盯。
+   */
+  | 'seamMismatch'
   /** **每一块宝物都要走得到**（T21，规则⑩）—— 取不到就集不齐，集不齐就开不了闸门。 */
   | 'treasureUnreachable';
 
@@ -121,6 +129,7 @@ export const RULE_TITLES: Readonly<Record<RuleId, string>> = {
   exitGated: '出口闸门没封住 / 封住了出不去',
   jointNeverEntered: '接头永远进不去（方向被走廊占了）',
   exitUnreachable: '出口走不到（这一关赢不了）',
+  seamMismatch: '折痕两侧对不上（走过去会落水）',
   treasureUnreachable: '宝物走不到（取不到就开不了闸门）',
 };
 
@@ -263,6 +272,74 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
   issues.push(...danglingJoints(level));
   issues.push(...jointShadowed(level));
 
+  // ⑥ 折痕两侧对不上（**第三次同款事故**，见 `seamMismatch`）。
+  // 可达集只在出生点站得住时才有意义 —— 但它只影响**分级**（够得着的陷阱才是错误），
+  // 所以这一条不放进上面那个 `spawnOk` 块里：还没放出生点时也该看得见。
+  issues.push(
+    ...seamFalls(level, spawnOk && spawn !== undefined ? walkReachable(level, spawn).cells : null),
+  );
+
+  return issues;
+}
+
+/**
+ * 规则⑥：**折痕两侧对不上**。
+ *
+ * ## 为什么这条必须由工具来盯
+ *
+ * 折痕两侧最内列（`fold - 1` 与 `fold`）**在世界里是同一个点**（见 `fold.ts` 的
+ * `halfExtent`）。所以"过折痕"不是走一格，而是**原地转 90°**：从 A 侧那一列跨到 B 侧那一列，
+ * 位置一动不动。而**站得住与否是逐格算的** —— `supportOf` 只看**自己那一列的下面那一格**。
+ *
+ * 于是出现这样一种格：A:13,2 站得住（(13,1) 有砖），B:14,2 也能走进去但站不住（(14,1) 是空的）。
+ * 两格重合在画面上是同一个点 —— 玩家看不出自己在哪一侧，**走过去就掉下去**。
+ *
+ * 用户这一关（`U-Seam` 夹具）正是：`r1` 的平台在 col 8..13 与 15..19 各铺了一段，
+ * 中间 col 14 空了一格。作者修的时候眼睛盯着的是"砖够不够"，而这一格的问题在**隔壁那一列**。
+ *
+ * ## 只报"能进但站不住"，不报"对面是砖"
+ *
+ * 对面是砖（`=`/`X`）时跨过去是**被挡住**，那是墙、是正常地形；只有"走进去然后掉下去"
+ * 才是陷阱。这条区分是规则的全部要点 —— 少了它，折痕上任何一堵墙都会报一次。
+ *
+ * ## 分级
+ *
+ * 够得着（可达）才是**错误**：玩家真会踩上去。够不着的（还没放出生点、或那一片本来就走不到）
+ * 只作**提醒** —— 它仍是同一个手误，只是暂时不咬人。
+ */
+function seamFalls(level: Level, reachable: ReadonlySet<string> | null): readonly LevelIssue[] {
+  const issues: LevelIssue[] = [];
+  const left = level.fold - 1;
+  const right = level.fold;
+  if (left < 0 || right >= level.cols) return issues;
+
+  for (let row = 0; row < level.rows; row++) {
+    const a: Cell = { face: 'A', col: left, row };
+    const b: Cell = { face: 'B', col: right, row };
+    const aHolds = isStandable(level, a);
+    const bHolds = isStandable(level, b);
+    if (aHolds === bHolds) continue;
+
+    const here = aHolds ? a : b;
+    const over = aHolds ? b : a;
+    // 对面是砖 → 那是墙，不是陷阱（这条区分见上面的注释）。
+    if (isSolid(level.at(over.col, over.row))) continue;
+
+    // 缺的是**对面那一列的支撑格**：补上它，对面就站得住了。
+    // （对面能走进来 ⇒ 它自己那格是通的 ⇒ 它的支撑格一定在界内，`row - 1 >= 0` 成立。）
+    const missing: Cell = { face: over.face, col: over.col, row: row - 1 };
+    const mine: Cell = { face: here.face, col: here.col, row: row - 1 };
+    const trapped = reachable !== null && reachable.has(cellKey(here));
+    issues.push({
+      rule: 'seamMismatch',
+      severity: trapped ? 'error' : 'warn',
+      detail:
+        `折痕两侧对不上：${where(here)} 站得住，对面 ${where(over)} **能走进去但站不住**` +
+        `（两格在画面里是同一个点，看不出区别）—— 从这一侧过去就是落水。` +
+        `要么在 ${where(missing)} 补一块砖，要么把 ${where(mine)} 拆掉。`,
+      at: missing,
+    });
+  }
   return issues;
 }
 

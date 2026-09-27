@@ -127,9 +127,89 @@ describe('validateLevel —— 可达性（本层存在的理由）', () => {
     // 报"2 格到不了"是不够的 —— 关键是它们**碎成 2 块**：
     // 说明不是漏了一格，而是可达性结构塌了。这正是 `DEV_FOLD`（43 格碎成 25 块）的形状。
     const issues = validateLevel(def(3, ['X.X.X.', 'E.....']), { face: 'A', col: 0, row: 1 });
-    expect(rules(issues)).toEqual(['unreachable']);
+    // `seamMismatch` 是**同一族手误的另一种表现**：这里 col1|col2 是折痕那一对，
+    // r0 缺的那一格（col2）正好落在折痕上 —— B:2,1 站得住、A:1,1 空着。规则⑥ 一并报出来。
+    expect(rules(issues)).toEqual(['unreachable', 'seamMismatch']);
     expect(issues[0]?.stranded).toBe(2);
     expect(issues[0]?.components).toBe(2);
+  });
+});
+
+describe('validateLevel —— 规则⑥：折痕两侧对不上（用户第三关的真数据）', () => {
+  /**
+   * 用户 2026-09-23 贴过来的那一关（`fold=14`，**原样，一个字符没改**）。
+   *
+   * 现象："折叠处看上去能走过，但是实际走到那里就落水"、"完全看不出来错在哪里"。
+   *
+   * 病灶在 `r1`：平台在 col 8..13 与 15..19 各铺了一段，中间 **col 14 空了一格**。
+   * col 13 与 col 14 是折痕两侧的最内列，**在画面里是同一个点** —— 于是 `r2` 那一行上，
+   * `A:13` 站得住、`B:14` 能走进去但站不住，两格看起来一模一样，走过去就掉下去。
+   *
+   * 这已经是同一处坑第三次，所以这一条**不是夹具**，是把真实事故钉进回归网。
+   */
+  const SEAM_TILES: readonly string[] = [
+    '==============.=============',
+    '.......HXXXXXX.XXXXXH.......',
+    '.......HH..G.......HH.......',
+    '........H...........H.......',
+    '........H...........H.......',
+    '........H...........H.......',
+    '........H...........H.......',
+    '........H...........H.......',
+    '........H...........H.......',
+    '........HX.XX.......HH......',
+    '........HXXXX.......HH......',
+    '........H.=E=.......HH......',
+  ];
+  /** 站在 A 面平台的一端（用户没贴出生点，这里只需要一个够得着的起点）。 */
+  const ON_PLATFORM: Cell = { face: 'A', col: 8, row: 2 };
+  /**
+   * 出口那一圈的两块硬砖**必须另外登记成闸门** —— `tiles` 里的 `=` 只是一个普通硬砖，
+   * 它不会自己变成梯子（见 `LevelDef.gates` 与 `openGates`）。用户只贴了 `tiles`，
+   * 所以这里按「出口笔」画出来的样子补上；他们在编辑器里画的时候是自动登记的。
+   */
+  const GATES: readonly Cell[] = [
+    { face: 'A', col: 10, row: 11 },
+    { face: 'A', col: 12, row: 11 },
+  ];
+  const level = (tiles: readonly string[]): LevelDef => ({
+    id: 'U',
+    name: '折痕',
+    fold: 14,
+    tiles,
+    gates: GATES,
+  });
+
+  it('A:13,2 站得住、B:14,2 空着 → `seamMismatch`，**错误**级，并指名该补哪一块砖', () => {
+    const hits = validateLevel(level(SEAM_TILES), ON_PLATFORM).filter((i) => i.rule === 'seamMismatch');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('error');
+    // 红框落在**该补的那一格**上，不是落在玩家脚下 —— 作者要的是"往哪儿画"，不是"哪儿出事了"。
+    expect(hits[0]?.at).toEqual({ face: 'B', col: 14, row: 1 });
+    expect(hits[0]?.detail).toContain('B:14,1');
+    expect(hits[0]?.detail).toContain('A:13,2');
+  });
+
+  it('把 col 14 的 r1 补成砖（**一个字符**）→ 这条不再报，整关 0 错误', () => {
+    const fixed = [...SEAM_TILES];
+    fixed[1] = '.......HXXXXXXXXXXXXH.......';
+    const issues = validateLevel(level(fixed), ON_PLATFORM);
+    expect(issues.filter((i) => i.rule === 'seamMismatch')).toEqual([]);
+    expect(issues.filter((i) => i.severity === 'error')).toEqual([]);
+  });
+
+  it('够不着的地方只作**提醒**（还没放出生点时也一样）', () => {
+    const solo = validateLevel(level(SEAM_TILES));
+    const hit = solo.find((i) => i.rule === 'seamMismatch');
+    expect(hit?.severity).toBe('warn');
+  });
+
+  it('对面是**砖**不算陷阱 —— 那只是墙（跨过去是被挡住，不是掉下去）', () => {
+    // fold=2：折痕两侧最内列是 col1 | col2。r1 里 A:1,1 站得住（r0 的 col1 是砖），
+    // 而 B:2,1 是硬砖 —— 跨过去是被挡住，不是落水，所以**不该**报。
+    // r2 两列都是砖（都不通），r3 两列都站得住 —— 三行合起来说明这条规则只挑"能进但站不住"。
+    const issues = validateLevel(def(2, ['XX..', '..=.', '.X=.', '....']), { face: 'A', col: 0, row: 1 });
+    expect(rules(issues)).not.toContain('seamMismatch');
   });
 });
 
