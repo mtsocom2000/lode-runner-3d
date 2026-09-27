@@ -16,6 +16,7 @@ import { createSyncer, type Syncer } from '../render/meshSync';
 import { createFx, type Fx } from '../render/fx';
 import { cellFromPoint } from '../render/pick';
 import { paint, placeJoint } from '../core/level/paint';
+import { lineCells } from '../core/level/line';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
 import { createStage, type Stage } from '../render/scene';
@@ -628,9 +629,33 @@ function handleJointStep(at: Cell): void {
 window.addEventListener('mousemove', (e) => {
   if (!editor.isOpen()) return;
   const at = editorTarget(e);
+  // 悬停提示：那一格的框 + 两面墙上同高的辅助线（用户 2026-09-23 提议）。
+  fx.setHover(at);
   editor.noteCell(at, at === null ? undefined : diagnose(at));
-  if (painting && at !== null) paintAt(at);
+  if (painting && at !== null) paintTrail(at);
 });
+
+/**
+ * 拖笔**补格**（用户 2026-09-23："确实有快拖会跳格的问题"）。
+ *
+ * 原来每个 `mousemove` 只落当前那一格 —— 鼠标快划一下，两次事件之间会跳过好几格，
+ * 拖出来的线是虚线。现在按**直线**把两次事件之间的格子补齐（`lineCells`，Bresenham）。
+ *
+ * 补的是直线而不是矩形范围：用户拖的是一条线，中间那些格子正是他要的；把包围盒整片刷满
+ * 会毁掉旁边的东西。
+ */
+function paintTrail(at: Cell): void {
+  const from = lastPainted;
+  lastPainted = at;
+  if (from === null) {
+    paintAt(at);
+    return;
+  }
+  for (const cell of lineCells(from, at, levelDef.fold)) paintAt(cell);
+}
+
+/** 这一笔画到的上一格（补格要它）。收笔 / 换笔 / 重建关卡时清空。 */
+let lastPainted: Cell | null = null;
 
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
@@ -645,6 +670,7 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   pendingJoint = null; // 换成别的笔来落笔 → 半截的接头手势作废
   painting = true;
   paintedThisStroke = new Set();
+  lastPainted = null;
   paintAt(at);
 });
 
@@ -652,6 +678,7 @@ window.addEventListener('mouseup', () => {
   if (!painting) return;
   painting = false;
   paintedThisStroke.clear();
+  lastPainted = null;
   // 松手立刻把队列里那一版画出来，不等下一帧 —— 否则最后落下的几笔要等一拍才出现。
   if (queuedRaf !== 0) {
     cancelAnimationFrame(queuedRaf);
@@ -668,6 +695,7 @@ window.addEventListener('blur', () => {
   if (!painting) return;
   painting = false;
   paintedThisStroke.clear();
+  lastPainted = null;
   if (queuedRaf !== 0) {
     cancelAnimationFrame(queuedRaf);
     flushQueued();
@@ -890,6 +918,7 @@ window.addEventListener('keydown', (e) => {
   const insideEditor = editor.el.contains(e.target as Node | null);
   if (e.key === 'Escape' && editor.isOpen()) {
     pendingJoint = null; // 关面板 = 放弃半截的接头手势
+    fx.setHover(null); // 悬停那两条辅助线也要收起来（mousemove 在面板关着时直接 return）
     editor.toggle();
     syncIssueMarks();
     return;
@@ -897,6 +926,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key !== 'Tab' || insideEditor) return;
   e.preventDefault();
   pendingJoint = null; // 开关面板都作废半截手势 —— 免得"上次那半截"等到下一次点击才发作
+  fx.setHover(null);
   if (editor.toggle()) {
     editor.show(levelDef, spawn, levelIssues);
     editor.setHistory(canUndo(history), canRedo(history));

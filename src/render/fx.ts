@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Cell } from '../core/types';
 import type { Level } from '../core/world/tiles';
-import { cellAnchor } from './metrics';
+import { CUBE, cellAnchor } from './metrics';
 import { PALETTE } from './palette';
 
 /**
@@ -45,6 +45,21 @@ export interface Fx {
    * 他说得对，`validate` 里混着"玩不了"和"大概没画完"两种。提醒用**灰框**：看得见、不喊叫。
    */
   markIssues(marks: readonly { readonly at: Cell; readonly severity: 'error' | 'warn' }[]): void;
+  /**
+   * **悬停提示**（用户 2026-09-23 的提议）：鼠标停在哪儿，就在那一格上亮一个框，
+   * 并在**两面墙上各打一条同高的辅助线**。
+   *
+   * 为什么需要它：折痕把一面墙折成两面之后，"屏幕上这一点是哪一格"要过一遍拾取换算才说得清
+   * （用户为此专门提过"完全看不出来错在哪里"）。框回答"就是这一格"；两条横线回答
+   * "这个高度在对面那面墙上落在哪一行" —— 折痕两侧最内列**在画面里重合**，高度是唯一
+   * 一眼能对上的量。
+   *
+   * 颜色借 `player` 蓝：它要读起来像"光标"而不是像地形。调色板契约里每个颜色各有所属，
+   * 随便借一个（比如 `bar`）会让探针**谎报**画面上有杆。
+   *
+   * `null` = 收起来（关掉面板、鼠标离开编辑器时都要调它，否则那两条线会一直挂在那儿）。
+   */
+  setHover(at: Cell | null): void;
   /** 每帧推进：衰减、到点移除、常驻记号呼吸。`dt` 是**真实秒数**（与 `meshSync.update` 同一口径）。 */
   update(dt: number): void;
   dispose(): void;
@@ -88,6 +103,28 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
   /** 呼吸用的累计时间 —— 常驻记号要有一点动静，否则在一屏浅色里容易被当成画错了的线。 */
   let pulse = 0;
 
+  /**
+   * **悬停那一套**（框 + 两面各一条同高辅助线）。三个网格只建一次、靠 `visible` 开关 ——
+   * 鼠标每动一下都重建几何的话，拖笔时会以每秒几十次的频率分配/释放 GPU 资源。
+   *
+   * 位置**全部由 `cellAnchor` 推出来**（它是几何的唯一出处）：辅助线的两端取那一行**首尾两格**
+   * 的锚点，于是"墙有多宽"这件事不必在这里再写一遍 `halfExtent`/`fold` 的算法。
+   */
+  const hoverFrame = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(FRAME_SCALE, FRAME_SCALE, FRAME_SCALE)),
+    new THREE.LineBasicMaterial({ color: PALETTE.player, transparent: true, opacity: 0.95 }),
+  );
+  const guideMat = new THREE.MeshBasicMaterial({ color: PALETTE.player, transparent: true, opacity: 0.3 });
+  const guideA = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), guideMat);
+  const guideB = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), guideMat);
+  guideMat.depthWrite = false; // 细杆不该改写深度，免得它自己在砖上留下一条暗纹
+  for (const o of [hoverFrame, guideA, guideB]) {
+    o.visible = false;
+    o.renderOrder = 998; // 与记号同一档：线框被挡住就该看不见
+    group.add(o);
+  }
+  const GUIDES: readonly THREE.Mesh[] = [guideA, guideB];
+
   const keyOf = (c: Cell): string => `${c.face}:${c.col},${c.row}@${c.level ?? 0}`;
 
   return {
@@ -121,9 +158,42 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
         marked.push(line);
       }
     },
+    setHover(at): void {
+      if (at === null) {
+        for (const o of [hoverFrame, ...GUIDES]) o.visible = false;
+        return;
+      }
+      const anchor = cellAnchor(level, at);
+      hoverFrame.position.set(anchor.p[0], anchor.p[1], anchor.p[2]);
+      hoverFrame.visible = true;
+
+      // 甲板格没有"行高"可言（它是另一套坐标），所以只给框、不给辅助线。
+      if (at.face === 'I') {
+        for (const g of GUIDES) g.visible = false;
+        return;
+      }
+      const row = at.row;
+      // 那一行的**首尾两格**：两端都走 `cellAnchor`，于是"墙有多宽"不必在这里重算一遍。
+      const lineAt = (face: 'A' | 'B', mesh: THREE.Mesh): void => {
+        const from = cellAnchor(level, { face, col: 0, row }).p;
+        const to = cellAnchor(level, { face, col: level.fold - 1, row }).p;
+        // 贴着那一面墙**前方**一点（砖心 + 一格），否则线会埋进砖里。
+        mesh.position.set(from[0] + CUBE, from[1], from[2] + CUBE);
+        mesh.scale.set(CUBE * 0.08, CUBE * 0.08, Math.abs(to[2] - from[2]) + CUBE);
+        mesh.visible = true;
+      };
+      const lineAtX = (mesh: THREE.Mesh): void => {
+        const from = cellAnchor(level, { face: 'B', col: level.fold, row }).p;
+        const to = cellAnchor(level, { face: 'B', col: level.cols - 1, row }).p;
+        mesh.position.set(from[0] + CUBE, from[1], from[2] + CUBE);
+        mesh.scale.set(Math.abs(to[0] - from[0]) + CUBE, CUBE * 0.08, CUBE * 0.08);
+        mesh.visible = true;
+      };
+      lineAt('A', guideA);
+      lineAtX(guideB);
+    },
     update(dt: number): void {
       const step = dt > 0 ? dt : 0;
-
       // 常驻记号：慢呼吸（0.6~1.0 之间来回），让人一眼看出"这是标出来的，不是画错的"。
       if (marked.length > 0) {
         pulse += step;
@@ -151,6 +221,11 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
       live.clear();
       for (const line of marked) group.remove(line);
       marked.length = 0;
+      hoverFrame.geometry.dispose();
+      (hoverFrame.material as THREE.Material).dispose();
+      guideA.geometry.dispose();
+      guideB.geometry.dispose();
+      guideMat.dispose();
       frameGeo.dispose();
       frameMat.dispose();
       issueMat.dispose();
