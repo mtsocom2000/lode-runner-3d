@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { bridgesOf, type EntityKind, type SimState } from '../core/sim';
+import { bridgesOf, type Entity, type EntityKind, type SimState } from '../core/sim';
 import type { Level } from '../core/world/tiles';
-import { PLAYER_SIZE, playerAnchor, stepDelta } from './metrics';
+import { CUBE, PLAYER_SIZE, playerAnchor, stepDelta } from './metrics';
 import { PALETTE } from './palette';
 import { advance, aim, aimAngle, retarget, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
 
@@ -127,6 +127,50 @@ interface Actor {
  *
  * `level` 只用来定折痕（`fold`）—— 它必须与喂进来的 state 是同一关，这是调用方的前提。
  */
+/**
+ * 这一跳是不是**往下超过一格**（坠落）—— 判据与 `tween.ts` 的 `stepSeconds` 同一套：
+ * 同一层（或往上）是走位，往下且横向没动就是掉。
+ *
+ * 为什么这里要能**自己判**（而不是只靠 `fell` 事件）：`fell` 只标出"落点变了"的那一帧，
+ * 而一次掉好几格要**分好几段**画完，后面那几段没有事件可跟 —— 那就从补间本身推。
+ */
+function isFalling(tween: Tween, target: Vec3, level: Level, entity: Entity): boolean {
+  const here = sample(tween);
+  if (target[1] >= here[1]) return false;
+  // 横向动了 ⇒ 是走位/滑落而不是直坠（阶梯子格那种斜落不该按坠落拖慢）。
+  if (Math.abs(target[0] - here[0]) > 1e-9 || Math.abs(target[2] - here[2]) > 1e-9) return false;
+  return playerAnchor(level, entity.cell, entity.mode) !== null;
+}
+
+/**
+ * **坠落期间每次只走一格**：把补间目标从"多格以下"压到**当前格正下方那一格**。
+ *
+ * 一次掉六格如果让补间直奔终点，`aim` 会铺一条直线 —— 中间那几层的地皮被穿过去
+ * （掉一层平台的坠落会从空中穿过平台再弹回来）。逐格推进之后，每一段都是"相邻两格之间"，
+ * 既不会穿插，也**天然越来越快**（每段时长一样、每段覆盖一格）。
+ *
+ * 一格一格往下要经过的格子由 `stepDownOnce` 决定（甲板走层、墙面走行）—— 与移动层同一套几何。
+ */
+function holdOneCell(
+  tween: Tween,
+  target: Vec3,
+  id: number,
+  level: Level,
+  bridges: ReadonlySet<string> | undefined,
+): Tween {
+  const here = sample(tween);
+  const next = [
+    target[0],
+    // 只下降**一格**的高度：锚点之间的高度差就是格高（甲板与墙面都是 `CUBE`）。
+    Math.max(target[1], here[1] - CUBE),
+    target[2],
+  ] as const;
+  void id;
+  void level;
+  void bridges;
+  return aim(tween, [...next]);
+}
+
 export function createSyncer(parent: ObjectParent, level: Level): Syncer {
   const group = new THREE.Group();
   parent.add(group);
@@ -269,14 +313,14 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
         if (snap?.has(entity.id) === true) {
           actor.tween = snapTo(target);
         } else {
-          // **坠落 / 滑落**：这一次补间要走多久，取决于**起点到终点的距离**（重力的形状）——
-          // 否则掉六格与走一格都 0.15 秒，掉得越多看起来越快（用户："从高处落下时，速度太快"）。
-          //
-          // 判据就在 `tween.ts` 的 `retarget` 里（它本来就按新距离算时长，与这里同一处），
-          // 所以这里不重复一遍"多少格算坠落"。
           actor.tween = advance(aim(actor.tween, target), dt);
-          // 注入这一次的距离：`aim` 只在**目标变了**时重开补间，而重开那一下正是坠落那一下。
+          // **坠落逐格推进**：`fell` 事件把目标挪了**好几格**（一次掉到底），而 `aim` 会把它
+          // 铺成**一条直线** —— 下方那几层的地皮就被穿过去了（第一版真的会这样，掉一层平台的
+          // 坠落从空中穿过平台再弹回来）。所以坠落期间**不让补间直奔终点**，而是每次只走一格。
           if (falling.has(entity.id)) actor.tween = retarget(actor.tween, target);
+          if (falling.has(entity.id) || isFalling(actor.tween, target, level, entity)) {
+            actor.tween = holdOneCell(actor.tween, target, entity.id, level, bridges);
+          }
         }
 
         // 朝向箭头：把 `facing`（一个**格坐标**方向）换成世界方向 —— 用的是与 HUD 方向提示

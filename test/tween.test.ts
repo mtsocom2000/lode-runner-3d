@@ -4,7 +4,8 @@ import {
   advance,
   aim,
   aimAngle,
-  fallSeconds,
+  FALL_SEGMENT_SECONDS,
+  stepSeconds,
   isDone,
   retarget,
   samePoint,
@@ -185,30 +186,30 @@ describe('tween：aim（同步层每帧都会调它）', () => {
   });
 });
 
-describe('tween：坠落时长按距离（用户 2026-09-23："从高处落下时，速度太快"）', () => {
-  it('掉得越远，时长越长（走一格那 0.15 秒对高处坠落太快）', () => {
-    const one = fallSeconds([0, 0, 0], [0, -1, 0]);
-    const six = fallSeconds([0, 0, 0], [0, -6, 0]);
-    const twelve = fallSeconds([0, 0, 0], [0, -12, 0]);
-    expect(one).toBeLessThan(six);
-    expect(six).toBeLessThan(twelve);
-    // 一格那一下：接近"走路"的时间尺度，不该像瞬移。
-    expect(one).toBeGreaterThanOrEqual(0.2);
+describe('tween：坠落是**一格一段**（用户 2026-09-23："从高处落下时，速度太快"）', () => {
+  it('往下超过一格 → 按坠落那一档（比走路长，看得清是"掉"）', () => {
+    expect(stepSeconds([0, 6, 0], [0, 5, 0])).toBe(FALL_SEGMENT_SECONDS);
+    expect(FALL_SEGMENT_SECONDS).toBeGreaterThan(TWEEN_SECONDS);
   });
 
-  it('上下都有夹子：太短不像瞬移、太长不让"掉十几格"变成等动画', () => {
-    expect(fallSeconds([0, 0, 0], [0, 0, 0])).toBe(0.18);
-    expect(fallSeconds([0, 0, 0], [0, -99, 0])).toBe(1.2);
+  it('走路 / 往上 / 斜走 → 仍是走路那一档（阶梯子格的斜落不该被拖慢）', () => {
+    expect(stepSeconds([0, 6, 0], [1, 6, 0])).toBe(TWEEN_SECONDS); // 平移
+    expect(stepSeconds([0, 6, 0], [0, 7, 0])).toBe(TWEEN_SECONDS); // 往上
+    expect(stepSeconds([0, 6, 0], [1, 5, 0])).toBe(TWEEN_SECONDS); // 斜的（横向也动了）
   });
 
-  it('走一格仍是固定 `TWEEN_SECONDS`（`tweenTo` 的默认值没变）', () => {
-    const walk = tweenTo([0, 0, 0], [1, 0, 0]);
-    expect(walk.seconds).toBe(TWEEN_SECONDS);
-    const fall = tweenTo([0, 0, 0], [0, -6, 0], fallSeconds([0, 0, 0], [0, -6, 0]));
-    expect(fall.seconds).toBeGreaterThan(TWEEN_SECONDS);
+  it('**每一段都一样长** —— 长坠落靠"多段"变慢，不靠单段拉长（那会直线穿插）', () => {
+    // 这一段是两次修正的教训：按**总距离**给时长会让补间直奔终点，掉一层平台的坠落
+    // 从空中穿过平台再弹回来。分段之后每段都只是"相邻两格之间"，穿不过任何东西。
+    expect(stepSeconds([0, 9, 0], [0, 8, 0])).toBe(stepSeconds([0, 2, 0], [0, 1, 0]));
   });
 
-  it('距离取的是**空间距离**（斜坠也算）：水平 + 垂直一起算', () => {
-    expect(fallSeconds([0, 0, 0], [3, -4, 0])).toBe(fallSeconds([0, 0, 0], [0, -5, 0]));
+  it('`retarget` 会按新一跳的性质给时长（走 → 掉，时长要跟着换档）', () => {
+    const walking = advance(tweenTo([0, 6, 0], [1, 6, 0]), TWEEN_SECONDS / 2);
+    const at = sample(walking); // 当前插值位置（`retarget` 从这里重新出发）
+    // 横向还在动 ⇒ 仍是走位那一档。
+    expect(retarget(walking, [at[0], at[1], at[2]]).seconds).toBe(TWEEN_SECONDS);
+    // **正下方**那一格 ⇒ 换成坠落档。
+    expect(retarget(walking, [at[0], at[1] - 1, at[2]]).seconds).toBe(FALL_SEGMENT_SECONDS);
   });
 });

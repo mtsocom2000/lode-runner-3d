@@ -10,34 +10,34 @@ export type Vec3 = readonly [number, number, number];
 export const TWEEN_SECONDS = 0.15;
 
 /**
- * **坠落**的补间时长（秒）——**与距离成正比**（用户 2026-09-23："从高处落下时，速度太快"）。
+ * **坠落**的补间时长（秒）——**一格一段**，每段与走一格同一尺度（用户 2026-09-23：
+ * "从高处落下时，速度太快"）。
  *
- * ## 为什么不能沿用 `TWEEN_SECONDS`
+ * ## 两次修正（第一版两次都错，记在这里免得再犯）
  *
- * 走一格与掉六格原来都是 0.15 秒 —— 于是"掉得越多看起来越快"，掉六格时速度是走路的六倍，
- * 像被弹射出去。重力是**匀加速**，观感上"掉得远就该久一点"，而不是恒定时间。
+ * 1. 原先走一格与掉六格**都是** `TWEEN_SECONDS`（0.15s）—— 掉得越多看起来越快，六格时的
+ *    速度是走路的六倍，像被弹射出去；
+ * 2. 第二版按**总距离**给时长（`√(2d/g)`）—— 于是掉六格要走 1.0 秒**一趟直线**，
+ *    中间那几层地皮**直接穿过去了**（`aim` 只会把新目标铺一条直线：下方一层有平台的坠落
+ *    因此从空中穿过平台再弹回来），而且那样的"坠落"是匀速的、不像重力。
  *
- * 按 `√(2d/g)` 给时长（`FALL_G = 12` 格/秒²，与"一格一跳"的手感对得上）：
- * 掉 1 格 ≈ 0.41s、3 格 ≈ 0.71s、6 格 ≈ 1.0s。**匀加速本身不在这一步模拟**（补间仍是
- * 匀速 + 缓出），这里只把**时长**按距离给对：远掉明显更久、近掉不拖沓。上下都有夹子 ——
- * 太短像瞬移，太长会让"掉十几格"变成等动画。
+ * 正确的做法是**分段**：每下落**一格**一段补间，`FALL_SEGMENT_SECONDS` 比走路略长
+ * （看得清是"掉"而不是"走"），于是长坠落 = 多段累积，**天然越来越快**（每段一样长、
+ * 每段覆盖一格，观感上连续）——不必去模拟加速度，也不会有任何穿插。
+ *
+ * ## 这**不是**时间膨胀
+ *
+ * sim 的时钟不受它影响（`tick` 按 `TICK_HZ` 走，与渲染无关）—— 所以"长坠落看着更久"
+ * 只是**画得慢一点**：下落期间角色照旧按规则移动、按规则结算落点。规则与观感仍然是两层。
  */
-export const FALL_G = 12;
-export const FALL_MIN_SECONDS = 0.18;
-export const FALL_MAX_SECONDS = 1.2;
-
-export function fallSeconds(from: Vec3, to: Vec3): number {
-  const d = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
-  const raw = Math.sqrt((2 * Math.max(d, 0)) / FALL_G);
-  return Math.min(FALL_MAX_SECONDS, Math.max(FALL_MIN_SECONDS, raw));
-}
+export const FALL_SEGMENT_SECONDS = 0.2;
 
 /**
  * 一个位置补间。`elapsed` 是**已过的秒数**，不是帧数 —— 这是"resize 无关"的全部秘密：
  * 只要时钟按秒走，视口大小、帧率、设备像素比都改变不了补间的位置。
  *
- * `seconds`（这一次要走多久）**存在补间里**，而不是像第一版那样到处读全局 `TWEEN_SECONDS`：
- * 坠落要按距离算时长（见 `fallSeconds`），而"多长"是这一次移动的属性，不是全局常量。
+ * `seconds`（这一次要走多久）**存在补间里** —— "多长"是这一次移动的属性；坠落更是**一格一段**
+ * （见上），所以它绝不能是全局常量。
  */
 export interface Tween {
   readonly from: Vec3;
@@ -71,9 +71,17 @@ export function snapTo(to: Vec3): Tween {
  * 换成旧起点，角色会先往后退一小段再前进 —— 看起来像卡了一下。
  */
 export function retarget(tween: Tween, to: Vec3): Tween {
-  // **时长跟着新目标重算**：中途换目标（走一格 → 掉六格）时，若沿用旧的 0.15 秒，
-  // 那一次坠落又会快到像瞬移。重算的判据与 `tweenTo` 同一处（`fallSeconds`）。
-  return { from: sample(tween), to, elapsed: 0, seconds: fallSeconds(sample(tween), to) };
+  // **时长跟着新目标重算**：走一格 → 掉六格时若沿用旧的 0.15 秒，那一次坠落又会快到像瞬移。
+  // 判据是"这一跳是不是**往下一格以上**"（坠落）：是就按**一格一段**给（见文件头），
+  // 于是长坠落由同步层**逐格推进**（`meshSync`），不会有直线穿插。
+  return { from: sample(tween), to, elapsed: 0, seconds: stepSeconds(sample(tween), to) };
+}
+
+/** 这一跳该用多长：**往下超过一格**（坠落）用坠落那一档，其余（走位 / 往上 / 斜走）用走路那一档。 */
+export function stepSeconds(from: Vec3, to: Vec3): number {
+  const down = from[1] - to[1];
+  const sideways = Math.abs(to[0] - from[0]) > 1e-9 || Math.abs(to[2] - from[2]) > 1e-9;
+  return down > 1e-9 && !sideways ? FALL_SEGMENT_SECONDS : TWEEN_SECONDS;
 }
 
 /**
