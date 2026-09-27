@@ -519,7 +519,51 @@ function editorTarget(e: MouseEvent): Cell | null {
  *   十有八九是**对面那一列没有地板**（用户的 L4 正是如此）。
  */
 function diagnose(at: Cell): string {
-  if (at.face === 'I') return at.level === undefined ? '甲板（第 0 层）' : `甲板（第 ${at.level} 层）`;
+  if (at.face === 'I') {
+    const layer = at.level === undefined ? '第 0 层' : `第 ${at.level} 层`;
+    return at.level === 0 || at.level === undefined ? `甲板（${layer}）` : `甲板（${layer}，要 Z/X 换层）`;
+  }
+
+  /**
+   * **这一格在关卡数据里是什么** —— 悬停诊断的第一句。
+   *
+   * 用户这一路踩的坑大多是"看不出这一格属于什么"：闸门格看着就是一块硬砖（他为此报过
+   * "出口变成了梯子"）、闸门**没登记**时集齐宝物也开不了门、宝物在哪一格。所以先报地形，
+   * 再报"站不站得住"，最后才是"为什么"。
+   */
+  const glyph = level.at(at.col, at.row);
+  const kind =
+    glyph === undefined
+      ? '越界'
+      : glyph === 'hard'
+        ? '硬砖（挖不动）'
+        : glyph === 'dig'
+          ? '砖（可挖）'
+          : glyph === 'ladder'
+            ? '梯子'
+            : glyph === 'bar'
+              ? '横杆'
+              : glyph === 'treasure'
+                ? '宝物'
+                : glyph === 'exit'
+                  ? '出口'
+                  : glyph === 'pit'
+                    ? '坑（挖出来的）'
+                    : '空';
+  // 闸门：**数据里是一块硬砖、名字却是"门"** —— 这一句就是"为什么集齐宝物后它消失了"的答案。
+  const isGate = level.gates.some(
+    (g) => g.face !== 'I' && g.col === at.col && g.row === at.row,
+  );
+  // 出口两侧那块硬砖：**不是**闸门（没登记）—— 这正是"集齐宝物门也不开"的成因。
+  const flanksExit =
+    !isGate &&
+    glyph === 'hard' &&
+    (level.at(at.col - 1, at.row) === 'exit' || level.at(at.col + 1, at.row) === 'exit');
+  const kindNote = isGate
+    ? '硬砖 —— 是**闸门**（集齐宝物后消失）'
+    : flanksExit
+      ? '硬砖 —— 紧挨出口但**不是闸门**（gates 里没登记，集齐宝物后不会消失）'
+      : kind;
 
   const support = supportOf(level, at);
   const here =
@@ -546,14 +590,14 @@ function diagnose(at: Cell): string {
       : `；折痕对面是 ${cellKey(foldPair)}（那边${supportOf(level, foldPair) === null ? '**站不住**' : '站得住'}）。` +
         `这两格在画面里是**同一个点**，落笔会两面一起画`;
 
-  if (support !== null) return `${here}${pairNote}`;
+  if (support !== null) return `${kindNote} ｜ ${here}${pairNote}`;
 
   const below = { face: at.face, col: at.col, row: at.row - 1 };
   const why =
     at.row <= 0 || level.at(at.col, at.row - 1) === undefined
       ? '越界（这一列没有下一行）'
       : `${cellKey(below)} 是空的`;
-  return `**站不住**：脚下 ${why}${pairNote}`;
+  return `${kindNote} ｜ **站不住**：脚下 ${why}${pairNote}`;
 }
 
 // ── 拖笔：按住左键划过的地方连续落笔（用户 2026-09-21 要的） ──

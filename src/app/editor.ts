@@ -387,7 +387,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
     noteCell(cell, diagnosis): void {
       const which = BRUSHES[index]?.label ?? '?';
       if (cell === null) {
-        cellLine.textContent = `笔：${which} —— 未指到格子`;
+        cellLine.textContent = `笔：${which}（${BRUSHES[index]?.hint ?? ''}） —— 未指到格子`;
         return;
       }
       const where = `格子 ${cellKey(cell)}${cell.level === undefined ? '' : `（第 ${cell.level} 层）`}`;
