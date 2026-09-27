@@ -4,7 +4,7 @@ import { DIRS, OPPOSITE_DIR, step } from '../src/core/rules/movement';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, glintStrips, guideLine, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, TICK_HALF, cellAnchor, glintStrips, guideLine, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -354,5 +354,44 @@ describe('guideLine —— 悬停辅助线（用户报过"偏出去半面墙"）
     expect(g.p[0] + half).toBeGreaterThanOrEqual(Math.max(first[0], last[0]));
     expect(g.s[1]).toBe(g.s[2]);
     expect(Math.abs(g.p[2] - first[2])).toBeGreaterThan(0.3);
+  });
+});
+describe('guideLine —— 乙：指着的那面墙短、另一面墙整行（用户选定）', () => {
+  it('不给 `tickAtCol` = **整行**：盖住那一面的首尾两格，且以中点为心', () => {
+    const first = cellAnchor(level, { face: 'A', col: 0, row: 1 }).p;
+    const last = cellAnchor(level, { face: 'A', col: FOLD - 1, row: 1 }).p;
+    const g = guideLine(level, 'A', 1);
+    expect(g.p[2]).toBeCloseTo((first[2] + last[2]) / 2, 6);
+    expect(g.p[1]).toBeCloseTo(first[1], 6);
+    expect(g.s[2]).toBeGreaterThan(Math.abs(last[2] - first[2]));
+  });
+
+  it('给了 `tickAtCol` = **短线**：中心落在指针那一列，且不长于整行', () => {
+    const full = guideLine(level, 'A', 1);
+    const tick = guideLine(level, 'A', 1, { tickAtCol: 1 });
+    // 注意：夹具只有 `fold = 3`（三格宽），±2 的短线**本来就盖满整面墙** —— 所以这里只断言
+    // "不长于整行"与"中心对"。真正"明显更短"由下面那条宽墙用例来钉。
+    expect(tick.s[2]).toBeLessThanOrEqual(full.s[2] + 1e-9);
+    const at = cellAnchor(level, { face: 'A', col: 1, row: 1 }).p;
+    expect(tick.p[2]).toBeCloseTo(at[2], 6);
+    expect(tick.p[1]).toBeCloseTo(at[1], 6);
+  });
+
+  it('**宽墙**上短线明显更短（这才是用户要的"长/短"）', () => {
+    const wide = load({ id: 'W', name: '宽墙', fold: 7, tiles: ['.'.repeat(14), '.'.repeat(14)] });
+    const full = guideLine(wide, 'A', 0);
+    const tick = guideLine(wide, 'A', 0, { tickAtCol: 7 });
+    expect(tick.s[2]).toBeLessThan(full.s[2] / 2);
+    // 整行盖住那一面首尾两格；短线只盖住中间那几格。
+    expect(full.s[2]).toBeGreaterThan(5);
+    expect(tick.s[2]).toBeLessThanOrEqual(2 * TICK_HALF + 1);
+  });
+
+  it('短线在墙边缘**被夹住**（指针在最边上时不会伸到墙外）', () => {
+    const edge = guideLine(level, 'A', 1, { tickAtCol: 0 });
+    const lo = cellAnchor(level, { face: 'A', col: 0, row: 1 }).p;
+    const hi = cellAnchor(level, { face: 'A', col: TICK_HALF, row: 1 }).p;
+    expect(edge.p[2]).toBeCloseTo((lo[2] + hi[2]) / 2, 6);
+    expect(edge.s[2]).toBeLessThanOrEqual(Math.abs(hi[2] - lo[2]) + CUBE);
   });
 });

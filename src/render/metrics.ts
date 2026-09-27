@@ -381,21 +381,34 @@ export function guideLine(
   level: Level,
   face: 'A' | 'B',
   row: number,
+  opts: { readonly tickAtCol?: number } = {},
 ): { readonly p: Vec3; readonly s: Vec3 } {
-  const firstCol = face === 'A' ? 0 : level.fold;
-  const lastCol = face === 'A' ? level.fold - 1 : level.cols - 1;
+  /**
+   * **乙**（用户 2026-09-23 选定）：指着的那面墙只画**指针附近一小段**（"我在这儿"），
+   * 另一面墙画**整行**（"这个高度在对面落在哪一行"）。所以两条线天然分工、而且**长度不等** ——
+   * 第一版两面都画整行，用户一眼就说不对（"射到右边墙上那条较长，射到左边墙上那条较短"）。
+   *
+   * `tickAtCol` 给了就是"短的那条"，按那面墙的列范围**夹住**（否则指针在边缘时一小段会伸到墙外）。
+   */
+  const lo = face === 'A' ? 0 : level.fold;
+  const hi = face === 'A' ? level.fold - 1 : level.cols - 1;
+  const firstCol = opts.tickAtCol === undefined ? lo : Math.max(lo, Math.min(hi, opts.tickAtCol - TICK_HALF));
+  const lastCol = opts.tickAtCol === undefined ? hi : Math.max(lo, Math.min(hi, opts.tickAtCol + TICK_HALF));
   const first = cellAnchor(level, { face, col: firstCol, row }).p;
   const last = cellAnchor(level, { face, col: lastCol, row }).p;
   const along = Math.abs(last[0] - first[0]) + Math.abs(last[2] - first[2]) + CUBE * 0.8;
   const thin = CUBE * 0.08;
-  // **中点**（两端平均）——这是第一版栽的那一跤。
+  // **中点**（两端平均）——第一版在这里栽过：用了端点当中心，整条线偏出去半面墙。
   const midX = (first[0] + last[0]) / 2;
   const midZ = (first[2] + last[2]) / 2;
-  const out = CUBE * 0.6;
+  const out = CUBE * 0.6; // 贴墙面外一点：不埋进砖里，也不像浮在空中
   return face === 'A'
     ? { p: [midX + out, first[1], midZ], s: [thin, thin, along] }
     : { p: [midX, first[1], midZ + out], s: [along, thin, thin] };
 }
+
+/** 短线的半长（格）：指针所在那面墙上只提示指针左右各 2 格。 */
+export const TICK_HALF = 2;
 export function sameWorldDirection(a: Vec3, b: Vec3): boolean {
   const la = Math.hypot(a[0], a[2]);
   const lb = Math.hypot(b[0], b[2]);

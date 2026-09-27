@@ -173,13 +173,17 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
         return;
       }
       const row = at.row;
-      // 那一行在两面墙上各画一条：位置/尺寸全由 `guideLine`（`metrics`，几何唯一出处）算。
-      // 第一版在这里自己算，把中心取成了"第一个格子"→ 整条线偏出去半面墙（用户看出来的）。
+      /**
+       * **乙**：指着的那面墙画一小段（指针左右各 `TICK_HALF` 格，"我在这儿"），
+       * **另一面墙画整行**（"这个高度在对面落在哪一行"）。用户选定的就是这一版 ——
+       * 两面都画整行时他当场说不对（"射到右边墙上那条较长，射到左边墙上那条较短"）。
+       */
       for (const [mesh, face] of [
         [guideA, 'A'],
         [guideB, 'B'],
       ] as const) {
-        const line = guideLine(level, face, row);
+        const line =
+          face === at.face ? guideLine(level, face, row, { tickAtCol: at.col }) : guideLine(level, face, row);
         mesh.position.set(line.p[0], line.p[1], line.p[2]);
         mesh.scale.set(line.s[0], line.s[1], line.s[2]);
         mesh.visible = true;
