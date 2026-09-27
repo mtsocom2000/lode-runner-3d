@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { BLANK } from '../src/core/level/levels/blank';
 import { L3 } from '../src/core/level/levels/l3';
 import {
+  blockedDirs,
   foldTwin,
   paint,
+  placeJoint,
   paintTerrain,
   removeDeck,
   setDeck,
@@ -282,6 +284,67 @@ describe('T21·3 落笔：折痕那一列**成对**落笔（用户连着三轮�
     expect(foldTwin({ face: 'A', col: FOLD_R, row: 2 }, BLANK.fold)).toEqual(L(2));
     expect(foldTwin({ face: 'A', col: 5, row: 2 }, BLANK.fold)).toBeNull();
     expect(foldTwin(D(-7, -7), BLANK.fold)).toBeNull();
+  });
+});
+
+describe('T21·3 落笔：甲板接头（两格一个手势）', () => {
+  const W = (col: number, row: number): Cell => ({ face: 'A', col, row });
+
+  it('**L3 手写的两处接头**：方向推得出来，且 `down` 一定在候选里（默认取它的理由）', () => {
+    // 这一条是这套推断的全部依据：作者手写的那两处，方向都落在 `blockedDirs` 里；
+    // 而且两处都是 `down` —— 与"`down` = 离开当前支撑"这条房规一致。
+    for (const j of L3.joints ?? []) {
+      const dirs = blockedDirs(L3, j.wall) ?? [];
+      expect(dirs).toContain(j.enterDir); // 规则⑧：作者写的必须是那一格"本来就堵住"的方向
+      expect(dirs).toContain('down');
+    }
+  });
+
+  it('放一个：默认 `down`，并说清"在哪一格按哪个键去哪块甲板"；不改入参', () => {
+    // 地板砖放在 (5,1) → (5,2) 站得住，而它的 `down`（下面那格是砖）走不通。
+    const def = setWallGlyph(BLANK, W(5, 1), 'X');
+    const placed = placeJoint(def, { x: -7, z: -7 }, W(5, 2));
+    expect(placed.ok).toBe(true);
+    if (!placed.ok) return;
+    expect(placed.dir).toBe('down');
+    expect(placed.def.joints).toEqual([{ deck: { x: -7, z: -7 }, wall: W(5, 2), enterDir: 'down' }]);
+    expect(placed.why).toContain('down');
+    expect(def.joints).toBeUndefined(); // 纯函数：原对象一个字没动
+  });
+
+  it('梯子井里那一格：四向**都不会被挡住** → 拒绝（那样的接头永远不会被触发）', () => {
+    // col 2 是一条四格高的连续梯子（梯子格站得住、上下都通），左右是空的。
+    // 这种格子上放接头，四个键里没有一个"本来走不通" —— 按下只会正常走位/坠落。
+    const shaft: LevelDef = {
+      id: 'SHAFT',
+      name: '梯子井',
+      fold: 3,
+      tiles: ['..H...', '..H...', '..H...', '..H...'],
+    };
+    expect(blockedDirs(shaft, W(2, 1))).toEqual([]);
+    const placed = placeJoint(shaft, { x: -7, z: -7 }, W(2, 1));
+    expect(placed.ok).toBe(false);
+    if (placed.ok) return;
+    expect(placed.why).toContain('都走得通');
+  });
+
+  it('第一端点到墙面（不是甲板）→ 拒绝并说清手势顺序', () => {
+    const placed = placeJoint(BLANK, { x: -7, z: -7 }, { face: 'I', col: -7, row: -7 });
+    expect(placed.ok).toBe(false);
+    if (placed.ok) return;
+    expect(placed.why).toContain('墙面');
+  });
+
+  it('同一格墙 / 同一块甲板只留一个接头：再放一次是**替换**', () => {
+    const def = setWallGlyph(BLANK, W(5, 1), 'X');
+    const once = placeJoint(def, { x: -7, z: -7 }, W(5, 2));
+    if (!once.ok) throw new Error('夹具应当能放');
+    const twice = placeJoint(once.def, { x: -7, z: -7 }, W(5, 2));
+    if (!twice.ok) throw new Error('替换也应当能放');
+    expect(twice.def.joints).toHaveLength(1);
+    const moved = placeJoint(once.def, { x: -5, z: -5 }, W(5, 2));
+    if (!moved.ok) throw new Error('挪甲板也应当能放');
+    expect(moved.def.joints).toEqual([{ deck: { x: -5, z: -5 }, wall: W(5, 2), enterDir: 'down' }]);
   });
 });
 

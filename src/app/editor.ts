@@ -85,6 +85,11 @@ const BRUSHES: readonly { readonly label: string; readonly hint: string; readonl
   { label: '板', hint: '甲板：实心方块（点方块顶面 = 往上叠一层）', brush: { kind: 'deck', mode: 'board' } },
   { label: '板·杆', hint: '甲板：可吊的横杆', brush: { kind: 'deck', mode: 'hang' } },
   { label: '板·梯', hint: '甲板：梯子格（实心柱靠它爬）', brush: { kind: 'deck', mode: 'ladder' } },
+  {
+    label: '接头',
+    hint: '甲板 ↔ 墙面的口子：**先点甲板格、再点墙面格**。方向自动取 `down`（本作里"离开当前支撑"的键），要换键就改 JSON 的 `enterDir`',
+    brush: { kind: 'joint' },
+  },
   { label: '出生点', hint: '玩家从这一格开始', brush: { kind: 'spawn' } },
   {
     label: '看守·无人机',

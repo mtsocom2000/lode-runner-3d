@@ -1,8 +1,10 @@
 import { cellKey, type Cell } from '../types';
-import { deckKey, type DeckCell } from '../world/deck';
+import { deckKey, type DeckCell, type DeckJoint, type JointDir } from '../world/deck';
 import { gateHolds } from '../rules/goals';
+import { DIRS, gridStep, type Dir } from '../rules/movement';
 import { faceOf } from '../world/fold';
-import { TILE_CHARS, type EnemyKind, type LevelDef, type TileKind } from '../world/tiles';
+import { supportOf } from '../world/graph';
+import { parseLevel, TILE_CHARS, type EnemyKind, type LevelDef, type TileKind } from '../world/tiles';
 
 /**
  * **编辑器的"落笔"**（T21 阶段 3）—— 全部是**纯函数**：`(关卡, 笔, 格子) → 新关卡`。
@@ -45,6 +47,16 @@ export type Brush =
    * 与宝物那支笔同一个手势。
    */
   | { readonly kind: 'enemy'; readonly enemyKind: EnemyKind }
+  /**
+   * **甲板接头**（`LevelDef.joints`）：甲板 ↔ 墙面的那道口子。
+   *
+   * 用户问："为什么不能指定电脑控制的看守位置？"之后紧接着的问题是塔怎么接回墙上的走廊 ——
+   * L3 里那两处接头一直是我**手写**的坐标，编辑器里画不出来。
+   *
+   * 它是**两格一个手势**：先点甲板格、再点墙面格（见 `placeJoint`）。方向不用用户选 ——
+   * 见 `blockedDirs` 那段说明。
+   */
+  | { readonly kind: 'joint' }
   /** 橡皮：墙上抹成空、甲板上删掉。 */
   | { readonly kind: 'erase' }
   /** 玩家出生点。 */
@@ -130,7 +142,103 @@ export function paint(def: LevelDef, brush: Brush, at: Cell): LevelDef {
       return toggleAnyTreasure(def, at);
     case 'enemy':
       return toggleEnemy(def, at, brush.enemyKind);
+    case 'joint':
+      // 接头要**两格**，一步一个手势在 UI 层（`main.ts`）；落笔这一层不做半成品状态。
+      return def;
   }
+}
+
+/**
+ * 站在 `wall` 那一格上，哪些方向是**本来就走不通**的（`gridStep` 判 `blocked`）。
+ *
+ * 接头的 `enterDir` **必须**出自这个集合 —— 否则那个键会先被普通走位吃掉，接头永远不被触发
+ * （`validate.ts` 的规则⑧ `jointNeverEntered` 常驻把关）。所以"候选方向"是算出来的，
+ * 不是让用户从四个里瞎选：他只需要点两格。
+ *
+ * ⚠ 判据用的是**真的** `gridStep`（同一份实现），不是自己写一遍"目标格通不通" ——
+ * 走位规则一改，这里自动跟上。
+ *
+ * 关卡半成品（`parseLevel` 不通过）时返回 `null`：那种时候无从判断，由调用方决定兜底。
+ */
+export function blockedDirs(def: LevelDef, wall: Cell): readonly Dir[] | null {
+  if (wall.face === 'I') return null;
+  const parsed = parseLevel(def);
+  if (!parsed.ok) return null;
+  const level = parsed.level;
+  // 站姿由**这一格自己的支撑**决定（杆上要 `hang`）—— 与 `jointStep` 判甲板侧同一口径。
+  const mode = supportOf(level, wall) === 'bar' ? 'hang' : 'stand';
+  return DIRS.filter((dir) => gridStep(level, { cell: wall, mode }, dir).kind === 'blocked');
+}
+
+/** `placeJoint` 的结果：成了给出新关卡与选定的方向；没成给出**为什么**（面板要显示给人看）。 */
+export type JointPlacement =
+  | { readonly ok: true; readonly def: LevelDef; readonly dir: JointDir; readonly why: string }
+  | { readonly ok: false; readonly why: string };
+
+/**
+ * **放一个甲板接头**（甲板格 + 墙面格 → 一个 `DeckJoint`）。
+ *
+ * ## 方向怎么定：`down` 优先（本作的房规）
+ *
+ * 候选方向 = 那一格**本来就堵住**的方向（`blockedDirs`）。可能有多个（L3 那两处：`up` 与
+ * `down` 都堵着）。本作里 **`down` 一直是"离开当前支撑"的那个键** —— 杆上按 `down` 松手、
+ * 站在墙上按 `down` 走出到小道 —— L3 手写的那两处也正好都是 `down`。所以默认取它；
+ * 想要别的键，在 JSON 里改 `enterDir` 即可（那是作者意图，不是能反推出的装饰）。
+ *
+ * ## 拒不拒绝
+ *
+ * - 一格都堵不住（四向全通）→ **拒绝**：那样的接头永远不会被触发，与其放一个死接头，
+ *   不如当场说清楚（规则⑧也会报，但那时用户已经在猜"为什么走过去没反应"了）。
+ * - 关卡数据当前不合法（解析失败）→ **照样放**，兜底 `down`：编辑器里的关卡长期是半成品，
+ *   "画不上"绝不该是一个异常（本文件头那条纪律）。方向对不对由校验去说。
+ */
+export function placeJoint(def: LevelDef, deck: DeckCell, wall: Cell): JointPlacement {
+  if (wall.face === 'I') {
+    return { ok: false, why: '接头的一端要落在**墙面**上（第一步点甲板格、第二步点墙面格）' };
+  }
+  if (deck.level !== undefined && deck.level !== 0) {
+    // `DeckJoint.deck` 支持层，但 `jointStep` 只认同一层 —— 放高层的接头目前没有语义。
+    return { ok: false, why: '接头只接**第 0 层**的甲板（塔上的层还接不了）' };
+  }
+
+  const dirs = blockedDirs(def, wall);
+  const dir: JointDir =
+    dirs === null
+      ? 'down'
+      : dirs.includes('down')
+        ? 'down'
+        : (dirs[0] ?? 'down');
+  if (dirs !== null && dirs.length === 0) {
+    return {
+      ok: false,
+      why:
+        `那一格（${cellKey(wall)}）四个方向**都走得通** —— 接头必须占一个本来走不通的方向，` +
+        `否则那个键会被普通走位先吃掉，接头永远不会被触发`,
+    };
+  }
+
+  const joint: DeckJoint = {
+    deck: deck.level === undefined || deck.level === 0 ? { x: deck.x, z: deck.z } : deck,
+    wall: { face: wall.face, col: wall.col, row: wall.row },
+    enterDir: dir,
+  };
+  // 一格墙 / 一块甲板各只留一个接头：`jointStep` 是按墙格匹配的，留两个只会有一个生效。
+  const sameWall = (a: Cell, b: Cell): boolean => a.col === b.col && a.row === b.row;
+  const sameDeck = (a: DeckCell, b: DeckCell): boolean =>
+    a.x === b.x && a.z === b.z && (a.level ?? 0) === (b.level ?? 0);
+  const kept = (def.joints ?? []).filter(
+    (j) => !(j.wall.face === joint.wall.face && sameWall(j.wall, joint.wall)) && !sameDeck(j.deck, joint.deck),
+  );
+  return {
+    ok: true,
+    def: { ...def, joints: [...kept, joint] },
+    dir,
+    why:
+      dirs === null
+        ? `已放接头（关卡当前不合法，方向先按 \`${dir}\`）`
+        : `已放接头：站在 ${cellKey(wall)} 上按 \`${dir}\` 走到甲板 (${deck.x}, ${deck.z})` +
+          (dirs.length > 1 ? `（可用的键还有 ${dirs.filter((d) => d !== dir).join(' / ')}，想换就改 JSON 的 \`enterDir\`）` : ''),
+  };
 }
 
 /**

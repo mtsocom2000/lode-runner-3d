@@ -15,7 +15,7 @@ import { createCamera, fitCamera } from '../render/camera';
 import { createSyncer, type Syncer } from '../render/meshSync';
 import { createFx, type Fx } from '../render/fx';
 import { cellFromPoint } from '../render/pick';
-import { paint } from '../core/level/paint';
+import { paint, placeJoint } from '../core/level/paint';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
 import { createStage, type Stage } from '../render/scene';
@@ -332,6 +332,8 @@ const editor = createEditor(host, {
     // 存草稿失败**不阻止换关** —— 编辑器照样热重建，只是下次打开时读不到这一版。
     const stored = storeLevel(decoded.def);
     buildWorld(decoded.def);
+    // 换了一张关卡 → 接头手势的第一步（一块甲板格）多半已经不存在了，作废。
+    pendingJoint = null;
     editor.show(levelDef, spawn, levelIssues);
     commitLevel();
     return stored ? null : '已应用，但**存不进浏览器存储**（隐私模式 / 配额满）：下次打开会读不到这一版';
@@ -340,6 +342,7 @@ const editor = createEditor(host, {
     clearStoredLevel();
     storeLevel(BLANK);
     buildWorld(BLANK);
+    pendingJoint = null;
     editor.show(levelDef, spawn, levelIssues);
     // "新建空白"是**用户的一次改动**（他想画新的那张）—— 撤销该能退回原来那张，
     // 而不是"手一抖点错就再也回不去"。
@@ -586,6 +589,42 @@ function paintAt(at: Cell): void {
   editor.noteCell(at, diagnose(at));
 }
 
+/**
+ * **接头手势的第一步状态**（甲板格）。`null` = 还没开始。
+ *
+ * 放在模块级而不是闭包里：它跨两次点击，而两次点击之间用户可能换笔、关面板、应用 JSON ——
+ * 那几种情况下都要作废（见各处的 `pendingJoint = null`）。
+ */
+let pendingJoint: DeckCell | null = null;
+
+/**
+ * **接头是两格一个手势**（T21 #2）：先点甲板格、再点墙面格。
+ *
+ * 方向**不由用户选**：那一格本来就堵住的方向就是候选（`blockedDirs`），其中默认取 `down` ——
+ * 本作里 `down` 一直是"离开当前支撑"的那个键（杆上松手、出到小道），L3 手写的那两处也正好都是
+ * 它。想换键就改 JSON 的 `enterDir`（那是作者意图，不是能反推出来的装饰）。
+ */
+function handleJointStep(at: Cell): void {
+  if (pendingJoint === null) {
+    if (at.face !== 'I') {
+      editor.noteCell(at, '接头第一步要**甲板格**（塔 / 小道那一块），第二步才是墙面格');
+      return;
+    }
+    pendingJoint = at.level === undefined ? { x: at.col, z: at.row } : { x: at.col, z: at.row, level: at.level };
+    editor.noteCell(at, `接头：已选定这块甲板 —— 再点一个**墙面格**（落在那儿的"按哪个键"就是方向）`);
+    return;
+  }
+  const placed = placeJoint(queued ?? levelDef, pendingJoint, at);
+  if (!placed.ok) {
+    // 放不下时**不清**第一步：用户多半是点错了格，接着点另一格就行。
+    editor.noteCell(at, `放不下：${placed.why}`);
+    return;
+  }
+  pendingJoint = null;
+  schedule(placed.def);
+  editor.noteCell(at, placed.why);
+}
+
 window.addEventListener('mousemove', (e) => {
   if (!editor.isOpen()) return;
   const at = editorTarget(e);
@@ -597,6 +636,13 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   const at = editorTarget(e);
   if (at === null) return;
+  // 接头是**点两次**，不是"拖一笔"：`paintAt` 会被拖笔逐格调用，拖过甲板再划过墙面
+  // 会当场落下一个没打算放的接头。所以它只认按下，不进拖笔那条路。
+  if (editor.brush().kind === 'joint') {
+    handleJointStep(at);
+    return;
+  }
+  pendingJoint = null; // 换成别的笔来落笔 → 半截的接头手势作废
   painting = true;
   paintedThisStroke = new Set();
   paintAt(at);
@@ -843,12 +889,14 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keydown', (e) => {
   const insideEditor = editor.el.contains(e.target as Node | null);
   if (e.key === 'Escape' && editor.isOpen()) {
+    pendingJoint = null; // 关面板 = 放弃半截的接头手势
     editor.toggle();
     syncIssueMarks();
     return;
   }
   if (e.key !== 'Tab' || insideEditor) return;
   e.preventDefault();
+  pendingJoint = null; // 开关面板都作废半截手势 —— 免得"上次那半截"等到下一次点击才发作
   if (editor.toggle()) {
     editor.show(levelDef, spawn, levelIssues);
     editor.setHistory(canUndo(history), canRedo(history));
