@@ -44,14 +44,21 @@ describe('T21·3 拾取：墙上', () => {
     expect(checked).toBeGreaterThan(100);
   });
 
-  it('折痕最内那一对**在世界里是同一个点** —— 拾取只能固定给 A，编辑器要显示当前格身份', () => {
+  it('折痕最内那一对**在世界里是同一个点** —— 拾取固定给 A，所以**落笔必须成对**', () => {
     // 这不是 bug，是模型的性质（`halfExtent` 的注释）：那一对格子空间上重合。
-    // 所以判据只能是"确定性地给一个" + "把它是哪一格显示出来"，而不是假装分得开。
+    //
+    // 但**后果**是 bug，而且藏了三轮（用户连着报"我明明是连续画的，中间却断了一格"）：
+    // 拾取永远给 A ⇒ `B:fold` **根本落不了笔**，而两格重合 ⇒ 只有 A 侧有砖与两侧都有砖
+    // **画面上完全一样**。所以编辑器那边必须成对落笔（`paint.ts` 的 `foldTwin` / `paintTerrain`），
+    // 这一条就是那条修复的**前提**，钉在这里免得哪天有人"顺手"把 A 优先改掉。
     const a: Cell = { face: 'A', col: level.fold - 1, row: 1 };
     const b: Cell = { face: 'B', col: level.fold, row: 1 };
     expect(wallPoint(a)).toEqual(wallPoint(b)); // 同一个点 —— 这就是全部理由
     expect(cellKey(cellFromPoint(level, wallPoint(a)) ?? a)).toBe(cellKey(a));
     expect(cellKey(cellFromPoint(level, wallPoint(b)) ?? b)).toBe(cellKey(a)); // 给的是 A
+    // 折痕那一列**之外**的 B 面照旧点得到（不然 B 面整片都废了）。
+    const far: Cell = { face: 'B', col: level.fold + 1, row: 1 };
+    expect(cellKey(cellFromPoint(level, wallPoint(far)) ?? a)).toBe(cellKey(far));
   });
 
   it('背板（空格）也能点中 —— 空格的深度与砖不同，但落在同一格', () => {

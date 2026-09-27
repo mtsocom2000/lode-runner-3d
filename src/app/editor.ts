@@ -307,6 +307,9 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
         `列号${base}${tens}`,
         `${base}${ones}`,
         `${base}${foldMarks}  ← fold=${def.fold}：左 A 面 / 右 B 面，**过折痕跨的就是这两列**`,
+        // 用户为了这一点专门绕了一圈（"我终于搞懂了你的 tiles……这个 tiles 相比场景来说是反的"）。
+        // 他不该靠试出来 —— 面板里写一句，比在任何文档里写都管用。
+        `tiles **从下往上**：第 1 行 = r0 = 最低那一层（最后一行是 r${def.tiles.length - 1}，在最上面）`,
         // 场景里**红框 = 错误、灰框 = 提醒**（见 `render/fx.ts`），与这里的记号一一对应。
         ...issues.map((i) => `  ${i.severity === 'error' ? '✗' : '⚠'} ${RULE_TITLES[i.rule]}：${i.detail}`),
       ];

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { BLANK } from '../src/core/level/levels/blank';
 import { L3 } from '../src/core/level/levels/l3';
 import {
+  foldTwin,
   paint,
+  paintTerrain,
   removeDeck,
   setDeck,
   setWallGlyph,
@@ -11,7 +13,7 @@ import {
   type Brush,
 } from '../src/core/level/paint';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
-import { cellKey } from '../src/core/types';
+import { cellKey, type Cell } from '../src/core/types';
 import { validateLevel } from '../src/core/level/validate';
 
 /**
@@ -183,6 +185,67 @@ it('把出口抹掉 → 它两侧那对闸门不再登记（砖留着，叫"闸�
       }
     });
     expect(new Set((L3.gates ?? []).map(cellKey))).toEqual(flanks);
+  });
+});
+
+describe('T21·3 落笔：折痕那一列**成对**落笔（用户连着三轮的真因）', () => {
+  /**
+   * `BLANK` 的 `fold = 14` → 折痕两侧最内列是 **col 13 | col 14**，两格在世界上同一个点。
+   *
+   * 用户三次报的"我连续画了一条硬砖，中间却断了一格"（`==============.=============`）
+   * 病灶都在这里：拾取只能给出 A 面（`pick.test.ts` 钉着这条前提），所以 `B:fold` 根本
+   * 落不了笔；而两格重合 ⇒ 画面上看不出区别。修法是在落笔这一层**同时写两面**。
+   */
+  const FOLD_L = BLANK.fold - 1;
+  const FOLD_R = BLANK.fold;
+  /** 折痕左（A 面最内列）与右（B 面最内列）—— 两格是同一个点。 */
+  const L = (row: number): Cell => ({ face: 'A', col: FOLD_L, row });
+  const R = (row: number): Cell => ({ face: 'B', col: FOLD_R, row });
+
+  it('在 A:13 画砖 → B:14 同时有砖；反过来也一样', () => {
+    const fromA = paintTerrain(BLANK, L(3), 'X');
+    expect(fromA.tiles[3]?.[FOLD_L]).toBe('X');
+    expect(fromA.tiles[3]?.[FOLD_R]).toBe('X');
+
+    const fromB = paintTerrain(BLANK, R(3), 'X');
+    expect(fromB.tiles[3]?.[FOLD_L]).toBe('X');
+    expect(fromB.tiles[3]?.[FOLD_R]).toBe('X');
+  });
+
+  it('橡皮在折痕那一列也成对：擦一格 → 两面一起空', () => {
+    // 不然会留下一面"隐形"的砖（画面上看着没了、支撑还在）。
+    let def = paintTerrain(BLANK, L(3), '=');
+    def = paint(def, { kind: 'erase' }, R(3));
+    expect(def.tiles[3]?.[FOLD_L]).toBe('.');
+    expect(def.tiles[3]?.[FOLD_R]).toBe('.');
+  });
+
+  it('梯 / 杆也成对（折痕处爬不上去就白搭）', () => {
+    expect(paintTerrain(BLANK, L(3), 'H').tiles[3]?.[FOLD_R]).toBe('H');
+    expect(paintTerrain(BLANK, R(3), '-').tiles[3]?.[FOLD_L]).toBe('-');
+  });
+
+  it('**物件不成对**：宝物 `G` 只落在拾取选中的那一面', () => {
+    // 两颗同一位置的宝物会让 HUD 的"还剩 N 块"和"集齐才开闸门"都变成废话。
+    const def = paint(BLANK, { kind: 'tile', glyph: 'G' }, L(3));
+    expect(def.tiles[3]?.[FOLD_L]).toBe('G');
+    expect(def.tiles[3]?.[FOLD_R]).toBe('.');
+  });
+
+  it('折痕**之外**的格子照旧只动一格（成对不是"顺手多画"）', () => {
+    const def = paintTerrain(BLANK, { face: 'A', col: FOLD_L - 1, row: 3 }, 'X');
+    expect(def.tiles[3]?.[FOLD_L - 1]).toBe('X');
+    expect(def.tiles[3]?.[FOLD_L]).toBe('.');
+    expect(def.tiles[3]?.[FOLD_R]).toBe('.');
+  });
+
+  it('`foldTwin` **按列判**（面写错了也照样认得这一对），别的列一律 `null`', () => {
+    expect(foldTwin(L(2), BLANK.fold)).toEqual(R(2));
+    expect(foldTwin(R(2), BLANK.fold)).toEqual(L(2));
+    // 面写反了（`col 14` 却写 `face:'A'`）也认 —— 按列判的意义就在这里。
+    expect(foldTwin({ face: 'A', col: FOLD_R, row: 2 }, BLANK.fold)).toEqual(L(2));
+    expect(foldTwin({ face: 'A', col: 5, row: 2 }, BLANK.fold)).toBeNull();
+    expect(foldTwin(D(-7, -7), BLANK.fold)).toBeNull();
   });
 });
 

@@ -485,10 +485,13 @@ function diagnose(at: Cell): string {
       : at.col === level.fold
         ? { face: 'A' as const, col: level.fold - 1, row: at.row }
         : null;
+  // 折痕那一对**是同一个点**：落笔会同时写两面（`paint.ts` 的 `foldTwin`）。
+  // 这一句是给用户看的模型说明 —— 他为此绕了三轮，值得直接写在他眼前。
   const pairNote =
     foldPair === null
       ? ''
-      : `；折痕对面是 ${cellKey(foldPair)}（那边${supportOf(level, foldPair) === null ? '**站不住**' : '站得住'}）`;
+      : `；折痕对面是 ${cellKey(foldPair)}（那边${supportOf(level, foldPair) === null ? '**站不住**' : '站得住'}）。` +
+        `这两格在画面里是**同一个点**，落笔会两面一起画`;
 
   if (support !== null) return `${here}${pairNote}`;
 

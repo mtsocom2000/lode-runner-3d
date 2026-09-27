@@ -336,7 +336,9 @@ function seamFalls(level: Level, reachable: ReadonlySet<string> | null): readonl
       detail:
         `折痕两侧对不上：${where(here)} 站得住，对面 ${where(over)} **能走进去但站不住**` +
         `（两格在画面里是同一个点，看不出区别）—— 从这一侧过去就是落水。` +
-        `要么在 ${where(missing)} 补一块砖，要么把 ${where(mine)} 拆掉。`,
+        `在编辑器的折痕那一列（col ${left} / ${right}）任意一侧点一下即可：**落笔会两面一起画**` +
+        `（旧版编辑器画不到 B 面那一列，这是那时候留下的洞）；手工改 JSON 的话，就在 ${where(missing)} 补一块砖、` +
+        `或把 ${where(mine)} 拆掉。`,
       at: missing,
     });
   }

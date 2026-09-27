@@ -1,5 +1,6 @@
 import { cellKey, type Cell } from '../types';
 import { deckKey, type DeckCell } from '../world/deck';
+import { faceOf } from '../world/fold';
 import { TILE_CHARS, type EnemyKind, type LevelDef, type TileKind } from '../world/tiles';
 
 /**
@@ -62,14 +63,64 @@ export function tileOfGlyph(glyph: string): TileKind | null {
   return TILE_CHARS[glyph] ?? null;
 }
 
+/**
+ * **能成对落笔的地形**：砖 / 硬砖 / 空 / 梯 / 杆。
+ *
+ * 不含 `treasure`（`G`）与 `exit`（`E`）：那两样是**物件**而不是地形 —— 折痕那一对是同一个点，
+ * 两处都放一颗宝物会让"集齐"变成两句废话，两处都放出口更是没有意义。物件就放在拾取选中的
+ * 那一面（画面上是同一个点，看不出区别）。
+ */
+const MIRRORED: readonly TileKind[] = ['dig', 'hard', 'empty', 'ladder', 'bar'];
+
+/**
+ * **折痕那一对的另一半**：`A:fold-1` 与 `B:fold` 在世界里**是同一个点**
+ * （见 `fold.ts` 的 `halfExtent`：`halfExtent(fold) = fold - 1`）。
+ *
+ * ## 为什么必须有这个函数（用户连着三轮报的同一个坑）
+ *
+ * 两格重合 ⇒ 拾取**只能**给出其中一面。`.paint` 的拾取是先判 A 面（`pick.ts` 里
+ * `if (x < wallReach)` 在前），而折痕那一列的 A/B 两点满足**同一个**判据 —— 于是
+ * `B:fold` 永远被判成 `A:fold-1`，**那一列根本画不上**。
+ *
+ * 用户的症状因此是：他连续拖着画一整条硬砖（`==============.=============`），
+ * 中间那一格却始终是 `.` —— 不是他漏了，是工具不给画。而两格重合意味着**画面上看不出区别**：
+ * 只有 A 侧有砖、和两侧都有砖，看起来一模一样。
+ *
+ * 所以落笔必须**成对**：地形（砖 / 梯 / 杆 / 空）在折痕那一列是"一个东西"，同时写两面。
+ */
+export function foldTwin(at: Cell, fold: number): Cell | null {
+  // **按列判**，不按 `at.face`：面本来就是列的函数（`faceOf(col, fold) = col < fold ? 'A' : 'B'`），
+  // 让调用方把面写对是多余的负担 —— 而且写错了会**静默不生效**（那种最坏）。
+  if (at.face === 'I') return null;
+  if (at.col === fold - 1) return { face: faceOf(fold, fold), col: fold, row: at.row };
+  if (at.col === fold) return { face: faceOf(fold - 1, fold), col: fold - 1, row: at.row };
+  return null;
+}
+
+/**
+ * **地形落笔**：折痕那一列**两面一起写**（见 `foldTwin`），其余格子照旧只动一格。
+ *
+ * 甲板格（面 `'I'`）不走这里 —— 它属于另一套坐标系，`foldTwin` 对它返回 `null`。
+ */
+export function paintTerrain(def: LevelDef, at: Cell, glyph: string): LevelDef {
+  const first = overwrite(def, at, glyph);
+  const twin = at.face === 'I' ? null : foldTwin(at, def.fold);
+  return twin === null ? first : overwrite(first, twin, glyph);
+}
+
 /** 落笔。认不出来的笔 / 画不到的位置 → **原样返回同一个对象**（引用相等让调用方省一次重画）。 */
 export function paint(def: LevelDef, brush: Brush, at: Cell): LevelDef {
   switch (brush.kind) {
-    case 'tile':
+    case 'tile': {
       // 出口走**专线**：它自带两侧的闸门（见 `placeExit`）。
-      return brush.glyph === 'E' ? placeExit(def, at) : overwrite(def, at, brush.glyph);
+      if (brush.glyph === 'E') return placeExit(def, at);
+      const kind = tileOfGlyph(brush.glyph);
+      // 地形成对；物件（宝物 `G`）只落在拾取选中的那一面。
+      if (kind !== null && MIRRORED.includes(kind)) return paintTerrain(def, at, brush.glyph);
+      return overwrite(def, at, brush.glyph);
+    }
     case 'erase':
-      return at.face === 'I' ? removeDeck(def, at) : overwrite(def, at, '.');
+      return at.face === 'I' ? removeDeck(def, at) : paintTerrain(def, at, '.');
     case 'deck':
       return setDeck(def, at, brush.mode);
     case 'spawn':
@@ -104,10 +155,14 @@ export function placeExit(def: LevelDef, at: Cell): LevelDef {
   if (at.col < 0 || at.col >= cols || at.row < 0 || at.row >= def.tiles.length) return def;
 
   let next = setWallGlyph(def, at, 'E');
+  const twin = foldTwin(at, def.fold);
   const flank: Cell[] = [];
   for (const col of [at.col - 1, at.col + 1]) {
     if (col < 0 || col >= cols) continue; // 贴边时只有一侧有闸门
-    const cell: Cell = { face: at.face, col, row: at.row };
+    const cell: Cell = { face: faceOf(col, def.fold), col, row: at.row };
+    // 出口正好落在折痕那一列时，`at.col ± 1` 里有一个**就是它自己的另一半**（同一个点）——
+    // 给那儿砌墙等于把闸门砌在出口自己身上，跳过。
+    if (twin !== null && cell.col === twin.col) continue;
     next = setWallGlyph(next, cell, '=');
     flank.push(cell);
   }
