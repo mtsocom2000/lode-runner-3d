@@ -213,6 +213,55 @@ describe('validateLevel —— 规则⑥：折痕两侧对不上（用户第三�
   });
 });
 
+describe('validateLevel —— 规则⑪：闸门声明必须压在**硬砖**上', () => {
+  /** 4 列 4 行：`r1` 上依次是 **出口** 与 **硬砖**，方便把闸门声明往这两个位置上放。 */
+  const base: LevelDef = {
+    id: 'G',
+    name: '闸门声明',
+    fold: 2,
+    tiles: ['XX..', 'XE=.', 'X...', '....'],
+  };
+
+  it('声明压在**出口**上 → `gateNotBrick`（错误级）：开闸会把出口抹掉', () => {
+    // 用户报的"出口变成了梯子"：开闸清的是出口那一格，出口从此不存在 —— 走到也不过关。
+    const hits = validateLevel({ ...base, gates: [{ face: 'A', col: 1, row: 1 }] }, {
+      face: 'A',
+      col: 0,
+      row: 1,
+    }).filter((i) => i.rule === 'gateNotBrick');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('error');
+    expect(hits[0]?.detail).toContain('出口被抹掉');
+  });
+
+  it('声明压在**硬砖**上 → 不报（这才是闸门该有的样子）', () => {
+    const rules_ = validateLevel({ ...base, gates: [{ face: 'A', col: 2, row: 1 }] }, {
+      face: 'A',
+      col: 0,
+      row: 1,
+    }).map((i) => i.rule);
+    expect(rules_).not.toContain('gateNotBrick');
+  });
+
+  it('声明压在**空格**上 → 也报（那一格本来就能走，闸门形同虚设）', () => {
+    const rules_ = validateLevel({ ...base, gates: [{ face: 'A', col: 3, row: 1 }] }, {
+      face: 'A',
+      col: 0,
+      row: 1,
+    }).map((i) => i.rule);
+    expect(rules_).toContain('gateNotBrick');
+  });
+
+  it('内置关卡的闸门全部通过这条 —— 别只在夹具里绿', () => {
+    for (const [def, spawn] of [
+      [CONCEPT_MINIMAL, PLAYER_SPAWN],
+      [L2, L2_SPAWN],
+    ] as const) {
+      expect(validateLevel(def, spawn).filter((i) => i.rule === 'gateNotBrick')).toEqual([]);
+    }
+  });
+});
+
 describe('validateLevel —— 反向：别把这些合法关卡拦下来', () => {
   it('只有一格高的梯子合法（不要求梯子通到顶）', () => {
     // "梯子必须从地面通到最顶"是**设计取向**，不是结构约束：

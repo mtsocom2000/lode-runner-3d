@@ -104,6 +104,15 @@ export type RuleId =
    * 所以"对面那格是空的"这件事**在画面上完全看不出来**。靠人眼盯不出来，就得由规则盯。
    */
   | 'seamMismatch'
+  /**
+   * **闸门声明的格子当前不是硬砖**（规则⑪）：开闸会把它换成空格 —— 如果那一格是出口、
+   * 梯子或宝物，等于**把它抹掉**。
+   *
+   * 用户 2026-09-23 报的"集齐宝物后**出口变成了梯子**"就是这个：他那一关 `r11` 是 `=E=`，
+   * 而名单里留着**出口自己那一格**（两个出口挨着画、或手改 JSON 留下的旧名单）。开闸时
+   * 出口被清掉，于是"出口不见了/变成梯子"。
+   */
+  | 'gateNotBrick'
   /** **每一块宝物都要走得到**（T21，规则⑩）—— 取不到就集不齐，集不齐就开不了闸门。 */
   | 'treasureUnreachable';
 
@@ -130,6 +139,7 @@ export const RULE_TITLES: Readonly<Record<RuleId, string>> = {
   jointNeverEntered: '接头永远进不去（方向被走廊占了）',
   exitUnreachable: '出口走不到（这一关赢不了）',
   seamMismatch: '折痕两侧对不上（走过去会落水）',
+  gateNotBrick: '闸门声明压在非硬砖上（开闸会把它抹掉）',
   treasureUnreachable: '宝物走不到（取不到就开不了闸门）',
 };
 
@@ -271,14 +281,49 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
   // 放在 `unreachable` **之后**：坏接头是"为什么到不了"的原因，先说结论再说原因。
   issues.push(...danglingJoints(level));
   issues.push(...jointShadowed(level));
+  // ⑪ 闸门声明得对不对（不依赖出生点）：压在出口/梯子/宝物上就是"开闸把它抹掉"。
+  issues.push(...gateKinds(level));
 
-  // ⑥ 折痕两侧对不上（**第三次同款事故**，见 `seamMismatch`）。
+  // ⑦ 折痕两侧对不上（**第三次同款事故**，见 `seamMismatch`）。
   // 可达集只在出生点站得住时才有意义 —— 但它只影响**分级**（够得着的陷阱才是错误），
   // 所以这一条不放进上面那个 `spawnOk` 块里：还没放出生点时也该看得见。
   issues.push(
     ...seamFalls(level, spawnOk && spawn !== undefined ? walkReachable(level, spawn).cells : null),
   );
 
+  return issues;
+}
+
+/**
+ * 规则⑪：**闸门声明的格子必须是一块硬砖**。
+ *
+ * 闸门是"集齐宝物后**消失**的假砖"（见 `rules/goals.ts`）。所以名单里声明的格子，开闸前
+ * 必须真的是硬砖 —— 否则开闸那一下等于**把那格的东西抹掉**：
+ *
+ * - 声明在**出口**上 → 出口没了（用户报的"出口变成了梯子"就是这个）；
+ * - 声明在**梯子**上 → 作者画的梯子被拆了；
+ * - 声明在**宝物**上 → 宝物被抹掉（而"集齐"的判据读的是 `treasures`/网格，会直接错乱）；
+ * - 声明在**空格**上 → 那一格本来就能走，闸门形同虚设（`exitGated` 也会报"一开始就走得到"）。
+ *
+ * 比较只看 `(col, row)`：`openGates` 是按 `row * cols + col` 取格的，`face` 只用来排掉甲板格。
+ */
+function gateKinds(level: Level): readonly LevelIssue[] {
+  const issues: LevelIssue[] = [];
+  for (const gate of level.gates) {
+    if (gate.face === 'I') continue; // 甲板格：`openGates` 自己会跳过，不必在这里重复报
+    const cell = cellOf(level, gate.col, gate.row);
+    const here = level.at(gate.col, gate.row);
+    if (here === 'hard') continue;
+    issues.push({
+      rule: 'gateNotBrick',
+      severity: 'error',
+      detail:
+        `闸门 ${where(cell)} 那一格现在是「${here ?? '越界'}」而不是硬砖 —— ` +
+        `开闸会把它换成空格，等于**把它抹掉**。` +
+        (here === 'exit' ? '（出口被抹掉之后，走到那儿也不过关。）' : ''),
+      at: cell,
+    });
+  }
   return issues;
 }
 

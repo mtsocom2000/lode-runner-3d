@@ -174,6 +174,21 @@ it('把出口抹掉 → 它两侧那对闸门不再登记（砖留着，叫"闸�
     expect(erased.tiles[1]?.slice(4, 7)).toBe('=.=');
   });
 
+  it('出口画在"别人的闸门格"上 → 那一格的闸门登记被撤掉（否则开闸会把出口抹掉）', () => {
+    // 用户报的"集齐宝物后出口变成了梯子"就是这条路径：两个出口挨着画、
+    // 名单里留着**出口自己那一格**，开闸那一下清掉的是出口本身。
+    const one = paint(BLANK, exitBrush, A(5, 3));
+    expect(one.gates).toEqual([A(4, 3), A(6, 3)]);
+    const two = paint(one, exitBrush, A(6, 3));
+    // 关键的一条：**新的出口那一格**不能还留在名单里（开闸会把它抹掉）。
+    expect(two.gates?.some((g) => g.col === 6 && g.row === 3)).toBe(false);
+    // 新出口自带的两个闸门在名单里。
+    expect(two.gates?.some((g) => g.col === 5 && g.row === 3)).toBe(true);
+    expect(two.gates?.some((g) => g.col === 7 && g.row === 3)).toBe(true);
+    // 旧的 (4,3) 会作为一条**无害的**遗留留下（它现在是一块普通硬砖，开闸时多清一格而已）——
+    // 不去猜"哪些旧声明属于哪个已消失的出口"，那种推断一旦猜错就是把别人的砖清掉。
+  });
+
   it('L3 手工排的四个闸门**正好**是两对出口的两侧 —— 房规在真数据里也成立', () => {
     const flanks = new Set<string>();
     L3.tiles.forEach((line, row) => {
