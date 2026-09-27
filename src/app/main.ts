@@ -446,7 +446,12 @@ function cellUnderPointer(e: MouseEvent): Cell | null {
     -((e.clientY - rect.top) / rect.height) * 2 + 1,
   );
   raycaster.setFromCamera(pointerNdc, camera);
-  const first = raycaster.intersectObjects(scene.children, true)[0];
+  // **跳过水面**（`userData.pickIgnore`，见 `scene.ts`）：它是一块水平大平面，在墙根一带
+  // 会与砖交替命中，命中点高度差一大截 → 换算出的行号一跳一跳（用户报的"不停地跳动"）。
+  // 采样成"第一个**可拾取**的命中"，判据就只跟"指着哪一格"有关。
+  const first = raycaster
+    .intersectObjects(scene.children, true)
+    .find((hit) => hit.object.userData.pickIgnore !== true);
   if (first === undefined) return null;
   return cellFromPoint(level, [first.point.x, first.point.y, first.point.z]);
 }

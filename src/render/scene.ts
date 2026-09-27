@@ -633,7 +633,18 @@ const faceCentre = -half + level.fold / 2;
   const waterC = (waterFar + waterNear) / 2;
   const waterH = (waterNear - waterFar) / 2;
   put(mat.bed, [waterC, 0.01, waterC], [waterH * 2, 0.03, waterH * 2], false);
-  put(mat.water, [waterC, WATER_Y / 2, waterC], [waterH * 2, WATER_Y, waterH * 2], false);
+  put(mat.water, [waterC, WATER_Y / 2, waterC], [waterH * 2, WATER_Y, waterH * 2], false).userData.pickIgnore =
+    true;
+  /**
+   * 水面**不参与拾取**（用户 2026-09-23："鼠标靠近水面时，会不停地跳动"）。
+   *
+   * `cellUnderPointer` 是拿鼠标射线去打 `scene.children` 整体的。水是一块**水平的大平面**，
+   * 鼠标在墙根一带时，前一帧打中砖、后一帧打中水面 —— 两个命中点的**高度**差一大截，
+   * `cellFromPoint` 换算出来的行号就跟着跳，辅助线自然一跳一跳。
+   *
+   * 排除掉它之后，射线**穿过**水面打到后面的墙/甲板：判据只取决于"指着哪一格"，
+   * 不再取决于"路上先碰到了什么"。水面本来也不是能编辑的东西。
+   */
   // ── 水面边线：**这一版故意不画**（观感实验③-b） ──
   //
   // 原先这里沿水面四条边各画一根亮线（`mat.waterRim`）。加上去是因为"水面没有边就
