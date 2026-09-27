@@ -357,6 +357,45 @@ export function stepDelta(
  * 折痕**不算**这种转折：那是同一条走廊折了一下，两边的世界方向一致（`stepDelta` 的
  * "再看一步"口径下相同），按住不放继续走正是教学里那句"沿走廊一直走就能过去"。
  */
+/**
+ * **悬停辅助线**在某一面墙上、某一行的那条线：位置与尺寸。
+ *
+ * ## 为什么它是纯函数、而且放在这里
+ *
+ * 第一版写在 `fx.ts` 里，两个错都犯了，而且是**用户先看出来的**：
+ *
+ * 1. **中心取了第一个格子的锚点**，不是两端的中点 —— 整条线偏出去半面墙、还长出场景外
+ *    （用户："这辅助线不对吧？"）；
+ * 2. 另一个轴推了整整一格，线**浮在墙外**。
+ *
+ * "两个端点 + 偏移"正是几何唯一出处该管的事（`cellAnchor` 就在这里）；放进纯函数就顺带能测，
+ * 不必再靠"看着像不像"。
+ *
+ * ## 约定
+ *
+ * - **沿墙**展开：A 面的列沿 z、B 面的列沿 x —— 所以长边分别是 z / x；
+ * - 两端各多出 `CUBE * 0.4`，把首尾两格**盖满**（不然两头各差半格，像没到头）；
+ * - 贴着那一面墙**正面外一点**（约 0.1 格）：不埋进砖里，也不像浮在空中。
+ */
+export function guideLine(
+  level: Level,
+  face: 'A' | 'B',
+  row: number,
+): { readonly p: Vec3; readonly s: Vec3 } {
+  const firstCol = face === 'A' ? 0 : level.fold;
+  const lastCol = face === 'A' ? level.fold - 1 : level.cols - 1;
+  const first = cellAnchor(level, { face, col: firstCol, row }).p;
+  const last = cellAnchor(level, { face, col: lastCol, row }).p;
+  const along = Math.abs(last[0] - first[0]) + Math.abs(last[2] - first[2]) + CUBE * 0.8;
+  const thin = CUBE * 0.08;
+  // **中点**（两端平均）——这是第一版栽的那一跤。
+  const midX = (first[0] + last[0]) / 2;
+  const midZ = (first[2] + last[2]) / 2;
+  const out = CUBE * 0.6;
+  return face === 'A'
+    ? { p: [midX + out, first[1], midZ], s: [thin, thin, along] }
+    : { p: [midX, first[1], midZ + out], s: [along, thin, thin] };
+}
 export function sameWorldDirection(a: Vec3, b: Vec3): boolean {
   const la = Math.hypot(a[0], a[2]);
   const lb = Math.hypot(b[0], b[2]);

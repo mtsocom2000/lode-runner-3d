@@ -4,7 +4,7 @@ import { DIRS, OPPOSITE_DIR, step } from '../src/core/rules/movement';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, glintStrips, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, cellAnchor, glintStrips, guideLine, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -321,5 +321,38 @@ describe('metrics：跨面的那一步之后，按住的键还有没有意义', 
     expect(sameWorldDirection([1, 0, 0], [0, 0, 1])).toBe(false);
     expect(sameWorldDirection([1, 0, 0], [-1, 0, 0])).toBe(false);
     expect(sameWorldDirection([0, 0, 0], [1, 0, 0])).toBe(false); // 零向量不算方向
+  });
+});
+
+describe('guideLine —— 悬停辅助线（用户报过"偏出去半面墙"）', () => {
+  it('A 面那一条：**以两端中点为心**，且盖住首尾两格', () => {
+    // 第一版把中心取成"第一个格子的锚点"，于是整条线偏出去半面墙、还长出场景外。
+    // 这一条钉的就是那个中点 —— 纯函数才测得出来，看着像不像当时骗过了我。
+    const first = cellAnchor(level, { face: 'A', col: 0, row: 1 }).p;
+    const last = cellAnchor(level, { face: 'A', col: FOLD - 1, row: 1 }).p;
+    const g = guideLine(level, 'A', 1);
+    expect(g.p[2]).toBeCloseTo((first[2] + last[2]) / 2, 6); // z 方向居中
+    expect(g.p[1]).toBeCloseTo(first[1], 6); // 与那一行同高
+    const half = g.s[2] / 2;
+    expect(g.p[2] - half).toBeLessThanOrEqual(Math.min(first[2], last[2]));
+    expect(g.p[2] + half).toBeGreaterThanOrEqual(Math.max(first[2], last[2]));
+    expect(g.s[2]).toBeGreaterThan(1); // 长边在 z 上（A 面的列沿 z）
+    expect(g.s[0]).toBe(g.s[1]);
+    expect(g.s[0]).toBeLessThan(0.2); // 细
+    // 另一条轴：落在**砖的外侧**（埋进砖里就看不见了）。
+    expect(Math.abs(g.p[0] - first[0])).toBeGreaterThan(0.3);
+  });
+
+  it('B 面那一条：长边在 x 上（两面墙互相垂直），同样以中点为心', () => {
+    const first = cellAnchor(level, { face: 'B', col: FOLD, row: 1 }).p;
+    const last = cellAnchor(level, { face: 'B', col: FOLD * 2 - 1, row: 1 }).p;
+    const g = guideLine(level, 'B', 1);
+    expect(g.p[0]).toBeCloseTo((first[0] + last[0]) / 2, 6);
+    expect(g.p[1]).toBeCloseTo(first[1], 6);
+    const half = g.s[0] / 2;
+    expect(g.p[0] - half).toBeLessThanOrEqual(Math.min(first[0], last[0]));
+    expect(g.p[0] + half).toBeGreaterThanOrEqual(Math.max(first[0], last[0]));
+    expect(g.s[1]).toBe(g.s[2]);
+    expect(Math.abs(g.p[2] - first[2])).toBeGreaterThan(0.3);
   });
 });

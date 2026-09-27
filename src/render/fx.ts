@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Cell } from '../core/types';
 import type { Level } from '../core/world/tiles';
-import { CUBE, cellAnchor } from './metrics';
+import { cellAnchor, guideLine } from './metrics';
 import { PALETTE } from './palette';
 
 /**
@@ -173,24 +173,17 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
         return;
       }
       const row = at.row;
-      // 那一行的**首尾两格**：两端都走 `cellAnchor`，于是"墙有多宽"不必在这里重算一遍。
-      const lineAt = (face: 'A' | 'B', mesh: THREE.Mesh): void => {
-        const from = cellAnchor(level, { face, col: 0, row }).p;
-        const to = cellAnchor(level, { face, col: level.fold - 1, row }).p;
-        // 贴着那一面墙**前方**一点（砖心 + 一格），否则线会埋进砖里。
-        mesh.position.set(from[0] + CUBE, from[1], from[2] + CUBE);
-        mesh.scale.set(CUBE * 0.08, CUBE * 0.08, Math.abs(to[2] - from[2]) + CUBE);
+      // 那一行在两面墙上各画一条：位置/尺寸全由 `guideLine`（`metrics`，几何唯一出处）算。
+      // 第一版在这里自己算，把中心取成了"第一个格子"→ 整条线偏出去半面墙（用户看出来的）。
+      for (const [mesh, face] of [
+        [guideA, 'A'],
+        [guideB, 'B'],
+      ] as const) {
+        const line = guideLine(level, face, row);
+        mesh.position.set(line.p[0], line.p[1], line.p[2]);
+        mesh.scale.set(line.s[0], line.s[1], line.s[2]);
         mesh.visible = true;
-      };
-      const lineAtX = (mesh: THREE.Mesh): void => {
-        const from = cellAnchor(level, { face: 'B', col: level.fold, row }).p;
-        const to = cellAnchor(level, { face: 'B', col: level.cols - 1, row }).p;
-        mesh.position.set(from[0] + CUBE, from[1], from[2] + CUBE);
-        mesh.scale.set(Math.abs(to[0] - from[0]) + CUBE, CUBE * 0.08, CUBE * 0.08);
-        mesh.visible = true;
-      };
-      lineAt('A', guideA);
-      lineAtX(guideB);
+      }
     },
     update(dt: number): void {
       const step = dt > 0 ? dt : 0;
