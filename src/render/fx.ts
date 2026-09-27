@@ -60,9 +60,43 @@ export interface Fx {
    * `null` = 收起来（关掉面板、鼠标离开编辑器时都要调它，否则那两条线会一直挂在那儿）。
    */
   setHover(at: Cell | null, span?: Cell): void;
+  /**
+   * **溅一串碎屑**（T20）：从某一格炸出去一小撮小方块。
+   *
+   * 四个调用点都是 sim 已经在报的事件（`dug` / `buried` / `opened` / `drowned`）——
+   * 这一层只把事件画出来，不改任何规则（见文件头"只读 state + events"）。
+   */
+  burst(at: Cell, kind: 'dirt' | 'water' | 'gold'): void;
   /** 每帧推进：衰减、到点移除、常驻记号呼吸。`dt` 是**真实秒数**（与 `meshSync.update` 同一口径）。 */
   update(dt: number): void;
   dispose(): void;
+}
+
+/**
+ * **粒子族**（T20）：碎砖、水花、亮片 —— 一小撮受重力的小方块，短命、到点就收。
+ *
+ * ## 为什么是"一个网格 + 一批位置"，而不是每个粒子一个 mesh
+ *
+ * 一次挖掘能溅出十几块，`drowned` 的水花也是一把 —— 每个粒子建一个 `Mesh` 会在画面里
+ * 塞进几十个**独立绘制调用**。这里用一个 `InstancedMesh` 装同一批粒子（与砖层同一套做法），
+ * 到达上限就直接丢——**没人在乎第 25 块碎砖去哪了**。
+ *
+ * ## 为什么不做碰撞
+ *
+ * 粒子只在**视觉上**飞一下：地面高度取发射点，飞出去之后不再判断脚下 ——"落地"就是寿命到了。
+ * 真做碰撞要读地形、要判层，而这一层**只读事件、不读规则**（与 `fx` 其它东西同一条纪律）。
+ */
+interface Spark {
+  readonly mesh: THREE.InstancedMesh;
+  readonly born: number;
+  readonly ox: number;
+  readonly oy: number;
+  readonly oz: number;
+  readonly vx: number;
+  readonly vy: number;
+  readonly vz: number;
+  readonly life: number;
+  readonly size: number;
 }
 
 export function createFx(parent: THREE.Object3D, level: Level): Fx {
@@ -128,6 +162,28 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
     group.add(o);
   }
   const GUIDES: readonly THREE.Mesh[] = [guideA, guideB];
+
+  /**
+   * **粒子**（T20）。三种碎屑各有一个材质，几何共用一个单位立方体 —— 粒子的大小靠
+   * `InstancedMesh` 的矩阵给，不必为每种尺寸各建一个几何。
+   */
+  const sparkGeo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
+  const sparkMat = {
+    // 碎砖用 `ink`（砖轮廓线那一族的中灰）：它要读成"这块砖被打碎了"，不是新地形。
+    dirt: new THREE.MeshLambertMaterial({ color: PALETTE.ink }),
+    // 水花借**水面**那一族色（同色系才是水），不借 `player`（那是角色）。
+    water: new THREE.MeshLambertMaterial({ color: PALETTE.rim }),
+    // 亮片借 `prize` 暖金：与宝物同一档"值得的东西"。
+    gold: new THREE.MeshLambertMaterial({ color: PALETTE.prize }),
+  };
+  const sparks: Spark[] = [];
+  /** 粒子总数上限：一次挖能溅十几块，同时来几发就到了几十 —— 到这个数就不再新发。 */
+  const SPARK_CAP = 96;
+  const SPARK_LIFE = 0.6;
+  /** 每一发溅出几颗。8 颗足够"一撮"，又不至于把 96 的上限一口吃满。 */
+  const SPARKS_PER_BURST = 8;
+  /** 这一层自己的时钟（秒）。粒子用它算年龄 —— 与 `update` 的 `dt` 同源。 */
+  let elapsed = 0;
 
   const keyOf = (c: Cell): string => `${c.face}:${c.col},${c.row}@${c.level ?? 0}`;
 
@@ -198,8 +254,66 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
         mesh.visible = true;
       }
     },
+    burst(at, kind): void {
+      if (sparks.length >= SPARK_CAP) return; // 满就丢 —— 没人在乎第 25 块碎砖去哪了
+      const anchor = cellAnchor(level, at);
+      // 从那一格的**中心往上一格**炸开（挖砖时队首在格子里，闸门/水花则在格面上）。
+      const [ox, oy, oz] = anchor.p;
+      const mesh = new THREE.InstancedMesh(sparkGeo, sparkMat[kind], SPARKS_PER_BURST);
+      mesh.renderOrder = 998;
+      mesh.frustumCulled = false; // 实例位置每帧在变，交给包围盒剔除会闪
+      group.add(mesh);
+      sparks.push({
+        mesh,
+        born: elapsed,
+        ox,
+        oy,
+        oz,
+        // 初速：向上为主、横向随意撒开（用序号当"随机种子"—— 这里不需要真随机，
+        // 只要每一颗的初速不同，看起来就是一撮而不是一块）。
+        vx: Math.sin(sparks.length * 12.9898) * 1.6,
+        vy: 3.2,
+        vz: Math.cos(sparks.length * 78.233) * 1.6,
+        life: SPARK_LIFE,
+        size: 1,
+      });
+    },
     update(dt: number): void {
       const step = dt > 0 ? dt : 0;
+      elapsed += step;
+      // ── 粒子：抛物线飞一小会儿、越飞越小、到点连网格一起收掉 ──
+      //
+      // 不做碰撞（见 `Spark`）："落地"就是寿命到了。位置每帧**重算**而不是积分 ——
+      // 这样它永远是同一条抛物线，掉帧也不会跑偏。
+      for (let i = sparks.length - 1; i >= 0; i--) {
+        const s = sparks[i];
+        if (s === undefined) continue;
+        const age = elapsed - s.born;
+        const k = age / s.life;
+        if (k >= 1) {
+          group.remove(s.mesh);
+          s.mesh.dispose();
+          sparks.splice(i, 1);
+          continue;
+        }
+        const m = new THREE.Matrix4();
+        const shrink = (1 - k) * s.size;
+        for (let n = 0; n < SPARKS_PER_BURST; n++) {
+          const angle = n * 2.399963; // 黄金角：均匀撒开，不会挤成一条线
+          const outward = s.vx * Math.cos(angle) + s.vz * Math.sin(angle);
+          const px = s.ox + outward * age;
+          const py = s.oy + s.vy * age - 6 * age * age; // 6 格/秒² 的"感觉上"的重力
+          const pz = s.oz + outward * age * 0.6;
+          m.compose(
+            new THREE.Vector3(px, py, pz),
+            new THREE.Quaternion(),
+            new THREE.Vector3(shrink, shrink, shrink),
+          );
+          s.mesh.setMatrixAt(n, m);
+        }
+        s.mesh.instanceMatrix.needsUpdate = true;
+      }
+
       // 常驻记号：慢呼吸（0.6~1.0 之间来回），让人一眼看出"这是标出来的，不是画错的"。
       if (marked.length > 0) {
         pulse += step;

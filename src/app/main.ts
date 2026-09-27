@@ -1331,6 +1331,30 @@ function loop(now: number): void {
         if (falling === null) falling = new Set<number>();
         falling.add(event.entity);
       }
+      /**
+       * **T20 的碎屑**：四个事件各溅一串，颜色按语义分（碎砖 / 水花 / 金色亮片）。
+       *
+       * 这一层**只画事件**，不改任何规则；`drowned` 的水花在**落水那一格**
+       * （`event.cell`），其余三个都在事件自己报的那一格上。
+       */
+      if (event.kind === 'drowned') fx.burst(event.cell, 'water');
+      if (event.kind === 'buried') fx.burst(event.cell, 'dirt');
+      if (event.kind === 'dug') fx.burst(event.cell, 'dirt');
+      if (event.kind === 'opened') {
+        // 闸门是**两格**（出口两侧），但事件只说"开了"。碎屑就对**闸门自己那几格**撒 ——
+        // 位置从关卡数据里读（`level.gates`），不在这一层猜规则。
+        for (const gate of level.gates) {
+          if (gate.face === 'I') continue;
+          fx.burst({ face: gate.face, col: gate.col, row: gate.row }, 'gold');
+        }
+      }
+      if (event.kind === 'won') {
+        // 过关：金色亮片从**玩家**那一格升起 + 一声（`opened` 不响，那是"门开了"，
+        // 真正的完成是 `won`）。
+        const player = frame.state.entities.find((e) => e.kind === 'player');
+        if (player !== undefined) fx.burst(player.cell, 'gold');
+        sfx.ding();
+      }
       if (event.kind === 'digBlocked') {
         // **哑火反馈**（用户 2026-09-19）：按了挖、那一铲落在空处。
         // 只做两件事，不做文字弹窗 —— 完全没反应会让玩家怀疑"按键失灵"，而弹字太打扰节奏。

@@ -19,8 +19,16 @@
  * 远算不上值得让整局游戏停下的错误。所以全部包在 `try` 里，失败就静默降级成"没有音效"。
  */
 export interface Sfx {
-  /** 挖了空处的一声短促空响。 */
+  /** 按了挖、那一铲落在空处的一个短促空响。 */
   dryFire(): void;
+  /**
+   * **过关**的一声（T20）：两音上行的小铜锣。
+   *
+   * 为什么用**正弦**而不是哑火那个方波：方波是"撞在硬东西上"的质感（否定反馈），
+   * 过关要的是一件**值得的事发生了** —— 两个干净的正弦音、第二音更高，听着就是"上去了"。
+   * 音量比哑火略大（0.12）：它是一局里最重要的那一下，不该被埋。
+   */
+  ding(): void;
 }
 
 /**
@@ -75,6 +83,31 @@ export function createSfx(): Sfx {
         osc.stop(now + DRY_FIRE_SECONDS);
       } catch {
         // 同上：反馈的失败不该升级成游戏错误。
+      }
+    },
+    ding(): void {
+      const audio = context();
+      if (audio === null) return;
+      try {
+        if (audio.state === 'suspended') void audio.resume();
+        const now = audio.currentTime;
+        // 两个音：G5 → C6。第二音晚 0.09 秒、略长 —— 上行两音在心理声学上就是"完成"。
+        for (const [freq, at, len] of [
+          [784, 0, 0.16],
+          [1047, 0.09, 0.26],
+        ] as const) {
+          const osc = audio.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now + at);
+          const gain = audio.createGain();
+          gain.gain.setValueAtTime(0.12, now + at);
+          gain.gain.exponentialRampToValueAtTime(0.0005, now + at + len);
+          osc.connect(gain).connect(audio.destination);
+          osc.start(now + at);
+          osc.stop(now + at + len);
+        }
+      } catch {
+        // 同上。
       }
     },
   };
