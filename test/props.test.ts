@@ -91,16 +91,32 @@ describe('道具层：塔的梯子标记必须落在"按 Z 生效的那一格"�
   });
 });
 
-describe('道具层：闸门开了真的会多出梯子（"通天梯"的回归）', () => {
-  it('把 `gates` 换成梯子之后，梯子件**变多**（以前建一次就不动 → 看不见）', () => {
+describe('道具层：闸门开了，那两块砖**真的消失**（不是变成梯子）', () => {
+  /**
+   * 这一组原来断言的是"闸门变成梯子 ⇒ 梯子件变多 4×5"。用户 2026-09-23 集齐宝物后当场问
+   * "**出口变成了梯子，这是怎么回事？**" —— 那不是他要的，他要的是他自己说的"障碍物自动消除"。
+   *
+   * 所以现在断言反过来：开闸之后
+   *
+   * 1. 闸门那几格**不再有梯子件**（旧行为会凭空多出 20 个件）；
+   * 2. 它们也不再是砖 —— 这就意味着"渲染层必须跟着这张新网格走"，否则玩家看到的还是关着。
+   *
+   * 第 2 条是原来那条回归真正要防的东西（"道具层建一次就不动 ⇒ 变化看不见"），
+   * 只是当时用梯子的**增量**来表达它。
+   */
+  it('开闸后：闸门格既没有梯子件、也不再是砖（变化必须传到渲染层）', () => {
     const level = load(L2);
     const before = collectProps(level, level.grid).ladders.length;
     const opened = openGates(level.grid, level.gates, level.cols);
-    const after = collectProps(level, opened).ladders.length;
 
-    // 四块闸门 → 四格梯子，每格 5 个件（2 立柱 + 3 横档）。
     expect(level.gates).toHaveLength(4);
-    expect(after - before).toBe(4 * 5);
+    // ① 不凭空造梯子：梯子件一个都不许多（多出来就是又变回"变成梯子"了）。
+    expect(collectProps(level, opened).ladders.length).toBe(before);
+    // ② 那几格真的空了 —— 砖层与道具层都要按这张新网格重建。
+    for (const gate of level.gates) {
+      expect(opened[gate.row * level.cols + gate.col]).toBe('empty');
+      expect(collectProps(level, opened).bars.length).toBe(collectProps(level, level.grid).bars.length);
+    }
   });
 
   it('宝物被收走之后，那一格不再有件（`treasure → empty` 走同一条重建）', () => {

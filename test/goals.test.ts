@@ -57,7 +57,7 @@ describe('T13：通关链（采宝 → 开闸 → 出口）', () => {
     // 宝物从 state 里消失，闸门开了，而且**开了之后不再重复报 opened**。
     expect(frame.state.treasures).toEqual([]);
     expect(frame.state.gatesOpen).toBe(true);
-    expect(gateKinds(frame.state)).toEqual(['ladder', 'ladder']);
+    expect(gateKinds(frame.state)).toEqual(['empty', 'empty']);
 
     const again = tick(frame.state, NO_INTENTS);
     expect(again.events.map((e) => e.kind)).not.toContain('opened');
