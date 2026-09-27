@@ -17,6 +17,7 @@ import { createFx, type Fx } from '../render/fx';
 import { cellFromPoint } from '../render/pick';
 import { paint, placeJoint } from '../core/level/paint';
 import { lineCells } from '../core/level/line';
+import { rectCells } from '../core/level/rect';
 import { PLAYER_SIZE, playerAnchor, sameWorldDirection, stepDelta } from '../render/metrics';
 import { probePixels } from '../render/probe';
 import { createStage, type Stage } from '../render/scene';
@@ -634,11 +635,19 @@ function handleJointStep(at: Cell): void {
 window.addEventListener('mousemove', (e) => {
   if (!editor.isOpen()) return;
   const at = editorTarget(e);
+  hoveredCell = at;
   // 悬停提示：那一格的框 + 两面墙上同高的辅助线（用户 2026-09-23 提议）。
-  fx.setHover(at);
+  // Shift 拖矩形时，框**盖住整片**——松手前就看得见要铺哪一片。
+  fx.setHover(at, shiftAnchor === null ? undefined : shiftAnchor);
   editor.noteCell(at, at === null ? undefined : diagnose(at));
-  if (painting && at !== null) paintTrail(at);
+  // Shift 那一笔**不在拖的时候落笔**：落笔推迟到松手（一次拖出的整片是**一步**撤销）。
+  if (painting && at !== null && shiftAnchor === null) paintTrail(at);
 });
+
+/** 指针当前在哪一格（松手时要拿它当矩形的另一角）。 */
+let hoveredCell: Cell | null = null;
+/** Shift 拖矩形时按下的那一角。`null` = 不是矩形那一笔。 */
+let shiftAnchor: Cell | null = null;
 
 /**
  * 拖笔**补格**（用户 2026-09-23："确实有快拖会跳格的问题"）。
@@ -676,6 +685,17 @@ renderer.domElement.addEventListener('mousedown', (e) => {
   painting = true;
   paintedThisStroke = new Set();
   lastPainted = null;
+  /**
+   * **Shift+拖 = 矩形整片铺**（#4b）。
+   *
+   * 落笔**推迟到松手**：一次拖出来的整片是**一步** —— 撤销退一次就整片退掉，而不是退三十格。
+   * 拖的过程中只画预览（`fx.setHover` 的 `span`），不碰关卡数据。
+   */
+  if (e.shiftKey) {
+    shiftAnchor = at;
+    editor.noteCell(at, '矩形：拖到另一角再松手，整片一起铺（撤销是一步）');
+    return;
+  }
   paintAt(at);
 });
 
@@ -684,6 +704,14 @@ window.addEventListener('mouseup', () => {
   painting = false;
   paintedThisStroke.clear();
   lastPainted = null;
+  // **Shift 矩形**：到松手才落笔，整片一起写（所以撤销是一步）。
+  if (shiftAnchor !== null) {
+    const from = shiftAnchor;
+    shiftAnchor = null;
+    if (hoveredCell !== null) {
+      for (const cell of rectCells(from, hoveredCell, levelDef.fold)) paintAt(cell);
+    }
+  }
   // 松手立刻把队列里那一版画出来，不等下一帧 —— 否则最后落下的几笔要等一拍才出现。
   if (queuedRaf !== 0) {
     cancelAnimationFrame(queuedRaf);
@@ -701,6 +729,7 @@ window.addEventListener('blur', () => {
   painting = false;
   paintedThisStroke.clear();
   lastPainted = null;
+  shiftAnchor = null; // 拖出窗口 = 这一笔作废（不在看不见的地方铺一片）
   if (queuedRaf !== 0) {
     cancelAnimationFrame(queuedRaf);
     flushQueued();

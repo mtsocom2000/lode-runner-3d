@@ -4,7 +4,7 @@ import { DIRS, OPPOSITE_DIR, step } from '../src/core/rules/movement';
 import { CONCEPT_MINIMAL } from '../src/core/level/levels/conceptMinimal';
 import { parseLevel, type Level, type LevelDef } from '../src/core/world/tiles';
 import type { Cell, Face } from '../src/core/types';
-import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, TICK_HALF, cellAnchor, glintStrips, guideLine, playerAnchor, sameWorldDirection, stepDelta } from '../src/render/metrics';
+import { BRICK_N, CUBE, DECK_SHIFT, PLAYER_SIZE, TICK_HALF, cellAnchor, glintStrips, guideLine, playerAnchor, sameWorldDirection, spanBox, stepDelta } from '../src/render/metrics';
 
 /**
  * 锚点数学。T6 的验收里有一条"位置对"，这里就是那条的凭据 —— 而且是**纯数学**的：
@@ -393,5 +393,21 @@ describe('guideLine —— 乙：指着的那面墙短、另一面墙整行（�
     const hi = cellAnchor(level, { face: 'A', col: TICK_HALF, row: 1 }).p;
     expect(edge.p[2]).toBeCloseTo((lo[2] + hi[2]) / 2, 6);
     expect(edge.s[2]).toBeLessThanOrEqual(Math.abs(hi[2] - lo[2]) + CUBE);
+  });
+});
+describe('spanBox —— Shift 拖矩形的预览框', () => {
+  it('盖住两格：中心在两格中点，尺寸含两格各自的一格宽', () => {
+    const a = cellAnchor(level, { face: 'A', col: 0, row: 0 }).p;
+    const b = cellAnchor(level, { face: 'A', col: 2, row: 1 }).p;
+    const box = spanBox(level, { face: 'A', col: 0, row: 0 }, { face: 'A', col: 2, row: 1 });
+    expect(box.p[0]).toBeCloseTo((a[0] + b[0]) / 2, 6);
+    expect(box.p[1]).toBeCloseTo((a[1] + b[1]) / 2, 6);
+    expect(box.p[2]).toBeCloseTo((a[2] + b[2]) / 2, 6);
+    expect(box.s[2]).toBeCloseTo(Math.abs(b[2] - a[2]) + CUBE, 6);
+  });
+
+  it('同一格：就是一个格子的框（单格悬停与矩形预览共用一条路）', () => {
+    const box = spanBox(level, { face: 'A', col: 1, row: 1 }, { face: 'A', col: 1, row: 1 });
+    expect(box.s).toEqual([CUBE, CUBE, CUBE]);
   });
 });

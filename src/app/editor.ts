@@ -139,7 +139,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   const spacer = document.createElement('span');
   spacer.style.cssText = 'flex:1';
   const hint = document.createElement('span');
-  hint.textContent = '（Tab 关闭）';
+  hint.textContent = '（Tab 关闭 · Shift+拖 = 矩形整片铺）';
   head.append(title, spacer, hint);
 
   /** "当前是哪一格" —— 折痕那一对重合，这条必须看得见。 */

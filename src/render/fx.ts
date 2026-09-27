@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Cell } from '../core/types';
 import type { Level } from '../core/world/tiles';
-import { cellAnchor, guideLine } from './metrics';
+import { cellAnchor, guideLine, spanBox } from './metrics';
 import { PALETTE } from './palette';
 
 /**
@@ -59,7 +59,7 @@ export interface Fx {
    *
    * `null` = 收起来（关掉面板、鼠标离开编辑器时都要调它，否则那两条线会一直挂在那儿）。
    */
-  setHover(at: Cell | null): void;
+  setHover(at: Cell | null, span?: Cell): void;
   /** 每帧推进：衰减、到点移除、常驻记号呼吸。`dt` 是**真实秒数**（与 `meshSync.update` 同一口径）。 */
   update(dt: number): void;
   dispose(): void;
@@ -110,8 +110,12 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
    * 位置**全部由 `cellAnchor` 推出来**（它是几何的唯一出处）：辅助线的两端取那一行**首尾两格**
    * 的锚点，于是"墙有多宽"这件事不必在这里再写一遍 `halfExtent`/`fold` 的算法。
    */
+  /**
+   * 悬停框用**单位盒**：单格时整体缩到 `FRAME_SCALE`，Shift 拖矩形时缩成盖住整片的那一块
+   * （见 `spanBox`）—— 同一个网格、只改 `scale`，不必两种几何。
+   */
   const hoverFrame = new THREE.LineSegments(
-    new THREE.EdgesGeometry(new THREE.BoxGeometry(FRAME_SCALE, FRAME_SCALE, FRAME_SCALE)),
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
     new THREE.LineBasicMaterial({ color: PALETTE.player, transparent: true, opacity: 0.95 }),
   );
   const guideMat = new THREE.MeshBasicMaterial({ color: PALETTE.player, transparent: true, opacity: 0.3 });
@@ -158,13 +162,18 @@ export function createFx(parent: THREE.Object3D, level: Level): Fx {
         marked.push(line);
       }
     },
-    setHover(at): void {
+    setHover(at, span): void {
       if (at === null) {
         for (const o of [hoverFrame, ...GUIDES]) o.visible = false;
         return;
       }
-      const anchor = cellAnchor(level, at);
-      hoverFrame.position.set(anchor.p[0], anchor.p[1], anchor.p[2]);
+      // 给了 `span`（Shift 拖矩形中）→ 框**盖住这两格圈起来的整片**：松手前就看得见要铺哪一片。
+      const box =
+        span === undefined
+          ? { p: cellAnchor(level, at).p, s: [FRAME_SCALE, FRAME_SCALE, FRAME_SCALE] }
+          : spanBox(level, at, span);
+      hoverFrame.position.set(box.p[0], box.p[1], box.p[2]);
+      hoverFrame.scale.set(box.s[0], box.s[1], box.s[2]);
       hoverFrame.visible = true;
 
       // 甲板格没有"行高"可言（它是另一套坐标），所以只给框、不给辅助线。

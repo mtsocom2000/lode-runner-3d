@@ -409,6 +409,20 @@ export function guideLine(
 
 /** 短线的半长（格）：指针所在那面墙上只提示指针左右各 2 格。 */
 export const TICK_HALF = 2;
+/**
+ * 盖住**两格**的框：中心 + 尺寸（Shift 拖矩形时的预览）。
+ *
+ * 与 `guideLine` 同一个理由放在这里：第一版这种"两个端点 + 偏移"的算法散在 `fx.ts` 里，
+ * 结果中心取错、偏了半面墙，是**用户先看出来的**。放纯函数里就能测。
+ */
+export function spanBox(level: Level, a: Cell, b: Cell): { readonly p: Vec3; readonly s: Vec3 } {
+  const pa = cellAnchor(level, a).p;
+  const pb = cellAnchor(level, b).p;
+  return {
+    p: [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2],
+    s: [Math.abs(pb[0] - pa[0]) + CUBE, Math.abs(pb[1] - pa[1]) + CUBE, Math.abs(pb[2] - pa[2]) + CUBE],
+  };
+}
 export function sameWorldDirection(a: Vec3, b: Vec3): boolean {
   const la = Math.hypot(a[0], a[2]);
   const lb = Math.hypot(b[0], b[2]);
