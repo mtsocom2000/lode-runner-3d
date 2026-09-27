@@ -1,7 +1,17 @@
 import * as THREE from 'three';
 import { L3, L3_SPAWN } from '../core/level/levels/l3';
 import { BLANK } from '../core/level/levels/blank';
-import { clearStoredLevel, decodeLevel, loadStoredLevel, storeLevel } from './levelstore';
+import {
+  clearStoredLevel,
+  decodeLevel,
+  levelByKey,
+  loadLibrary,
+  newLevelKey,
+  removeLevel,
+  saveLibrary,
+  upsertLevel,
+  type LevelLibrary,
+} from './levelstore';
 import { canRedo, canUndo, createHistory, push, redo, undo, type History } from './history';
 import { createEditor } from './editor';
 import { RULE_TITLES, type LevelIssue } from '../core/level/validate';
@@ -32,10 +42,20 @@ const host = document.getElementById('app');
 if (!host) throw new Error('找不到 #app 挂载点（index.html 被改坏了？）');
 
 /**
+ * **关卡库**（T21 #3）：一张图一个槽。
+ *
+ * 在这之前只有一个存档位 —— "新建一关"就等于**扔掉上一关**（用户的原话："这关不救了，
+ * 我新建了一关"）。`loadLibrary` 在 `levelstore.ts` 里，自己处理空库 / 坏数据 /
+ * **老单槽迁移**（他手上那张图不能丢）。
+ */
+let library: LevelLibrary = loadLibrary();
+let activeKey: string = library.active;
+
+/**
  * **这一局用哪张关卡**（T21）。
  *
- * 优先读编辑器存下的草稿，读不到用内置的 L3；**草稿坏掉也退回 L3** —— 编辑器里手改 JSON
- * 很容易改坏，那时最需要的是"还能打开、还能改回去"，而不是白屏。
+ * 从库里挑 `active`；**坏掉的关卡退回 L3** —— 编辑器里手改 JSON 很容易改坏，那时最需要的
+ * 是"还能打开、还能改回去"，而不是白屏。
  *
  * 注意这里只管**字形层**（`parseLevel`）。"玩不玩得了"（出生点站不住）在下面另一处兜 ——
  * 那是编辑器新建空白关卡时的常态，绝不能让它白屏。
@@ -45,17 +65,17 @@ function pickLevel(): { readonly def: LevelDef; readonly level: Level } {
   if (!fallback.ok) {
     throw new Error(`连内置的 L3 都不合法：${JSON.stringify(fallback.errors)}`);
   }
-  // `#blank` = 直接从空白关卡开始（不碰草稿）。给编辑器当一个"干净起点"的入口，
+  // `#blank` = 从一张**新的**空白关卡开始（不碰现在这张）。给编辑器一个"干净起点"的入口，
   // 也让无头截图能验"空白关卡不会白屏"这一条（`Tab` 是按键，截图工具按不了）。
   if (window.location.hash === '#blank') {
-    const blank = parseLevel(BLANK);
-    if (blank.ok) return { def: BLANK, level: blank.level };
+    activeKey = newLevelKey();
+    library = upsertLevel(library, activeKey, BLANK);
+    saveLibrary(library);
   }
-  const stored = loadStoredLevel();
-  if (stored === null) return { def: L3, level: fallback.level };
-  const parsedStored = parseLevel(stored);
-  if (!parsedStored.ok) return { def: L3, level: fallback.level };
-  return { def: stored, level: parsedStored.level };
+  const entry = levelByKey(library, activeKey) ?? library.levels[0];
+  if (entry === undefined) return { def: L3, level: fallback.level };
+  const parsed = parseLevel(entry.def);
+  return parsed.ok ? { def: entry.def, level: parsed.level } : { def: L3, level: fallback.level };
 }
 
 const picked = pickLevel();
@@ -332,7 +352,7 @@ const editor = createEditor(host, {
     const decoded = decodeLevel(text);
     if (!decoded.ok) return decoded.error;
     // 存草稿失败**不阻止换关** —— 编辑器照样热重建，只是下次打开时读不到这一版。
-    const stored = storeLevel(decoded.def);
+    const stored = persist(decoded.def);
     buildWorld(decoded.def);
     // 换了一张关卡 → 接头手势的第一步（一块甲板格）多半已经不存在了，作废。
     pendingJoint = null;
@@ -342,7 +362,7 @@ const editor = createEditor(host, {
   },
   createBlank(): void {
     clearStoredLevel();
-    storeLevel(BLANK);
+    persist(BLANK);
     buildWorld(BLANK);
     pendingJoint = null;
     editor.show(levelDef, spawn, levelIssues);
@@ -354,11 +374,14 @@ const editor = createEditor(host, {
   // 所以这里引用是安全的 —— 与 `buildWorld` 自己那条路径同一个道理。
   undo: doUndo,
   redo: doRedo,
+  openLevel,
+  newLevel,
+  deleteLevel,
   play(text: string): string | null {
     // 与「应用」同一条路：先在文本框那张上过 `decodeLevel`，再热重建。
     const decoded = decodeLevel(text);
     if (!decoded.ok) return decoded.error;
-    storeLevel(decoded.def);
+    persist(decoded.def);
     buildWorld(decoded.def);
     commitLevel();
     // **关掉编辑器**才算"试玩"（它挡着画面、还停着 sim）。会话控制在这里讲一遍 ——
@@ -387,6 +410,8 @@ const editor = createEditor(host, {
   },
 });
 hud.log('按 Tab 打开关卡编辑器');
+// 关卡库那一行：开局就把库与当前项灌进去（面板一打开就是对的）。
+editor.setLibrary(libraryEntries(), activeKey);
 
 /**
  * **探针跑之前先原地热重建一次**（T21）。
@@ -539,7 +564,7 @@ let queuedRaf = 0;
  */
 function applyHistory(next: History<LevelDef>): void {
   history = next;
-  storeLevel(history.present);
+  persist(history.present);
   buildWorld(history.present);
   editor.show(levelDef, spawn, levelIssues);
   editor.setHistory(canUndo(history), canRedo(history));
@@ -553,6 +578,58 @@ function doUndo(): void {
 function doRedo(): void {
   if (!canRedo(history)) return;
   applyHistory(redo(history));
+}
+
+/** 库里每一项在下拉框里叫什么（关卡名优先，没名字就用 id）。 */
+function libraryEntries(): readonly { readonly key: string; readonly label: string }[] {
+  return library.levels.map((entry) => ({
+    key: entry.key,
+    label: entry.def.name !== '' ? entry.def.name : entry.def.id,
+  }));
+}
+
+/**
+ * 把当前这一张写进它自己的槽（**并同时写老单槽**）。
+ *
+ * 写老键是为了"回退到旧版本也还在"：迁移只发生一次，而用户可能两边都开着。
+ */
+function persist(def: LevelDef): boolean {
+  library = upsertLevel(library, activeKey, def);
+  return saveLibrary(library) && persist(def);
+}
+
+/**
+ * **切到另一张图**（T21 #3）。
+ *
+ * 必须把**撤销栈重置**：否则 `Ctrl+Z` 会把这一张改回上一张的数据（栈里那些快照属于另一关）。
+ */
+function openLevel(key: string): void {
+  const entry = levelByKey(library, key);
+  if (entry === null) return;
+  activeKey = key;
+  library = { active: key, levels: library.levels };
+  saveLibrary(library);
+  history = createHistory(entry.def);
+  pendingJoint = null;
+  buildWorld(entry.def);
+  editor.show(levelDef, spawn, levelIssues);
+  editor.setLibrary(libraryEntries(), activeKey);
+  editor.setHistory(false, false);
+}
+
+/** 新建一张空白关卡（**不顶掉**现在这张）。 */
+function newLevel(): void {
+  const key = newLevelKey();
+  library = upsertLevel(library, key, BLANK);
+  saveLibrary(library);
+  openLevel(key);
+}
+
+/** 删掉当前这张（库里至少留一张，见 `removeLevel`）。 */
+function deleteLevel(): void {
+  library = removeLevel(library, activeKey);
+  saveLibrary(library);
+  openLevel(library.active);
 }
 
 /**
@@ -580,7 +657,7 @@ function flushQueued(): void {
 
 function schedule(next: LevelDef): void {
   queued = next;
-  storeLevel(next);
+  persist(next);
   if (queuedRaf === 0) queuedRaf = requestAnimationFrame(flushQueued);
 }
 

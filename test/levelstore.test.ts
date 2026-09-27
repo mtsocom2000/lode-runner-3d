@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { BLANK } from '../src/core/level/levels/blank';
 import { L3 } from '../src/core/level/levels/l3';
 import {
+  LIBRARY_STORAGE_KEY,
   LEVEL_STORAGE_KEY,
   clearStoredLevel,
   decodeLevel,
   encodeLevel,
+  loadLibrary,
   loadStoredLevel,
+  newLevelKey,
+  removeLevel,
+  saveLibrary,
   storeLevel,
+  upsertLevel,
 } from '../src/app/levelstore';
 
 /**
@@ -118,5 +124,60 @@ describe('T21 · 关卡存档：浏览器存储', () => {
   it('没有存储（隐私模式 / 无 DOM）时静默降级，不抛', () => {
     expect(storeLevel(L3, null)).toBe(false);
     expect(loadStoredLevel(null)).toBeNull();
+  });
+});
+
+describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
+  it('空存储 → 内置三关，active 落在 L3（与旧行为一致：打开就能玩）', () => {
+    const lib = loadLibrary(fakeStorage());
+    expect(lib.levels.map((e) => e.key)).toEqual(['builtin:l1', 'builtin:l2', 'builtin:l3']);
+    expect(lib.active).toBe('builtin:l3');
+  });
+
+  it('**老单槽要迁移**（用户手上那张图不能丢），并且直接成为 active', () => {
+    // 用户正在画的那一关就在老键里 —— 升级成库不该让人丢图。
+    const s = fakeStorage({ [LEVEL_STORAGE_KEY]: encodeLevel(BLANK) });
+    const lib = loadLibrary(s);
+    expect(lib.active).toBe('migrated');
+    expect(lib.levels.some((e) => e.key === 'migrated')).toBe(true);
+    expect(lib.levels).toHaveLength(4);
+  });
+
+  it('存进去的库读得回来（含 active）', () => {
+    const s = fakeStorage();
+    const lib = loadLibrary(s);
+    const one = upsertLevel(lib, 'mine', BLANK);
+    expect(saveLibrary(one, s)).toBe(true);
+    const back = loadLibrary(s);
+    expect(back.active).toBe('mine');
+    expect(back.levels.filter((e) => e.key === 'mine')).toHaveLength(1);
+  });
+
+  it('active 指着一个不存在的槽 → 落到第一个；坏 JSON → 退回种子（**不抛**）', () => {
+    const s = fakeStorage({ [LIBRARY_STORAGE_KEY]: JSON.stringify({ active: 'gone', levels: [{ key: 'a', def: BLANK }] }) });
+    expect(loadLibrary(s).active).toBe('a');
+    expect(loadLibrary(fakeStorage({ [LIBRARY_STORAGE_KEY]: '{坏的' })).levels).toHaveLength(3);
+  });
+
+  it('upsert：新槽进库、active 跟着走；同键是**替换**不是新增', () => {
+    const base = { active: 'a', levels: [{ key: 'a', def: BLANK }] };
+    const added = upsertLevel(base, 'b', BLANK);
+    expect(added.levels.map((e) => e.key)).toEqual(['a', 'b']);
+    expect(added.active).toBe('b');
+    const replaced = upsertLevel(added, 'b', BLANK);
+    expect(replaced.levels).toHaveLength(2);
+  });
+
+  it('删除：删掉 active → active 落到剩下的第一个；**最后一关删不掉**', () => {
+    const lib = { active: 'a', levels: [{ key: 'a', def: BLANK }, { key: 'b', def: BLANK }] } as const;
+    const afterA = removeLevel(lib, 'a');
+    expect(afterA.active).toBe('b');
+    expect(afterA.levels.map((e) => e.key)).toEqual(['b']);
+    const empty = removeLevel(afterA, 'b');
+    expect(empty.levels).toHaveLength(1); // 留一个空白的：库里一个都没有的状态要处处特判，不如让它不可能
+  });
+
+  it('新槽键不重复（连开两次"新建"不会撞车）', () => {
+    expect(newLevelKey()).not.toBe(newLevelKey());
   });
 });

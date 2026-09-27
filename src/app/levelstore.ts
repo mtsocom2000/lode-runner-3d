@@ -1,3 +1,7 @@
+import { BLANK } from '../core/level/levels/blank';
+import { L1 } from '../core/level/levels/l1';
+import { L2 } from '../core/level/levels/l2';
+import { L3 } from '../core/level/levels/l3';
 import { parseLevel, type LevelDef, type LoadError } from '../core/world/tiles';
 
 /**
@@ -113,4 +117,116 @@ function safeStorage(): Storage | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * **关卡库**（T21 #3）：命名槽。
+ *
+ * ## 为什么要它
+ *
+ * 在这之前只有一个存档位（`LEVEL_STORAGE_KEY`）—— 用户"新建一关"就等于**扔掉上一关**。
+ * 他的原话是"这关不救了，我新建了一关"。库把这件事分开：每张图有自己的**槽键**，
+ * 切关卡只换 `active`，谁都不会被谁顶掉。
+ *
+ * ## 内置三关也是库里的条目
+ *
+ * `L1/L2/L3` 初始化时**写进库里**，之后一视同仁（可改、可删、可以被 `next` 指向）——
+ * 于是"内置"与"我画的"不再需要两套代码路径。用户想留住原版就把 L3 复制一份再改。
+ *
+ * ## 迁移：老的单槽**不能丢**
+ *
+ * 用户正在画的那一关就在老键里。首次加载时把它**作为一个条目并进库**，并设为 active ——
+ * 升级不该让任何人丢掉手上那一张图。
+ */
+export const LIBRARY_STORAGE_KEY = 'loderunner.library';
+
+export interface StoredLevel {
+  /** 槽键。**与关卡 `id` 无关**：两张图可以同名，槽不能。 */
+  readonly key: string;
+  readonly def: LevelDef;
+}
+
+export interface LevelLibrary {
+  readonly active: string;
+  readonly levels: readonly StoredLevel[];
+}
+
+/** 新槽的键。用时间戳 + 随机尾巴：可读、又不至于撞车。 */
+export function newLevelKey(): string {
+  return `level:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/** 内置关卡当作初始条目（见文件头）。 */
+function builtinEntries(): readonly StoredLevel[] {
+  return [
+    { key: 'builtin:l1', def: L1 },
+    { key: 'builtin:l2', def: L2 },
+    { key: 'builtin:l3', def: L3 },
+  ];
+}
+
+function isEntry(v: unknown): v is StoredLevel {
+  if (typeof v !== 'object' || v === null) return false;
+  const e = v as { key?: unknown; def?: unknown };
+  return typeof e.key === 'string' && typeof e.def === 'object' && e.def !== null;
+}
+
+/**
+ * 读库。**任何异常都退回"内置 + 老单槽"的种子**，绝不抛（与 `loadStoredLevel` 同一条纪律：
+ * 编辑器打不开比"读不到上次那一关"严重得多）。
+ */
+export function loadLibrary(storage: Storage | null = safeStorage()): LevelLibrary {
+  const legacy = loadStoredLevel(storage);
+  const seed = (): LevelLibrary => {
+    const levels = [...builtinEntries()];
+    if (legacy !== null) levels.push({ key: 'migrated', def: legacy });
+    // 老用户上来先看到他那一关（与旧行为一致：打开就是上次那张）。
+    return { active: legacy !== null ? 'migrated' : 'builtin:l3', levels };
+  };
+  if (storage === null) return seed();
+  const raw = storage.getItem(LIBRARY_STORAGE_KEY);
+  if (raw === null) return seed();
+  try {
+    const parsed = JSON.parse(raw) as { active?: unknown; levels?: unknown };
+    if (!Array.isArray(parsed.levels)) return seed();
+    const levels = parsed.levels.filter(isEntry);
+    if (levels.length === 0) return seed();
+    const active = typeof parsed.active === 'string' && levels.some((e) => e.key === parsed.active)
+      ? parsed.active
+      : (levels[0]?.key ?? 'builtin:l3');
+    return { active, levels };
+  } catch {
+    return seed();
+  }
+}
+
+export function saveLibrary(lib: LevelLibrary, storage: Storage | null = safeStorage()): boolean {
+  if (storage === null) return false;
+  try {
+    storage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(lib));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 写一个槽（没有就加）。返回**新**库，不改入参。 */
+export function upsertLevel(lib: LevelLibrary, key: string, def: LevelDef): LevelLibrary {
+  const rest = lib.levels.filter((e) => e.key !== key);
+  return { active: key, levels: [...rest, { key, def }] };
+}
+
+/**
+ * 删一个槽。**最后一关删不掉**（留一个空白的）—— 库里一个条目都没有的状态，
+ * 面板、`active`、开局全都要各写一遍"那怎么办"，不如让它不可能发生。
+ */
+export function removeLevel(lib: LevelLibrary, key: string): LevelLibrary {
+  const levels = lib.levels.filter((e) => e.key !== key);
+  if (levels.length === 0) return { active: lib.active, levels: [{ key: 'blank', def: BLANK }] };
+  const active = levels.some((e) => e.key === lib.active) ? lib.active : (levels[0]?.key ?? 'blank');
+  return { active: active === key ? (levels[0]?.key ?? 'blank') : active, levels };
+}
+
+export function levelByKey(lib: LevelLibrary, key: string): StoredLevel | null {
+  return lib.levels.find((e) => e.key === key) ?? null;
 }

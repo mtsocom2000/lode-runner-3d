@@ -55,6 +55,15 @@ export interface EditorCallbacks {
    */
   undo(): void;
   redo(): void;
+  /**
+   * **关卡库**（T21 #3）：切到某一张、新建一张、删掉当前这张。
+   *
+   * 之前只有一个存档位，"新建一关"就等于扔掉上一关（用户的原话："这关不救了，我新建了一关"）。
+   * 现在每张图有自己的槽，切关卡只换 `active`。
+   */
+  openLevel(key: string): void;
+  newLevel(): void;
+  deleteLevel(): void;
 }
 
 export interface Editor {
@@ -70,6 +79,8 @@ export interface Editor {
   noteCell(cell: Cell | null, diagnosis?: string): void;
   /** 报告撤销/重做的可用状态（`Ctrl+Z` 之后按钮该灰掉）。 */
   setHistory(canUndo: boolean, canRedo: boolean): void;
+  /** 报告关卡库的现状（`<select>` 的选项 + 当前是哪一张）。 */
+  setLibrary(entries: readonly { readonly key: string; readonly label: string }[], active: string): void;
   dispose(): void;
 }
 
@@ -145,6 +156,18 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   /** "当前是哪一格" —— 折痕那一对重合，这条必须看得见。 */
   const cellLine = document.createElement('div');
   cellLine.style.cssText = 'opacity:.85';
+
+  /**
+   * **关卡库那一行**（T21 #3）：选择框 + 新建 + 删除。
+   *
+   * 为什么不放进下面那排按钮里：`<select>` 与按钮是两种控件，混在一排会读成"一排动作"，
+   * 而这里其实是"**当前是哪一张图**"——它属于标题那一层（下面才是对这张图做什么）。
+   */
+  const libraryRow = document.createElement('div');
+  libraryRow.style.cssText = 'display:flex;gap:6px;align-items:center';
+  const picker = document.createElement('select');
+  picker.style.cssText = 'flex:1;font:inherit;padding:2px 4px';
+  picker.addEventListener('change', () => cb.openLevel(picker.value));
 
   const toolbar = document.createElement('div');
   toolbar.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap';
@@ -265,8 +288,14 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   });
   const importBtn = button('导入 JSON…', () => importInput.click());
 
+  const newBtn = button('新建', () => cb.newLevel());
+  newBtn.title = '新建一张空白关卡（**不会**顶掉现在这张）';
+  const delBtn = button('删除', () => cb.deleteLevel());
+  delBtn.title = '删掉当前这张（库里至少留一张）';
+  libraryRow.append(picker, newBtn, delBtn);
+
   bar.append(undoBtn, redoBtn, applyBtn, playBtn, checkBtn, blankBtn, exportBtn, importBtn, importInput);
-  el.append(head, cellLine, toolbar, notes, area, bar);
+  el.append(head, cellLine, libraryRow, toolbar, notes, area, bar);
 
   const setNotes = (lines: readonly string[]): void => {
     notes.replaceChildren();
@@ -322,6 +351,16 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
     },
     brush: () => BRUSHES[index]?.brush ?? { kind: 'erase' },
     setHistory,
+    setLibrary(entries, active): void {
+      picker.textContent = '';
+      for (const entry of entries) {
+        const option = document.createElement('option');
+        option.value = entry.key;
+        option.textContent = entry.label;
+        picker.appendChild(option);
+      }
+      picker.value = active;
+    },
     noteCell(cell, diagnosis): void {
       const which = BRUSHES[index]?.label ?? '?';
       if (cell === null) {
