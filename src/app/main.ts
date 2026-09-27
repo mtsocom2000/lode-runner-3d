@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { L3, L3_SPAWN } from '../core/level/levels/l3';
 import { BLANK } from '../core/level/levels/blank';
 import { clearStoredLevel, decodeLevel, loadStoredLevel, storeLevel } from './levelstore';
+import { canRedo, canUndo, createHistory, push, redo, undo, type History } from './history';
 import { createEditor } from './editor';
 import { RULE_TITLES, type LevelIssue } from '../core/level/validate';
 import { validateLevel } from '../core/level/validate';
@@ -65,6 +66,15 @@ const picked = pickLevel();
 let levelDef: LevelDef = picked.def;
 let level: Level = picked.level;
 let spawn: Cell = levelDef.spawn ?? L3_SPAWN;
+
+/**
+ * 编辑器的**撤销 / 重做**栈（阶段 4）。
+ *
+ * **一步 = 一笔**（按下到松手之间画的都算一笔），不是"一个格子一步"：拖笔画一堵墙时，
+ * 逐格入栈会让撤销变成折磨（用户得按三十次才退回画画之前）。所以松手时才压栈，
+ * 而且只在**真的变了**时压（`push` 用引用相等判它 —— 见 `history.ts`）。
+ */
+let history: History<LevelDef> = createHistory(levelDef);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -323,6 +333,7 @@ const editor = createEditor(host, {
     const stored = storeLevel(decoded.def);
     buildWorld(decoded.def);
     editor.show(levelDef, spawn, levelIssues);
+    commitLevel();
     return stored ? null : '已应用，但**存不进浏览器存储**（隐私模式 / 配额满）：下次打开会读不到这一版';
   },
   createBlank(): void {
@@ -330,13 +341,21 @@ const editor = createEditor(host, {
     storeLevel(BLANK);
     buildWorld(BLANK);
     editor.show(levelDef, spawn, levelIssues);
+    // "新建空白"是**用户的一次改动**（他想画新的那张）—— 撤销该能退回原来那张，
+    // 而不是"手一抖点错就再也回不去"。
+    commitLevel();
   },
+  // 这两个函数声明在文件后半段（它们要用 `buildWorld` 等一整套），但**调用发生在点击之后**，
+  // 所以这里引用是安全的 —— 与 `buildWorld` 自己那条路径同一个道理。
+  undo: doUndo,
+  redo: doRedo,
   play(text: string): string | null {
     // 与「应用」同一条路：先在文本框那张上过 `decodeLevel`，再热重建。
     const decoded = decodeLevel(text);
     if (!decoded.ok) return decoded.error;
     storeLevel(decoded.def);
     buildWorld(decoded.def);
+    commitLevel();
     // **关掉编辑器**才算"试玩"（它挡着画面、还停着 sim）。会话控制在这里讲一遍 ——
     // 用户问的"如何加载并测试这一关"要的正是这条：按一下就能玩，不用知道内部发生了什么。
     editor.toggle();
@@ -499,6 +518,44 @@ let paintedThisStroke = new Set<string>();
 let queued: LevelDef | null = null;
 let queuedRaf = 0;
 
+/**
+ * 把栈里当前那一版**当成新的关卡**装上去（撤销/重做共用一条路）。
+ *
+ * 与拖笔的 `flushQueued` 走的是同一件事（`storeLevel` + `buildWorld` + 刷面板），
+ * 唯一的差别是数据来源：那边来自"笔"，这边来自"栈"。
+ */
+function applyHistory(next: History<LevelDef>): void {
+  history = next;
+  storeLevel(history.present);
+  buildWorld(history.present);
+  editor.show(levelDef, spawn, levelIssues);
+  editor.setHistory(canUndo(history), canRedo(history));
+}
+
+function doUndo(): void {
+  if (!canUndo(history)) return;
+  applyHistory(undo(history));
+}
+
+function doRedo(): void {
+  if (!canRedo(history)) return;
+  applyHistory(redo(history));
+}
+
+/**
+ * 收一笔 → 记一步。**"这一笔有没有改动"交给 `push` 判**（引用相等），
+ * 这里不再自己比一次 —— 判据只能有一个出处（`history.ts`）。
+ *
+ * **拖笔之外的改动也走这里**（应用 JSON / 新建空白 / 试玩）：在用户眼里它们同样是
+ * "改了一次关卡"，撤销该退回上一步，而不该因为"没经过鼠标"就退不动。
+ */
+function commitLevel(): void {
+  const next = push(history, levelDef);
+  if (next === history) return;
+  history = next;
+  editor.setHistory(canUndo(history), canRedo(history));
+}
+
 function flushQueued(): void {
   queuedRaf = 0;
   const def = queued;
@@ -551,12 +608,22 @@ window.addEventListener('mouseup', () => {
     cancelAnimationFrame(queuedRaf);
     flushQueued();
   }
+  // 收笔 = 记一步（**在 flush 之后**：撤销要退回的是"这一笔画之前"，而 `history.present`
+  // 正好停在那儿 —— 这一笔中途的每一帧都没有动过栈）。
+  commitLevel();
 });
 
 // 拖出窗口 / 切走标签页时也要收笔，否则回来还在"按住"状态、鼠标一动就落笔。
+// **也要记一步**：用户确实画了东西，只是松手发生在窗口外。
 window.addEventListener('blur', () => {
+  if (!painting) return;
   painting = false;
   paintedThisStroke.clear();
+  if (queuedRaf !== 0) {
+    cancelAnimationFrame(queuedRaf);
+    flushQueued();
+  }
+  commitLevel();
 });
 
 /**
@@ -744,6 +811,27 @@ window.addEventListener('keydown', (e) => {
 });
 
 /**
+ * **撤销 / 重做**的键（阶段 4）：`Ctrl+Z` 退、`Ctrl+Y` / `Ctrl+Shift+Z` 进。
+ *
+ * 两个必须守住的边界：
+ *
+ * 1. **焦点在输入框里时不抢键** —— 那里面有 `<textarea>`，`Ctrl+Z` 该是它自己的撤销。
+ *    判据与 `Tab` 那条同一个写法（事件目标在面板内就不抢）；
+ * 2. **不用 `e.key === 'z'` 判**：中文/大写输入法下 `e.key` 会变，`e.code` 才是物理键。
+ *    但 `e.code` 在 `Ctrl` 组合下也别扭（`KeyZ` ✓），用它并配合 `ctrlKey`。
+ */
+window.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;
+  if (editor.el.contains(e.target as Node | null)) return;
+  const lower = e.code === 'KeyZ' ? 'z' : e.code === 'KeyY' ? 'y' : null;
+  if (lower === null) return;
+  e.preventDefault();
+  // `Ctrl+Shift+Z` 也是"前进"（半路换过来的习惯，两个都收下）。
+  if (lower === 'y' || e.shiftKey) doRedo();
+  else doUndo();
+});
+
+/**
  * `Tab` 开关编辑器；`Esc` 关掉。
  *
  * **焦点在编辑器里时不抢 `Tab`** —— 那里面有 `<textarea>`，`Tab` 该是正常的焦点移动。
@@ -758,7 +846,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key !== 'Tab' || insideEditor) return;
   e.preventDefault();
-  if (editor.toggle()) editor.show(levelDef, spawn, levelIssues);
+  if (editor.toggle()) {
+    editor.show(levelDef, spawn, levelIssues);
+    editor.setHistory(canUndo(history), canRedo(history));
+  }
   syncIssueMarks();
 });
 

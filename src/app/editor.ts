@@ -49,6 +49,12 @@ export interface EditorCallbacks {
    * 也可能拖笔时刚画完。查它才能回答"我**现在写的**这张合不合法"，而不是"上一次应用的那张"。
    */
   check(text: string): readonly string[];
+  /**
+   * **撤销 / 重做**（阶段 4）。栈在 `main.ts` 里（它才是持有 `levelDef` 的人）——
+   * 面板只负责"报告按钮被按了"与"把两个按钮的可用状态画出来"，与落笔同一个分工。
+   */
+  undo(): void;
+  redo(): void;
 }
 
 export interface Editor {
@@ -62,6 +68,8 @@ export interface Editor {
   brush(): Brush;
   /** 报告"刚刚点到哪一格 / 悬停在哪一格"（`null` = 没点到）。`diagnosis` = 关于这一格的一句话诊断。 */
   noteCell(cell: Cell | null, diagnosis?: string): void;
+  /** 报告撤销/重做的可用状态（`Ctrl+Z` 之后按钮该灰掉）。 */
+  setHistory(canUndo: boolean, canRedo: boolean): void;
   dispose(): void;
 }
 
@@ -190,6 +198,26 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   };
   select(0);
 
+  const undoBtn = button('撤销', () => cb.undo());
+  undoBtn.title = '退一步（Ctrl+Z）—— 一步 = 一笔（按下到松手之间画的都算一笔）';
+  const redoBtn = button('重做', () => cb.redo());
+  redoBtn.title = '进一步（Ctrl+Y / Ctrl+Shift+Z）';
+  /**
+   * 不可用时**灰掉**而不是隐藏：按钮位置固定，用户的手能记住它 ——
+   * 藏起来会让"还没画过任何东西"和"按钮不在那儿"变得分不清。
+   */
+  const setHistory = (canUndo: boolean, canRedo: boolean): void => {
+    for (const [b, on] of [
+      [undoBtn, canUndo],
+      [redoBtn, canRedo],
+    ] as const) {
+      b.disabled = !on;
+      b.style.opacity = on ? '1' : '.45';
+      b.style.cursor = on ? 'pointer' : 'default';
+    }
+  };
+  setHistory(false, false);
+
   const applyBtn = button('应用并重载', () => {
     const error = cb.apply(area.value);
     if (error !== null) setNotes([`✗ ${error}`]);
@@ -232,7 +260,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   });
   const importBtn = button('导入 JSON…', () => importInput.click());
 
-  bar.append(applyBtn, playBtn, checkBtn, blankBtn, exportBtn, importBtn, importInput);
+  bar.append(undoBtn, redoBtn, applyBtn, playBtn, checkBtn, blankBtn, exportBtn, importBtn, importInput);
   el.append(head, cellLine, toolbar, notes, area, bar);
 
   const setNotes = (lines: readonly string[]): void => {
@@ -285,6 +313,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
       setNotes(lines);
     },
     brush: () => BRUSHES[index]?.brush ?? { kind: 'erase' },
+    setHistory,
     noteCell(cell, diagnosis): void {
       const which = BRUSHES[index]?.label ?? '?';
       if (cell === null) {
