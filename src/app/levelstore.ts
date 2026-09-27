@@ -186,8 +186,10 @@ export function loadLibrary(storage: Storage | null = safeStorage()): LevelLibra
   const seed = (): LevelLibrary => {
     const levels = [...builtinEntries()];
     if (legacy !== null) levels.push({ key: 'migrated', def: legacy });
-    // 老用户上来先看到他那一关（与旧行为一致：打开就是上次那张）。
-    return { active: legacy !== null ? 'migrated' : 'builtin:l3', levels };
+    // **老用户上来先看到他那一关**（与旧行为一致：打开就是上次那张）。
+    // **新用户从 L1 开始**（它是教学关）—— 旧行为是"最新那一关 L3"，那是开发顺序，不是上手顺序；
+    // 而且 L1 → L2 → L3 的 `next` 链正好从第一关起步。
+    return { active: legacy !== null ? 'migrated' : 'builtin:l1', levels };
   };
   if (storage === null) return seed();
   const raw = storage.getItem(LIBRARY_STORAGE_KEY);

@@ -128,10 +128,10 @@ describe('T21 · 关卡存档：浏览器存储', () => {
 });
 
 describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
-  it('空存储 → 内置三关，active 落在 L3（与旧行为一致：打开就能玩）', () => {
+  it('空存储 → 内置三关，active 落在 **L1**（教学关；上手顺序，不是开发顺序）', () => {
     const lib = loadLibrary(fakeStorage());
     expect(lib.levels.map((e) => e.key)).toEqual(['builtin:l1', 'builtin:l2', 'builtin:l3']);
-    expect(lib.active).toBe('builtin:l3');
+    expect(lib.active).toBe('builtin:l1');
   });
 
   it('**老单槽要迁移**（用户手上那张图不能丢），并且直接成为 active', () => {
