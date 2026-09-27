@@ -1305,6 +1305,14 @@ function loop(now: number): void {
   // 顺带把"本帧哪些实体瞬移了"收出来（目前只有重生这一种）。事件流现在有两个消费者：
   // 输入销账、同步层的就地落位（T20 的特效会是第三个）。
   let snapped: Set<number> | null = null;
+  /**
+   * 本帧**坠落**的那些实体（`fell` 事件）。
+   *
+   * 同步层拿它决定"这一次补间要走多久"：坠落按**距离**算时长，走一格则是固定 0.15 秒
+   * （用户 2026-09-23："从高处落下时，速度太快"）。判据在 `tween.ts` 的 `fallSeconds`，
+   * 这里只是把事实（谁掉了）传过去。
+   */
+  let falling: Set<number> | null = null;
   // 玩家是谁 —— 死亡提示只该为**玩家**亮。见下面那段"必须看是谁"。
   const playerId = state.entities.find((e) => e.kind === 'player')?.id;
   while (acc >= STEP_MS) {
@@ -1318,6 +1326,10 @@ function loop(now: number): void {
       if (LOGGED_EVENTS.has(event.kind)) {
         const where = 'cell' in event && event.cell !== null ? ` ${cellKey(event.cell)}` : '';
         hud.log(`t${frame.state.tick} ${event.kind}${where}`);
+      }
+      if (event.kind === 'fell') {
+        if (falling === null) falling = new Set<number>();
+        falling.add(event.entity);
       }
       if (event.kind === 'digBlocked') {
         // **哑火反馈**（用户 2026-09-19）：按了挖、那一铲落在空处。
@@ -1379,7 +1391,10 @@ function loop(now: number): void {
   fx.update(elapsedMs / 1000);
   // 重生是**瞬移**，补间必须就地落位：`sim` 把 `fall → drowned → respawned` 压在同一个 tick 里，
   // 照常插值会把这一跳画成一条横穿场景的直线（用户报的"跳过缺口，回到起点处"）。
-  syncer.update(state, elapsedMs / 1000, snapped === null ? undefined : { snapEntities: snapped });
+  syncer.update(state, elapsedMs / 1000, {
+    ...(snapped === null ? {} : { snapEntities: snapped }),
+    ...(falling === null ? {} : { falling }),
+  });
   // 走选择性泛光而不是 `renderer.render` —— 泛光要靠它。两条路只能选一条。
   bloom.render();
 

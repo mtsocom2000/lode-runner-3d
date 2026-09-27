@@ -4,6 +4,7 @@ import {
   advance,
   aim,
   aimAngle,
+  fallSeconds,
   isDone,
   retarget,
   samePoint,
@@ -98,8 +99,9 @@ describe('tween：中途换目标', () => {
     expect(sample(turned)).toEqual(before);
     expect(turned.from).toEqual(before);
 
-    const arrived = advance(turned, TWEEN_SECONDS);
-    expect(sample(arrived)).toEqual(C);
+    // 换目标会**按新距离重算时长**（走一格 → 掉六格不能还用 0.15 秒，见 `retarget`），
+    // 所以"走完"要按那个新时长推。
+    expect(sample(advance(turned, turned.seconds))).toEqual(C);
   });
 
   it('连续换目标（每帧一个新格）也一直向前，不会累积回跳', () => {
@@ -180,5 +182,33 @@ describe('tween：aim（同步层每帧都会调它）', () => {
     let t = tweenTo(A, B);
     for (let i = 0; i < 20; i++) t = advance(aim(t, B), 1 / 60);
     expect(sample(t)).toEqual(B);
+  });
+});
+
+describe('tween：坠落时长按距离（用户 2026-09-23："从高处落下时，速度太快"）', () => {
+  it('掉得越远，时长越长（走一格那 0.15 秒对高处坠落太快）', () => {
+    const one = fallSeconds([0, 0, 0], [0, -1, 0]);
+    const six = fallSeconds([0, 0, 0], [0, -6, 0]);
+    const twelve = fallSeconds([0, 0, 0], [0, -12, 0]);
+    expect(one).toBeLessThan(six);
+    expect(six).toBeLessThan(twelve);
+    // 一格那一下：接近"走路"的时间尺度，不该像瞬移。
+    expect(one).toBeGreaterThanOrEqual(0.2);
+  });
+
+  it('上下都有夹子：太短不像瞬移、太长不让"掉十几格"变成等动画', () => {
+    expect(fallSeconds([0, 0, 0], [0, 0, 0])).toBe(0.18);
+    expect(fallSeconds([0, 0, 0], [0, -99, 0])).toBe(1.2);
+  });
+
+  it('走一格仍是固定 `TWEEN_SECONDS`（`tweenTo` 的默认值没变）', () => {
+    const walk = tweenTo([0, 0, 0], [1, 0, 0]);
+    expect(walk.seconds).toBe(TWEEN_SECONDS);
+    const fall = tweenTo([0, 0, 0], [0, -6, 0], fallSeconds([0, 0, 0], [0, -6, 0]));
+    expect(fall.seconds).toBeGreaterThan(TWEEN_SECONDS);
+  });
+
+  it('距离取的是**空间距离**（斜坠也算）：水平 + 垂直一起算', () => {
+    expect(fallSeconds([0, 0, 0], [3, -4, 0])).toBe(fallSeconds([0, 0, 0], [0, -5, 0]));
   });
 });

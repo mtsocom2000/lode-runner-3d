@@ -10,17 +10,44 @@ export type Vec3 = readonly [number, number, number];
 export const TWEEN_SECONDS = 0.15;
 
 /**
+ * **坠落**的补间时长（秒）——**与距离成正比**（用户 2026-09-23："从高处落下时，速度太快"）。
+ *
+ * ## 为什么不能沿用 `TWEEN_SECONDS`
+ *
+ * 走一格与掉六格原来都是 0.15 秒 —— 于是"掉得越多看起来越快"，掉六格时速度是走路的六倍，
+ * 像被弹射出去。重力是**匀加速**，观感上"掉得远就该久一点"，而不是恒定时间。
+ *
+ * 按 `√(2d/g)` 给时长（`FALL_G = 12` 格/秒²，与"一格一跳"的手感对得上）：
+ * 掉 1 格 ≈ 0.41s、3 格 ≈ 0.71s、6 格 ≈ 1.0s。**匀加速本身不在这一步模拟**（补间仍是
+ * 匀速 + 缓出），这里只把**时长**按距离给对：远掉明显更久、近掉不拖沓。上下都有夹子 ——
+ * 太短像瞬移，太长会让"掉十几格"变成等动画。
+ */
+export const FALL_G = 12;
+export const FALL_MIN_SECONDS = 0.18;
+export const FALL_MAX_SECONDS = 1.2;
+
+export function fallSeconds(from: Vec3, to: Vec3): number {
+  const d = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+  const raw = Math.sqrt((2 * Math.max(d, 0)) / FALL_G);
+  return Math.min(FALL_MAX_SECONDS, Math.max(FALL_MIN_SECONDS, raw));
+}
+
+/**
  * 一个位置补间。`elapsed` 是**已过的秒数**，不是帧数 —— 这是"resize 无关"的全部秘密：
  * 只要时钟按秒走，视口大小、帧率、设备像素比都改变不了补间的位置。
+ *
+ * `seconds`（这一次要走多久）**存在补间里**，而不是像第一版那样到处读全局 `TWEEN_SECONDS`：
+ * 坠落要按距离算时长（见 `fallSeconds`），而"多长"是这一次移动的属性，不是全局常量。
  */
 export interface Tween {
   readonly from: Vec3;
   readonly to: Vec3;
   readonly elapsed: number;
+  readonly seconds: number;
 }
 
-export function tweenTo(from: Vec3, to: Vec3): Tween {
-  return { from, to, elapsed: 0 };
+export function tweenTo(from: Vec3, to: Vec3, seconds: number = TWEEN_SECONDS): Tween {
+  return { from, to, elapsed: 0, seconds };
 }
 
 /**
@@ -33,7 +60,8 @@ export function tweenTo(from: Vec3, to: Vec3): Tween {
  * 而且瞬移只发生一帧：下一帧 `aim` 会发现目标没变、原样返回，照常滑。
  */
 export function snapTo(to: Vec3): Tween {
-  return { from: to, to, elapsed: TWEEN_SECONDS };
+  // elapsed === seconds ⇒ 已经走完（sample 直接给 	o）—— 瞬间到位，不插值。
+  return { from: to, to, elapsed: TWEEN_SECONDS, seconds: TWEEN_SECONDS };
 }
 
 /**
@@ -43,7 +71,9 @@ export function snapTo(to: Vec3): Tween {
  * 换成旧起点，角色会先往后退一小段再前进 —— 看起来像卡了一下。
  */
 export function retarget(tween: Tween, to: Vec3): Tween {
-  return { from: sample(tween), to, elapsed: 0 };
+  // **时长跟着新目标重算**：中途换目标（走一格 → 掉六格）时，若沿用旧的 0.15 秒，
+  // 那一次坠落又会快到像瞬移。重算的判据与 `tweenTo` 同一处（`fallSeconds`）。
+  return { from: sample(tween), to, elapsed: 0, seconds: fallSeconds(sample(tween), to) };
 }
 
 /**
@@ -60,16 +90,16 @@ export function aim(tween: Tween, to: Vec3): Tween {
 /** 推进时钟。负数与超大 dt 都被夹住（标签页切回来时 dt 会很大，不该让它跳过补间）。 */
 export function advance(tween: Tween, dt: number): Tween {
   const step = dt > 0 ? dt : 0;
-  return { ...tween, elapsed: Math.min(TWEEN_SECONDS, tween.elapsed + step) };
+  return { ...tween, elapsed: Math.min(tween.seconds, tween.elapsed + step) };
 }
 
 export function isDone(tween: Tween): boolean {
-  return tween.elapsed >= TWEEN_SECONDS;
+  return tween.elapsed >= tween.seconds;
 }
 
-/** 采样当前位置。`elapsed = 0` 给 `from`，`elapsed ≥ TWEEN_SECONDS` 给 `to`。 */
+/** 采样当前位置。`elapsed = 0` 给 `from`，`elapsed ≥ seconds` 给 `to`。 */
 export function sample(tween: Tween): Vec3 {
-  const k = TWEEN_SECONDS <= 0 ? 1 : Math.min(1, tween.elapsed / TWEEN_SECONDS);
+  const k = tween.seconds <= 0 ? 1 : Math.min(1, tween.elapsed / tween.seconds);
   const eased = 1 - (1 - k) ** 3; // ease-out cubic：起步快、收尾缓
   return [
     lerp(tween.from[0], tween.to[0], eased),

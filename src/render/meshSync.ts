@@ -3,7 +3,7 @@ import { bridgesOf, type EntityKind, type SimState } from '../core/sim';
 import type { Level } from '../core/world/tiles';
 import { PLAYER_SIZE, playerAnchor, stepDelta } from './metrics';
 import { PALETTE } from './palette';
-import { advance, aim, aimAngle, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
+import { advance, aim, aimAngle, retarget, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
 
 /**
  * 实体层：把 `SimState.entities` 摆到墙上，并把"格到格"的跳变补成滑动（T6）。
@@ -72,7 +72,11 @@ export interface Syncer {
    * `snapEntities`：本帧**位置不连续**（重生/瞬移）的实体 id。列进来的实体**就地落位**、
    * 不做补间 —— 依据是事件流里的 `respawned`，不是任何距离阈值（见文件头）。
    */
-  update(state: SimState, dt: number, opts?: { readonly snapEntities?: ReadonlySet<number> }): void;
+  update(
+    state: SimState,
+    dt: number,
+    opts?: { readonly snapEntities?: ReadonlySet<number>; readonly falling?: ReadonlySet<number> },
+  ): void;
   /** 各类实体真正画出来了几个（探针用它核对"声明了就该画出来"，见实现里的说明）。 */
   counts(): Readonly<Record<EntityKind, number>>;
   /**
@@ -237,9 +241,11 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
 
   return {
     group,
-    update(state: SimState, dt: number, opts?: { readonly snapEntities?: ReadonlySet<number> }): void {
+    update(state, dt, opts): void {
       const alive = new Set<number>();
       const snap = opts?.snapEntities;
+      // 这一帧**坠落**的那些实体（ell 事件）：它们的补间时长按距离算（见 	ween.ts）。
+      const falling = opts?.falling ?? new Set<number>();
       // 有人的坑：坑口踩得住，角色的高度要按"站在那个人的头上"算（见 `playerAnchor`）。
       // 与移动层读的是同一个推导（`sim.bridgesOf`）。
       const bridges = bridgesOf(state);
@@ -260,8 +266,18 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
 
         // 不连续的一帧：就地落位。否则 `aim` 会把这一跳铺成一条世界坐标直线 ——
         // 用户报的"跳过缺口回到起点"就是死亡+重生被画成了 3.0 格的横滑。
-        actor.tween =
-          snap?.has(entity.id) === true ? snapTo(target) : advance(aim(actor.tween, target), dt);
+        if (snap?.has(entity.id) === true) {
+          actor.tween = snapTo(target);
+        } else {
+          // **坠落 / 滑落**：这一次补间要走多久，取决于**起点到终点的距离**（重力的形状）——
+          // 否则掉六格与走一格都 0.15 秒，掉得越多看起来越快（用户："从高处落下时，速度太快"）。
+          //
+          // 判据就在 `tween.ts` 的 `retarget` 里（它本来就按新距离算时长，与这里同一处），
+          // 所以这里不重复一遍"多少格算坠落"。
+          actor.tween = advance(aim(actor.tween, target), dt);
+          // 注入这一次的距离：`aim` 只在**目标变了**时重开补间，而重开那一下正是坠落那一下。
+          if (falling.has(entity.id)) actor.tween = retarget(actor.tween, target);
+        }
 
         // 朝向箭头：把 `facing`（一个**格坐标**方向）换成世界方向 —— 用的是与 HUD 方向提示
         // **同一个** `stepDelta`（跨折痕那一步在这里自动变成"转过弯之后"的方向）。
