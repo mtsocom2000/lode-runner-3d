@@ -11,6 +11,7 @@ import {
   type Brush,
 } from '../src/core/level/paint';
 import { parseLevel, type LevelDef } from '../src/core/world/tiles';
+import { cellKey } from '../src/core/types';
 import { validateLevel } from '../src/core/level/validate';
 
 /**
@@ -125,6 +126,63 @@ describe('T21·3 落笔：出生点与宝物', () => {
     const one = toggleTreasure(BLANK, D(-7, -7));
     const two = toggleTreasure(one, D(-7, -7, 1));
     expect(two.treasures).toEqual([{ x: -7, z: -7 }, { x: -7, z: -7, level: 1 }]);
+  });
+});
+
+describe('T21·3 落笔：出口**自带闸门**（用户 2026-09-22）', () => {
+  /**
+   * 用户的原话："出口设计的时候没有给它设计阻拦的地块，这样使得出口随时可以经过……摆放出口
+   * 应该自动在两侧设置障碍物，在宝物取得之后障碍物自动消除。" —— 这就是原版出口的凹槽：
+   * 左右各一块**假砖**，集齐金子后消失。
+   *
+   * 本作里那两块假砖 = 闸门（`=E=`，与 L3 手工排的 `r11` 一模一样）。
+   */
+  const exitBrush: Brush = { kind: 'tile', glyph: 'E' };
+
+  it('放出口 = 两侧各一块硬砖，两块都登记进 `gates`', () => {
+    const def = paint(BLANK, exitBrush, A(5, 1));
+    expect(def.tiles[1]?.slice(4, 7)).toBe('=E=');
+    expect(def.gates).toEqual([A(4, 1), A(6, 1)]);
+  });
+
+  it('重复画同一个出口**不会把闸门登记成两份**（幂等）', () => {
+    const once = paint(BLANK, exitBrush, A(5, 1));
+    expect(paint(once, exitBrush, A(5, 1)).gates).toEqual([A(4, 1), A(6, 1)]);
+  });
+
+  it('贴边时只画得到的那一侧有闸门（另一侧越界，跳过而不是报错）', () => {
+    const def = paint(BLANK, exitBrush, A(0, 1));
+    expect(def.tiles[1]?.slice(0, 2)).toBe('E=');
+    expect(def.gates).toEqual([A(1, 1)]);
+  });
+
+  it('两侧原本是**可挖**的砖也一律换成硬砖：闸门要挡得住，也得能消失', () => {
+    let def = setWallGlyph(BLANK, A(4, 1), 'X');
+    def = setWallGlyph(def, A(6, 1), 'X');
+    expect(paint(def, exitBrush, A(5, 1)).tiles[1]?.slice(4, 7)).toBe('=E=');
+  });
+
+it('把出口抹掉 → 它两侧那对闸门不再登记（砖留着，叫"闸门"这件事撤了）', () => {
+    // 为什么**不**连砖一起抹：橡皮的规矩是"只擦你点的那一格"（用户为这条规则专门报过 bug）。
+    // 留下的两块 `=` 现在是普通硬砖 —— 作者想抹随他，但它们不该再"集齐宝物后自己消失"，
+    // 因为那个出口已经不在了。会自己消失的砖叫**幽灵闸门**，比多两块砖难查得多。
+    const def = paint(BLANK, exitBrush, A(5, 1));
+    const erased = paint(def, { kind: 'erase' }, A(5, 1));
+    expect(erased.gates).toEqual([]);
+    expect(erased.tiles[1]?.slice(4, 7)).toBe('=.=');
+  });
+
+  it('L3 手工排的四个闸门**正好**是两对出口的两侧 —— 房规在真数据里也成立', () => {
+    const flanks = new Set<string>();
+    L3.tiles.forEach((line, row) => {
+      for (let col = 0; col < line.length; col++) {
+        if (line[col] !== 'E') continue;
+        for (const c of [col - 1, col + 1]) {
+          if (c >= 0 && c < line.length) flanks.add(cellKey({ face: col < L3.fold ? 'A' : 'B', col: c, row }));
+        }
+      }
+    });
+    expect(new Set((L3.gates ?? []).map(cellKey))).toEqual(flanks);
   });
 });
 

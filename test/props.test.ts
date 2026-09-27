@@ -103,18 +103,17 @@ describe('道具层：闸门开了真的会多出梯子（"通天梯"的回归�
     expect(after - before).toBe(4 * 5);
   });
 
-  it('芯片被收走之后，那一格不再有件（`treasure → empty` 走同一条重建）', () => {
-    // `fold = 3`（6 列）：两颗芯片放在 **col 1 与 col 4** —— 刻意避开折痕那一对（2|3），
-    // 因为"折痕去重"只对梯/杆生效，芯片各自都算数。
+  it('宝物被收走之后，那一格不再有件（`treasure → empty` 走同一条重建）', () => {
+    // `fold = 3`（6 列）：两颗宝物放在 **col 1 与 col 4** —— 刻意避开折痕那一对（2|3），
+    // 因为"折痕去重"只对梯/杆生效，宝物各自都算数。
     const level = load({
       id: 'CHIP',
-      name: '芯片夹具',
+      name: '宝物夹具',
       fold: 3,
       tiles: ['XXXXXX', '.G..G.', '.....E'],
     });
-    const withChips = collectProps(level, level.grid).chips.length;
-    expect(withChips).toBe(2);
+    expect(collectProps(level, level.grid).treasures.length).toBe(2);
     const cleared = level.grid.map((kind) => (kind === 'treasure' ? ('empty' as const) : kind));
-    expect(collectProps(level, cleared).chips.length).toBe(0);
+    expect(collectProps(level, cleared).treasures.length).toBe(0);
   });
 });

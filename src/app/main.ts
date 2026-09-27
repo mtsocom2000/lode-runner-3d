@@ -620,7 +620,7 @@ function refreshHud(): void {
   hud.set([
     `立方角隙 · ${level.name}（折面 · 浅色版）`,
     `${level.id}：${level.cols}×${level.rows}，fold=${level.fold} —— 每面 ${level.fold}×${level.rows}`,
-    `砖 ${stage.counts.brick ?? 0}/${stage.counts.brickSlots ?? 0} 槽 ｜ 梯 ${stage.counts.ladder ?? 0} ｜ 杆 ${stage.counts.bar ?? 0} ｜ 芯片 ${stage.counts.chip ?? 0} ｜ 出口 ${stage.counts.exit ?? 0} ｜ 岛台宝物 ${stage.counts.prize ?? 0}`,
+    `砖 ${stage.counts.brick ?? 0}/${stage.counts.brickSlots ?? 0} 槽 ｜ 梯 ${stage.counts.ladder ?? 0} ｜ 杆 ${stage.counts.bar ?? 0} ｜ 墙上宝物 ${stage.counts.treasure ?? 0} ｜ 出口 ${stage.counts.exit ?? 0} ｜ 甲台宝物 ${stage.counts.prize ?? 0}`,
     // 命数必须可见：它是玩家做决策要看的第三个数（前面是"还剩几块宝物"和"闸门开没开"）。
     // 之前漏了这一项，代价是**试玩时看不出自己掉没掉命** —— 用户报"角色回到出发点"时，
     // HUD 显示不出来"那是因为摔死重生"，于是只能靠猜。三行数字里它最便宜、信息量最高。
@@ -629,10 +629,11 @@ function refreshHud(): void {
     // 闸门开没开决定现在能不能去出口。**刻意不显示宝物在哪**：那是玩家该自己找的。
     //
     // 宝物有**两种落脚处**（用户 2026-09-21）：甲板上的 `treasures` 列表 + 墙面上的 `G` 字形。
-    // 墙上的那部分从 `stage.counts.chip` 读 —— 那是**渲染层的账**（它跟着 `setGrid` 差分更新），
+    // 墙上那部分从 `stage.counts.treasure` 读 —— 那是**渲染层的账**（它跟着 `setGrid` 差分更新），
     // 而 HUD 里"砖/梯/杆"的计数本来就是这么来的（见上面那行），同一个口径。
+    // 两者在规则上**等价**（都要集齐才开闸门），画面上也是同一颗金色方块。
     `宝物 ${(() => {
-      const left = state.treasures.length + (stage.counts.chip ?? 0);
+      const left = state.treasures.length + (stage.counts.treasure ?? 0);
       return left === 0 ? '已集齐' : `还剩 ${left} 块`;
     })()} ｜ 出口闸门 ${state.gatesOpen ? '已开' : '封着（集齐才开）'}`,
     '方向键 / WASD（墙上 `w`/`s` 上下、`a`/`d` 沿墙；甲板 `w`↖ `s`↘ 纵深、`a`↙ `d`↗ 横向） ｜ 丁字路口按 `S` 拐上小道 ｜ 甲板 `Z`/`X` 换层（塔） ｜ `Q` 后下方挖 / `E` 前下方挖 ｜ `R` 重开',

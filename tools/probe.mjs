@@ -102,22 +102,23 @@ if (summary.counts?.brick > 0) {
 //
 // `player` 永远断言 —— 角色不在"关卡可选内容"里。
 const EXPECTED_FEATURES = [
-  { feature: 'bar', count: 'bar', meaning: '横杆 / 连杆' },
-  { feature: 'exit', count: 'exit', meaning: '出口' },
-  // 注：`cyan` 这一档现在只对应**数据芯片**。梯与折痕线在新配色里改成了钢灰/中性 slate，
-  // 不再是青色 —— 调色板一改，这条规则与它就必须一起改（见 palette.ts 的契约说明）。
-  { feature: 'cyan', count: 'chip', meaning: '数据芯片' },
-  { feature: 'prize', count: 'prize', meaning: '岛台宝物' },
+  { feature: 'bar', counts: ['bar'], meaning: '横杆 / 连杆' },
+  { feature: 'exit', counts: ['exit'], meaning: '出口' },
+  // 这一档**两个账本**：墙上那颗 `G`（`counts.treasure`）与甲台上那颗（`counts.prize`）。
+  // 它们在规则上等价（都要集齐才开闸门）、画面上也长一样，所以合成一档来断言。
+  // 曾经墙上那颗是青蓝的"数据芯片"、单占 `cyan` 一条规则 —— 用户把宝物画到砖上之后说
+  // "宝物的图案以前不是现在这个小蓝点的样子"，于是两套合成一套，`cyan` 也随之作废。
+  { feature: 'prize', counts: ['treasure', 'prize'], meaning: '宝物（墙上 / 甲台）' },
   // 实体（T12）：`counts` 里这一项来自 `syncer.counts()`（渲染层真正建了几个实体），
   // 所以"关卡声明了无人机 ⇒ 画面上必须有无人机"这条是**两端各自记账**的核对。
-  { feature: 'drone', count: 'drone', meaning: '巡逻无人机' },
-  { feature: 'stalker', count: 'stalker', meaning: '潜伏攀爬者' },
+  { feature: 'drone', counts: ['drone'], meaning: '巡逻无人机' },
+  { feature: 'stalker', counts: ['stalker'], meaning: '潜伏攀爬者' },
 ];
-for (const { feature, count, meaning } of EXPECTED_FEATURES) {
-  const declared = (summary.counts?.[count] ?? 0) > 0;
-  if (!declared) continue; // 关卡里没有这类物件，不断言
+for (const { feature, counts, meaning } of EXPECTED_FEATURES) {
+  const total = counts.reduce((n, key) => n + (summary.counts?.[key] ?? 0), 0);
+  if (total <= 0) continue; // 关卡里没有这类物件，不断言
   if (summary.features?.[feature] !== true) {
-    failures.push(`关卡里有${meaning}，但画面上没有（feature=${feature}, counts.${count}=${summary.counts?.[count]}）`);
+    failures.push(`关卡里有${meaning}，但画面上没有（feature=${feature}, counts=${JSON.stringify(counts.map((k) => [k, summary.counts?.[k] ?? 0]))}）`);
   }
 }
 if (summary.features?.player !== true) failures.push('画面上没有角色（feature=player）');

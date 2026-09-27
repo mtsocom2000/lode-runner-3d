@@ -128,12 +128,12 @@ export function collectProps(
 ): {
   readonly ladders: readonly Piece[];
   readonly bars: readonly Piece[];
-  readonly chips: readonly Piece[];
+  readonly treasures: readonly Piece[];
   readonly exits: readonly Piece[];
 } {
   const ladders: Piece[] = [];
   const bars: Piece[] = [];
-  const chips: Piece[] = [];
+  const treasures: Piece[] = [];
   const exits: Piece[] = [];
 
   for (let row = 0; row < level.rows; row++) {
@@ -146,8 +146,8 @@ export function collectProps(
       // 又都穿过同一个点（用户的原话："看到交接处有个粉红色的交叉，不知道有什么意思？"）。
       // 所以同一对里只画**靠 A 面**的那一根：位置一模一样，少画一根就不再有十字。
       //
-      // **只对"有方向"的道具去重**（梯 / 杆）。芯片与出口是对称体（八面体 / 立方体），
-      // 两个重叠也看不出来；而它们**各自都算数**（芯片是可捡的宝物、出口是终点）——
+      // **只对"有方向"的道具去重**（梯 / 杆）。宝物与出口是对称体（方块 / 立方体），
+      // 两个重叠也看不出来；而它们**各自都算数**（宝物是可捡的、出口是终点）——
       // 把其中一个藏起来是比"重叠"严重得多的错。
       if (
         (kind === 'ladder' || kind === 'bar') &&
@@ -166,7 +166,7 @@ export function collectProps(
           bars.push({ p, s: alongZ ? [0.1, 0.1, CUBE] : [CUBE, 0.1, 0.1] });
           break;
         case 'treasure':
-          chips.push({ p, s: [CHIP_SIZE, CHIP_SIZE, CHIP_SIZE] });
+          treasures.push({ p, s: [TREASURE_SIZE, TREASURE_SIZE, TREASURE_SIZE] });
           break;
         case 'exit':
           exits.push({ p, s: [CUBE, CUBE, CUBE] });
@@ -203,7 +203,7 @@ export function collectProps(
     bars.push({ p, s: alongX ? [CUBE, 0.1, 0.1] : [0.1, 0.1, CUBE] });
   }
 
-  return { ladders, bars, chips, exits };
+  return { ladders, bars, treasures, exits };
 }
 
 /**
@@ -465,13 +465,14 @@ export interface Stage {
  * 于是泛光那套（它抓着 `scene` 的引用）不必跟着重建。不传就自己造一个（旧行为不变）。
  */
 /**
- * 芯片（墙上宝物 `G`）的直径。
+ * **宝物**的边长（墙上那颗 `G` 与甲台上那颗**是同一个东西**，所以共用一个尺寸）。
  *
- * 曾经是 **0.38**，用户的原话是"场景右侧中部有三个芯片，但是大小很小一点点" ——
- * 一格是 1.0，0.38 在一屏里就是个点。取 0.6：还是一眼看得出"这是个可以拿的物件"，
- * 又没有大到与相邻的砖混在一起。
+ * 曾经墙上那颗是 0.38 的**蓝色八面体**，用户的原话是"场景右侧中部有三个芯片，但是大小很小
+ * 一点点"，后来又一针见血："宝物的图案以前不是现在这个小蓝点的样子。" ——
+ * 八面体+蓝色是**芯片**的行头，而宝物在原版里就是撒在砖面上的一块金子。所以现在墙上与甲台
+ * 都是同一颗**金色方块**：`box` + `mat.prize`，同一个常量，一眼认得出是同一样东西。
  */
-const CHIP_SIZE = 0.6;
+const TREASURE_SIZE = 0.6;
 
 export function createStage(level: Level, scene: THREE.Scene = new THREE.Scene()): Stage {
   const half = halfExtent(level.fold);
@@ -509,7 +510,6 @@ const faceCentre = -half + level.fold / 2;
   scene.add(rim);
 
   const box = new THREE.BoxGeometry(1, 1, 1);
-  const chipGeo = new THREE.OctahedronGeometry(CHIP_SIZE / 2);
   const mat = {
     // 砖块材质给**白色**：真正的颜色由逐实例色乘上去（见 createBrickLayer）。
     white: new THREE.MeshLambertMaterial({ color: 0xffffff }),
@@ -518,7 +518,6 @@ const faceCentre = -half + level.fold / 2;
     seam: new THREE.MeshBasicMaterial({ color: PALETTE.seam }),
     lad: new THREE.MeshLambertMaterial({ color: PALETTE.lad }),
     bar: new THREE.MeshBasicMaterial({ color: PALETTE.bar }),
-    chip: new THREE.MeshBasicMaterial({ color: PALETTE.chip }),
     prize: new THREE.MeshLambertMaterial({ color: PALETTE.prize }),
     exit: new THREE.MeshBasicMaterial({ color: PALETTE.exit }),
     // 水面用 Lambert 而不是 Phong：不要镜面高光。这一版的风格是平涂（参照图 3），
@@ -692,7 +691,7 @@ const faceCentre = -half + level.fold / 2;
    * ⚠ 这里存**件数**而不是"网格数组的下标"：`instanced()` 对空列表返回 `null` 并被过滤掉，
    * 于是数组会缩短、下标会错位（曾经 `propMeshes[2]` 指到了出口网格，探针报"有芯片但画面上没有"）。
    */
-  const propCounts = { ladders: 0, bars: 0, chips: 0, exits: 0 };
+  const propCounts = { ladders: 0, bars: 0, treasures: 0, exits: 0 };
   let propMeshes: THREE.InstancedMesh[] = [];
   let propSignature = '';
   const propSig = (grid: readonly TileKind[]): string =>
@@ -706,12 +705,12 @@ const faceCentre = -half + level.fold / 2;
     const props = collectProps(level, grid);
     propCounts.ladders = props.ladders.length;
     propCounts.bars = props.bars.length;
-    propCounts.chips = props.chips.length;
+    propCounts.treasures = props.treasures.length;
     propCounts.exits = props.exits.length;
     propMeshes = [
       instanced(propGroup, box, mat.lad, props.ladders, true),
       instanced(propGroup, box, mat.bar, props.bars, true),
-      instanced(propGroup, chipGeo, mat.chip, props.chips, false),
+      instanced(propGroup, box, mat.prize, props.treasures, false),
       instanced(propGroup, box, mat.exit, props.exits, false),
     ].filter((m): m is THREE.InstancedMesh => m !== null);
     propSignature = propSig(grid);
@@ -730,12 +729,11 @@ const faceCentre = -half + level.fold / 2;
    *
    * 为什么不能"建一次就不动"：收走之后那颗必须消失（用户："走到岛台取的宝物后，没有任何反应"）。
    */
-  const PRIZE_SIZE = 0.6;
   const prizeMesh = instanced(
     scene,
     box,
     mat.prize,
-    island.prizes.map((spot) => ({ p: spot.p, s: [PRIZE_SIZE, PRIZE_SIZE, PRIZE_SIZE] })),
+    island.prizes.map((spot) => ({ p: spot.p, s: [TREASURE_SIZE, TREASURE_SIZE, TREASURE_SIZE] })),
     false,
   );
   function applyTreasures(remaining: readonly DeckCell[]): void {
@@ -746,7 +744,7 @@ const faceCentre = -half + level.fold / 2;
     const scl = new THREE.Vector3();
     island.prizes.forEach((spot, i) => {
       const alive = remaining.some((t) => t.x === spot.cell.x && t.z === spot.cell.z);
-      const k = alive ? PRIZE_SIZE : 0;
+      const k = alive ? TREASURE_SIZE : 0;
       pos.set(spot.p[0], spot.p[1], spot.p[2]);
       scl.set(k, k, k);
       prizeMesh.setMatrixAt(i, m.compose(pos, q, scl));
@@ -772,7 +770,7 @@ const faceCentre = -half + level.fold / 2;
       brickSlots: level.cols * level.rows,
       ladder: propCounts.ladders,
       bar: propCounts.bars,
-      chip: propCounts.chips,
+      treasure: propCounts.treasures,
       exit: propCounts.exits,
       prize: island.prizes.length,
     },
@@ -789,14 +787,13 @@ const faceCentre = -half + level.fold / 2;
       // 逐实体的补间归 meshSync（它有自己的 mesh，不在这里）。
     },
     dispose(): void {
-      // InstancedMesh 与墙板共用 box / chipGeo 两个几何体 —— 下面统一释放，
+      // InstancedMesh 与墙板共用 `box` 一个几何体 —— 下面统一释放，
       // 这里只释放每个实例网格自己的实例缓冲（dispose 不动几何体）。
       brickLayer.mesh.dispose();
       for (const mesh of propMeshes) mesh.dispose();
       deckLadderMesh?.dispose();
       prizeMesh?.dispose();
       for (const o of singles) scene.remove(o);
-      chipGeo.dispose();
       box.dispose();
       for (const m of Object.values(mat)) m.dispose();
       scene.clear();

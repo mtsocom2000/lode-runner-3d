@@ -66,9 +66,10 @@ export function tileOfGlyph(glyph: string): TileKind | null {
 export function paint(def: LevelDef, brush: Brush, at: Cell): LevelDef {
   switch (brush.kind) {
     case 'tile':
-      return setWallGlyph(def, at, brush.glyph);
+      // 出口走**专线**：它自带两侧的闸门（见 `placeExit`）。
+      return brush.glyph === 'E' ? placeExit(def, at) : overwrite(def, at, brush.glyph);
     case 'erase':
-      return at.face === 'I' ? removeDeck(def, at) : setWallGlyph(def, at, '.');
+      return at.face === 'I' ? removeDeck(def, at) : overwrite(def, at, '.');
     case 'deck':
       return setDeck(def, at, brush.mode);
     case 'spawn':
@@ -78,6 +79,60 @@ export function paint(def: LevelDef, brush: Brush, at: Cell): LevelDef {
     case 'enemy':
       return toggleEnemy(def, at, brush.enemyKind);
   }
+}
+
+/**
+ * **出口**（`E`）—— 放出口时**自动在两侧设闸门**（用户 2026-09-22 的要求）。
+ *
+ * 用户的原话："出口设计的时候没有给它设计阻拦的地块，这样使得出口随时可以经过……摆放出口
+ * 应该自动在两侧设置障碍物，在宝物取得之后障碍物自动消除。" 这正是**原版 Lode Runner 的出口**：
+ * 一个凹槽，左右各一块**假砖** —— 看着是墙，集齐金子之后消失。
+ *
+ * 本作里那两块假砖就是**闸门**（`LevelDef.gates`）：砖是 `=`（硬砖，挖不动），集齐宝物后
+ * `openGates` 把它们换成**梯子**（`goals.ts`），于是出口从两侧都进得去。手工画的 L1/L2/L3
+ * 一直是这么排的（L3 的 `r11` 就是 `=E=`）—— 这个函数只是把那条房规搬进工具里，
+ * 免得每个放出口的人都要自己记得摆两块砖、还要记得登记进 `gates`。
+ *
+ * 两侧**一律设成硬砖**（哪怕原本是可挖的 `X`）：闸门必须挡得住，而"集齐后就消失"这件事
+ * 要求它是闸门 —— 可挖的砖既挡不住也消不掉。
+ *
+ * **幂等**：重复画同一个出口不会把闸门登记成两份（先按格子去重再追加）。
+ */
+export function placeExit(def: LevelDef, at: Cell): LevelDef {
+  if (at.face === 'I') return def;
+  const cols = def.fold * 2;
+  if (at.col < 0 || at.col >= cols || at.row < 0 || at.row >= def.tiles.length) return def;
+
+  let next = setWallGlyph(def, at, 'E');
+  const flank: Cell[] = [];
+  for (const col of [at.col - 1, at.col + 1]) {
+    if (col < 0 || col >= cols) continue; // 贴边时只有一侧有闸门
+    const cell: Cell = { face: at.face, col, row: at.row };
+    next = setWallGlyph(next, cell, '=');
+    flank.push(cell);
+  }
+  const kept = (next.gates ?? []).filter(
+    (g) => !flank.some((f) => f.face === g.face && f.col === g.col && f.row === g.row),
+  );
+  return { ...next, gates: [...kept, ...flank] };
+}
+
+/**
+ * 写一个字形；若**抹掉的正好是一个出口**，它两侧那对闸门也跟着撤。
+ *
+ * 不然闸门会越积越多：出口挪个地方，旧位置就留下两块"永远开不了"的硬砖（它们只属于
+ * 那个已经不存在的出口）。判据是**旧字形**，不是新字形 —— `setWallGlyph` 返回同一个对象
+ * 就说明这一笔哪儿也没画到，那就什么都别动。
+ */
+function overwrite(def: LevelDef, at: Cell, glyph: string): LevelDef {
+  const next = setWallGlyph(def, at, glyph);
+  if (next === def || glyph === 'E') return next;
+  if (glyphTileAt(def, at) !== 'exit') return next;
+  const before = next.gates ?? [];
+  const kept = before.filter(
+    (g) => !(g.face === at.face && g.row === at.row && (g.col === at.col - 1 || g.col === at.col + 1)),
+  );
+  return kept.length === before.length ? next : { ...next, gates: kept };
 }
 
 /** 墙格上此刻**是哪种瓦片**（越界 / 甲板格 → `null`）。给"宝物"那支笔判断该放还是该撤。 */

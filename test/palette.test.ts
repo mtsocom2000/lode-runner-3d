@@ -11,12 +11,12 @@ import { FEATURE_RULES } from '../src/render/probe';
  *
  * - `bar` 的规则还停在深色版的**品红**上，而横杆早已改成陶土红 —— L1 没有横杆，这条坏了整整一版，
  *   直到 L2（第一关带横杆）接上探针才现形；
- * - `cyan`（芯片）的旧门槛能把**水面**也算进去；
+ * - `cyan`（墙上宝物芯片）的旧门槛能把**水面**也算进去；
  * - 新加的攀爬者第一版按"暗青"卡绝对明度，泛光一加就再也匹配不到。
  *
  * 所以这里把契约变成**可执行的**：把 `PALETTE` 里**每一项**都过一遍规则，断言
  *
- * 1. 该命中某条规则的（`chip`/`prize`/`exit`/`bar`/`player`/`drone`/`stalker`）**只命中那一条**；
+ * 1. 该命中某条规则的（`prize`/`exit`/`bar`/`player`/`drone`/`stalker`）**只命中那一条**；
  * 2. 其余每一项（砖、水、背板……）**一条都不命中** —— 否则探针会把它们数成别的东西，
  *    于是"画面上有出口"这种断言会被一片水面喂饱。
  *
@@ -39,7 +39,6 @@ const CONTRACT: Readonly<Record<PaletteKey, string | null>> = {
   pit: null,
   // 道具与实体：各自那条
   bar: 'bar',
-  chip: 'cyan',
   prize: 'prize',
   exit: 'exit',
   player: 'player',
