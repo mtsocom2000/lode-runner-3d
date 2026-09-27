@@ -64,6 +64,8 @@ export interface EditorCallbacks {
   openLevel(key: string): void;
   newLevel(): void;
   deleteLevel(): void;
+  /** 指定通关后的**下一关**（槽键；`''` = 打完停在这儿）。 */
+  setNext(key: string): void;
 }
 
 export interface Editor {
@@ -79,8 +81,8 @@ export interface Editor {
   noteCell(cell: Cell | null, diagnosis?: string): void;
   /** 报告撤销/重做的可用状态（`Ctrl+Z` 之后按钮该灰掉）。 */
   setHistory(canUndo: boolean, canRedo: boolean): void;
+  setLibrary(entries: readonly { readonly key: string; readonly label: string }[], active: string, next?: string): void;
   /** 报告关卡库的现状（`<select>` 的选项 + 当前是哪一张）。 */
-  setLibrary(entries: readonly { readonly key: string; readonly label: string }[], active: string): void;
   dispose(): void;
 }
 
@@ -292,7 +294,14 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
   newBtn.title = '新建一张空白关卡（**不会**顶掉现在这张）';
   const delBtn = button('删除', () => cb.deleteLevel());
   delBtn.title = '删掉当前这张（库里至少留一张）';
-  libraryRow.append(picker, newBtn, delBtn);
+  /**
+   * **下一关**（`next` 链）：通关后按 `N` 去哪儿。空选项 = 打完停在这儿（合法的设计，
+   * 不是错误）—— 所以它有个明确的名字，而不是"没选"。
+   */
+  const nextPicker = document.createElement('select');
+  nextPicker.style.cssText = 'flex:1;font:inherit;padding:2px 4px';
+  nextPicker.addEventListener('change', () => cb.setNext(nextPicker.value));
+  libraryRow.append(picker, nextPicker, newBtn, delBtn);
 
   bar.append(undoBtn, redoBtn, applyBtn, playBtn, checkBtn, blankBtn, exportBtn, importBtn, importInput);
   el.append(head, cellLine, libraryRow, toolbar, notes, area, bar);
@@ -351,7 +360,7 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
     },
     brush: () => BRUSHES[index]?.brush ?? { kind: 'erase' },
     setHistory,
-    setLibrary(entries, active): void {
+    setLibrary(entries: readonly { readonly key: string; readonly label: string }[], active: string, next?: string): void {
       picker.textContent = '';
       for (const entry of entries) {
         const option = document.createElement('option');
@@ -360,6 +369,20 @@ export function createEditor(host: HTMLElement, cb: EditorCallbacks): Editor {
         picker.appendChild(option);
       }
       picker.value = active;
+      // 「下一关」：一个"停在这儿"的**显式**选项 + 库里每一张（含自己 —— 自环/互相指都是
+      // 合法的链，不拦）。空选项不是"没选"，是一句明确的设计决定。
+      nextPicker.textContent = '';
+      const stop = document.createElement('option');
+      stop.value = '';
+      stop.textContent = '—— 打完停在这儿 ——';
+      nextPicker.appendChild(stop);
+      for (const entry of entries) {
+        const option = document.createElement('option');
+        option.value = entry.key;
+        option.textContent = entry.key === active ? `${entry.label}（自己）` : entry.label;
+        nextPicker.appendChild(option);
+      }
+      nextPicker.value = next ?? '';
     },
     noteCell(cell, diagnosis): void {
       const which = BRUSHES[index]?.label ?? '?';

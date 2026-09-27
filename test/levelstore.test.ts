@@ -181,3 +181,20 @@ describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
     expect(newLevelKey()).not.toBe(newLevelKey());
   });
 });
+describe('T21 #3 · `next` 链', () => {
+  it('内置三关串成 L1 → L2 → L3，最后一关**没有** next（打完停在这儿）', () => {
+    const lib = loadLibrary(fakeStorage());
+    const byKey = (k: string) => lib.levels.find((e) => e.key === k)?.def;
+    expect(byKey('builtin:l1')?.next).toBe('builtin:l2');
+    expect(byKey('builtin:l2')?.next).toBe('builtin:l3');
+    expect(byKey('builtin:l3')?.next).toBeUndefined();
+  });
+
+  it('`next` 跟着关卡一起存/取（导出导入一张图，它自带的去向也在里面）', () => {
+    const s = fakeStorage();
+    const one = upsertLevel(loadLibrary(s), 'mine', { ...BLANK, next: 'builtin:l1' });
+    expect(saveLibrary(one, s)).toBe(true);
+    const back = loadLibrary(s);
+    expect(back.levels.find((e) => e.key === 'mine')?.def.next).toBe('builtin:l1');
+  });
+});

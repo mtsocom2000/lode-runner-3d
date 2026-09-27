@@ -156,11 +156,17 @@ export function newLevelKey(): string {
   return `level:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** 内置关卡当作初始条目（见文件头）。 */
+/**
+ * 内置关卡当作初始条目（见文件头）。
+ *
+ * **`next` 在这里补上**（而不是写进 `l1.ts` / `l2.ts` 本身）：链指向的是**槽键**
+ * （`builtin:l2`），而槽键是库的概念 —— 关卡文件不该知道"我在库里的第几个槽"。
+ * 于是内置三关天然串成 L1 → L2 → L3。
+ */
 function builtinEntries(): readonly StoredLevel[] {
   return [
-    { key: 'builtin:l1', def: L1 },
-    { key: 'builtin:l2', def: L2 },
+    { key: 'builtin:l1', def: { ...L1, next: 'builtin:l2' } },
+    { key: 'builtin:l2', def: { ...L2, next: 'builtin:l3' } },
     { key: 'builtin:l3', def: L3 },
   ];
 }

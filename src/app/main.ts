@@ -377,6 +377,24 @@ const editor = createEditor(host, {
   openLevel,
   newLevel,
   deleteLevel,
+  /**
+   * **指定"下一关"**（`next` 链）。
+   *
+   * 空串 = 明确的"打完停在这儿"，所以要把 `next` **去掉**而不是写一个空串 ——
+   * 否则导出 JSON 里会留一个 `"next": ""`，下一关会去找一个叫空的槽。
+   */
+  setNext(key: string): void {
+    const keep = (d: LevelDef): LevelDef => {
+      const { next: _drop, ...rest } = d;
+      return rest;
+    };
+    const def: LevelDef = key === '' ? keep(levelDef) : { ...keep(levelDef), next: key };
+    persist(def);
+    buildWorld(def);
+    editor.show(levelDef, spawn, levelIssues);
+    editor.setLibrary(libraryEntries(), activeKey, levelDef.next);
+    commitLevel();
+  },
   play(text: string): string | null {
     // 与「应用」同一条路：先在文本框那张上过 `decodeLevel`，再热重建。
     const decoded = decodeLevel(text);
@@ -411,7 +429,7 @@ const editor = createEditor(host, {
 });
 hud.log('按 Tab 打开关卡编辑器');
 // 关卡库那一行：开局就把库与当前项灌进去（面板一打开就是对的）。
-editor.setLibrary(libraryEntries(), activeKey);
+editor.setLibrary(libraryEntries(), activeKey, levelDef.next);
 
 /**
  * **探针跑之前先原地热重建一次**（T21）。
@@ -613,7 +631,7 @@ function openLevel(key: string): void {
   pendingJoint = null;
   buildWorld(entry.def);
   editor.show(levelDef, spawn, levelIssues);
-  editor.setLibrary(libraryEntries(), activeKey);
+  editor.setLibrary(libraryEntries(), activeKey, levelDef.next);
   editor.setHistory(false, false);
 }
 
@@ -630,6 +648,33 @@ function deleteLevel(): void {
   library = removeLevel(library, activeKey);
   saveLibrary(library);
   openLevel(library.active);
+}
+
+/**
+ * **通关后进下一关**（T21 #3 的 `next` 链）。
+ *
+ * 按键推进（而不是自动跳）：`status: 'won'` 之后 sim 会冻住实体但时钟照走，玩家多半正看着
+ * 那一下；自动换关会把"我赢了"这件事**抢掉**。所以给一个明确的键（`N`），并在 HUD 上写明
+ * "按 N 进下一关"。
+ *
+ * 三件要做对的小事：
+ *
+ * 1. **没配 `next` → 什么都不做**（打完就停在这儿，这是合法的关卡设计，不是错误）；
+ * 2. **`next` 指向不存在的槽 → 也不做**，但要**说出来**（静默失效是这类链最讨厌的坏法）；
+ * 3. 真的进了下一关 → 走 `openLevel`（它会把撤销栈、半截手势、面板全都重置）。
+ */
+function nextLevel(): void {
+  const next = levelDef.next;
+  if (next === undefined) {
+    hud.log('这一关没有配「下一关」（在编辑器面板里可以指定）');
+    return;
+  }
+  if (levelByKey(library, next) === null) {
+    hud.log(`「下一关」指向的槽不存在：${next} —— 换一张或把这条改掉`);
+    return;
+  }
+  openLevel(next);
+  hud.log(`进入下一关：${levelDef.name !== '' ? levelDef.name : levelDef.id}`);
 }
 
 /**
@@ -911,7 +956,10 @@ function refreshHud(): void {
     // 构建时间戳：`dist-single/index.html` 是**产物**，不 `npm run pack` 就不会跟着源码变。
     // 这一行让"我现在跑的到底是哪个构建"变成一眼可见（已经因为这个白绕过两次）。
     `构建 ${__BUILD_STAMP__}（改了源码要 npm run pack 才会变）`,
-    ...(state.status === 'won' ? ['★ 过关！'] : []),
+    // 有 `next` 就写明"按 N"—— 不然那个键没人知道（`R` 重开同理，也写在键位说明里）。
+    ...(state.status === 'won'
+      ? [levelDef.next === undefined ? '★ 过关！' : '★ 过关！按 N 进下一关']
+      : []),
     // 校验结果直接进 HUD。关卡不合法**必须看得见** —— 只在控制台里报，等于没报。
     // 通过时这段是空的，HUD 与以前逐字一样。
     ...(levelIssues.length === 0
@@ -990,10 +1038,22 @@ function restart(): void {
  */
 const RESTART_KEY = 'r';
 
+/**
+ * **进下一关**的键（`N`）。只在 `status: 'won'` 时有效 —— 别的状态下按 `N` 什么也不做
+ * （它不是一个"随便跳关"的键，那会让玩家绕过关卡）。
+ */
+const NEXT_KEY = 'n';
+
 window.addEventListener('keydown', (e) => {
-  if (e.key.toLowerCase() !== RESTART_KEY) return;
-  // 编辑器开着的时候不抢键：那时用户可能在 JSON 里写 `"r"`。
+  const key = e.key.toLowerCase();
+  // 编辑器开着的时候不抢键：那时用户可能在 JSON 里写 `"r"` / `"n"`。
   if (editor.isOpen()) return;
+  if (key === NEXT_KEY && state?.status === 'won') {
+    e.preventDefault();
+    nextLevel();
+    return;
+  }
+  if (key !== RESTART_KEY) return;
   e.preventDefault();
   restart();
 });
