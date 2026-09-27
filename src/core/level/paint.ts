@@ -47,7 +47,14 @@ export type Brush =
   | { readonly kind: 'erase' }
   /** 玩家出生点。 */
   | { readonly kind: 'spawn' }
-  /** 宝物：有就收走、没有就放一颗（这样一键既是"放"也是"撤"）。 */
+  /**
+   * **宝物**：甲板上放"地台上的宝物"、墙面上放"芯片 `G`" —— **一支笔,两种落脚处**。
+   *
+   * 用户的原话："宝物无法放置在砖块上，似乎只能放置在场景中央的水面附近。" —— 他说得对，
+   * 而且他想要的正是**原版 Lode Runner 的做法**：金子撒在砖面上，集齐才开出口。
+   * 所以这一支笔按**指到哪儿**自己分派（`toggleTreasure` / 墙上的 `G` 字形），
+   * 用户不必知道内部是两套数据。两支笔点一次都是"放"，再点一次都是"撤"。
+   */
   | { readonly kind: 'treasure' };
 
 /** 字形 → 瓦片种类，认不出来就 `null`（UI 拿它给按钮标"这支笔能不能用"）。 */
@@ -67,10 +74,27 @@ export function paint(def: LevelDef, brush: Brush, at: Cell): LevelDef {
     case 'spawn':
       return { ...def, spawn: { face: at.face, col: at.col, row: at.row } };
     case 'treasure':
-      return toggleTreasure(def, at);
+      return toggleAnyTreasure(def, at);
     case 'enemy':
       return toggleEnemy(def, at, brush.enemyKind);
   }
+}
+
+/** 墙格上此刻**是哪种瓦片**（越界 / 甲板格 → `null`）。给"宝物"那支笔判断该放还是该撤。 */
+function glyphTileAt(def: LevelDef, at: Cell): TileKind | null {
+  if (at.face === 'I') return null;
+  const line = def.tiles[at.row];
+  if (line === undefined || at.col < 0 || at.col >= line.length) return null;
+  return TILE_CHARS[line[at.col] ?? '.'] ?? null;
+}
+
+/**
+ * **宝物**（一支笔，两种落脚处）：甲板格 → `treasures` 列表；墙格 → `G` 字形。
+ * 两者点一次都是"放"、再点一次都是"撤"。
+ */
+export function toggleAnyTreasure(def: LevelDef, at: Cell): LevelDef {
+  if (at.face === 'I') return toggleTreasure(def, at);
+  return setWallGlyph(def, at, glyphTileAt(def, at) === 'treasure' ? '.' : 'G');
 }
 
 /**

@@ -13,7 +13,7 @@ import {
   type PendingFill,
 } from './rules/dig';
 import { drownPath, type DrownPath } from './rules/drown';
-import { openGates, treasureAt, withoutTreasure } from './rules/goals';
+import { openGates, takeWallTreasure, treasureAt, wallTreasureAt, withoutTreasure } from './rules/goals';
 import {
   OPPOSITE_DIR,
   fallTo,
@@ -414,6 +414,22 @@ export function createSim(def: LevelDef, spawn: Cell, lives: number = PLAYER_LIV
     throw new Error(`关卡 ${def.id} 的出生点 ${describeCell(spawn)} 停不住（坑里 / 墙里 / 越界）`);
   }
 
+  /**
+   * **一块宝物都没有 ⇒ 出口一开始就是开的**（T21 修的一处模型矛盾）。
+   *
+   * 原来 `gatesOpen` 一律从 `false` 起，而 `opened` 只在"取走最后一块宝物"那一下发出 ——
+   * 于是**没有宝物的关卡永远开不了闸门**，走到出口也不过关：一张能在编辑器里画出来的、
+   * 看起来完全正常的关卡，实际上是**赢不了**的。
+   *
+   * 而校验那边（`exitGated`）早就把"没声明闸门的关卡"当成**不设门**（跳过那条规则）。
+   * 两边不一致，错的是这里：没有可集的宝物，就没有"集齐"这回事，门自然不该锁着。
+   *
+   * 注意**不报 `opened` 事件** —— 它表达的是"刚刚被打开"，开局就开着不是"刚刚"。
+   * 闸门砖一并换成梯子：否则门"开着"却物理上还堵着（与 `exitGated` 用 `openGates` 验
+   * "开了之后到得了"是同一个口径）。
+   */
+  const startsOpen = level.treasures.length === 0 && !level.grid.includes('treasure');
+
   return {
     tick: 0,
     levelId: level.id,
@@ -425,12 +441,12 @@ export function createSim(def: LevelDef, spawn: Cell, lives: number = PLAYER_LIV
     treasures: level.treasures,
     cols: level.cols,
     rows: level.rows,
-    grid: level.grid,
+    grid: startsOpen ? openGates(level.grid, level.gates, level.cols) : level.grid,
     // 开局没有任何坑 —— 坑只能由 `tick` 里的挖产生，不存在于关卡数据里。
     fills: [],
     status: 'playing',
-    // 开局闸门是关着的（T13）。它由"集齐宝物"打开，不由关卡数据预置。
-    gatesOpen: false,
+    // 有宝物可集时开局是关着的（T13）：它由"集齐宝物"打开，不由关卡数据预置。
+    gatesOpen: startsOpen,
     lives,
     entities: [
       {
@@ -840,16 +856,21 @@ export function tick(prev: SimState, intents: Intents): SimFrame {
   const walker = entities.find((e) => e.kind === 'player');
 
   if (walker !== undefined) {
-    const hit = treasureAt(treasures, walker.cell);
-    if (hit !== undefined) {
-      treasures = withoutTreasure(treasures, hit);
+    // 宝物有**两种落脚处**（用户 2026-09-21）：甲板上的 `treasures` 列表、以及墙面上的 `G` 字形。
+    // 两者**等价** —— 都要取、都算进"集齐才开闸门"。原版 Lode Runner 的金子本来就在砖面上。
+    const deckHit = treasureAt(treasures, walker.cell);
+    const wallHit = deckHit === undefined ? wallTreasureAt(level, walker.cell) : null;
+    if (deckHit !== undefined || wallHit !== null) {
+      if (deckHit !== undefined) treasures = withoutTreasure(treasures, deckHit);
+      if (wallHit !== null) grid = takeWallTreasure(grid, wallHit, prev.cols);
       events.push({ kind: 'collected', entity: walker.id, cell: walker.cell });
 
-      // 开闸**只在"取走最后一块"这一刻**触发 —— 判据挂在**采集动作**上，而不是每 tick 去看
-      // "列表空了没"。差别在**没有宝物的关卡**上：那时 `treasures.length === 0` 从第 1 tick
-      // 起就成立，闸门会在玩家什么都还没做时"开"掉，`opened` 也成了开局噪声。
-      // （那种关卡本身也是坏的：声明了闸门却没有宝物，`exitGated` 会报"开了还到不了"。）
-      if (!gatesOpen && treasures.length === 0) {
+      // 开闸**只在"取走最后一块"那一下**：判据挂在**采集动作**上，而不是每 tick 去问
+      // "列表空了没有"（在没有宝物的关卡上，那时 `treasures.length === 0` 从第 1 tick
+      // 起就成立，闸门会被莫名其妙打开，`opened` 也会凭空冒出来）。
+      //
+      // 墙上那些 `G` 也要一起算：只要网格里还剩一个 `'treasure'` 字形，就还没集齐。
+      if (!gatesOpen && treasures.length === 0 && !grid.includes('treasure')) {
         grid = openGates(grid, prev.gates, prev.cols);
         gatesOpen = true;
         events.push({ kind: 'opened' });

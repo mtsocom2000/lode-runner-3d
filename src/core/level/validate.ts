@@ -3,6 +3,7 @@ import { openGates } from '../rules/goals';
 import { gridStep } from '../rules/movement';
 import { walkNeighbours, walkReachable } from '../rules/reach';
 import { asCell, deckKey } from '../world/deck';
+import { faceOf } from '../world/fold';
 import { buildGraph, isBar, isLadder, isSolid, isStandable } from '../world/graph';
 import { parseLevel, withGrid, type Level, type LevelDef, type LoadError, type TileKind } from '../world/tiles';
 
@@ -94,7 +95,9 @@ export type RuleId =
    * 真实案例（用户的 L4）：出口在折痕 B 侧，而 B 侧整片走不到（过折痕那一列没有地板），
    * 校验却只说"有格子走不到，可以不管"。那是我把严重程度判错了，不是文案问题。
    */
-  | 'exitUnreachable';
+  | 'exitUnreachable'
+  /** **每一块宝物都要走得到**（T21，规则⑩）—— 取不到就集不齐，集不齐就开不了闸门。 */
+  | 'treasureUnreachable';
 
 /**
  * 每条规则的**人话标题**（T21）。用户在编辑器里的原话是"校验出来的问题看的不是很明白"：
@@ -118,6 +121,7 @@ export const RULE_TITLES: Readonly<Record<RuleId, string>> = {
   exitGated: '出口闸门没封住 / 封住了出不去',
   jointNeverEntered: '接头永远进不去（方向被走廊占了）',
   exitUnreachable: '出口走不到（这一关赢不了）',
+  treasureUnreachable: '宝物走不到（取不到就开不了闸门）',
 };
 
 export interface LevelIssue {
@@ -250,6 +254,8 @@ export function validateLevel(def: LevelDef, spawn?: Cell): readonly LevelIssue[
     issues.push(...exitGating(level, spawn));
     // ⑨ 没有闸门却走不到出口 = **赢不了**（与 `exitGating` 互斥，见 `exitUnreachable` 的注释）。
     issues.push(...exitReachableWithoutGates(level, spawn));
+    // ⑩ 宝物：一块都没有 = 赢不了；有但走不到 = 也赢不了。
+    issues.push(...treasureChecks(level, spawn));
   }
 
   // 甲板接头不依赖出生点，所以放在 `spawn` 判断之外：没有出生点也该查得出坏接头。
@@ -350,6 +356,50 @@ function jointShadowed(level: Level): readonly LevelIssue[] {
     });
   }
 
+  return issues;
+}
+
+/**
+ * 规则⑩：**每一块宝物都要走得到**（T21）。
+ *
+ * 取不到就集不齐，集不齐就开不了闸门 —— 所以这是"赢不了"级别。
+ * 墙上（字形 `G`）与甲板（`treasures`）两类**等价**，都要查。用户明确提过"宝物的可达性"
+ * 要能测，这条就是。
+ *
+ * > 曾经在这里加过一条"**一块宝物都没有** = 错误"，方向反了：真正的矛盾在模型里 ——
+ * > `exitGated` 把"没声明闸门的关卡"当成**不设门**，而 sim 里出口却永远锁着。
+ * > 正确的修法是让 sim 跟上：**没有宝物 ⇒ 出口一开始就是开的**（见 `createSim`）。
+ */
+function treasureChecks(level: Level, spawn: Cell): readonly LevelIssue[] {
+  if (level.treasures.length === 0 && !level.grid.includes('treasure')) return [];
+
+  const issues: LevelIssue[] = [];
+  const wallCells: Cell[] = [];
+  for (let row = 0; row < level.rows; row++) {
+    for (let col = 0; col < level.cols; col++) {
+      if (level.at(col, row) === 'treasure') wallCells.push({ face: faceOf(col, level.fold), col, row });
+    }
+  }
+
+  const reachable = walkReachable(level, spawn).cells;
+  for (const cell of level.treasures.map(asCell)) {
+    if (reachable.has(cellKey(cell))) continue;
+    issues.push({
+      rule: 'treasureUnreachable',
+      severity: 'error',
+      detail: `地台上的宝物 ${where(cell)} 从出生点走不到 —— 取不到就集不齐，集不齐就开不了闸门`,
+      at: cell,
+    });
+  }
+  for (const cell of wallCells) {
+    if (reachable.has(cellKey(cell))) continue;
+    issues.push({
+      rule: 'treasureUnreachable',
+      severity: 'error',
+      detail: `墙上的宝物 ${where(cell)} 从出生点走不到 —— 取不到就集不齐，集不齐就开不了闸门`,
+      at: cell,
+    });
+  }
   return issues;
 }
 

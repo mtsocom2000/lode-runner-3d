@@ -54,11 +54,11 @@ function expectWater(level: Level, col: number, row: number, dir: Dir): WaterFal
 // ── 地形（三条，都是从"没有支撑"这件事出发）────────────────────────────────
 
 /** 途径①：地板在 col1 缺一块砖 → 从 col0 往右走就掉下去。 */
-const HOLE_TILES: readonly string[] = ['X.XX', 'E...'];
+const HOLE_TILES: readonly string[] = ['X.XX', '....'];
 const HOLE = lv(HOLE_TILES);
 
 /** 途径①（高处）：地板与中间平台在同一列都缺砖 → 从 row 3 掉下去也是同一回事。 */
-const HOLE_HIGH_TILES: readonly string[] = ['X.XX', 'E...', 'X.XX', 'E...'];
+const HOLE_HIGH_TILES: readonly string[] = ['X.XX', '....', 'X.XX', '....'];
 const HOLE_HIGH = lv(HOLE_HIGH_TILES);
 
 /** 途径②：r1 的 col1 是横杆，而它**正下方整列都是空的**（杆下方得有空才吊得住）。 */

@@ -1,6 +1,7 @@
 import type { Cell } from '../types';
+import { isConsistentCell } from '../world/fold';
 import type { DeckCell } from '../world/deck';
-import type { TileKind } from '../world/tiles';
+import type { Level, TileKind } from '../world/tiles';
 
 /**
  * 通关目标（T13）：宝物计数 → 出口闸门开启 → 触达出口过关。
@@ -88,4 +89,43 @@ export function withoutTreasure(treasures: readonly DeckCell[], taken: DeckCell)
   return treasures.filter(
     (t) => t.x !== taken.x || t.z !== taken.z || (t.level ?? 0) !== level,
   );
+}
+
+/**
+ * **墙上**那一格是不是还没取走的宝物（字形 `G`）。是就返回那一格，否则 `null`。
+ *
+ * ## 为什么宝物有两种落脚处（用户 2026-09-21 的追问）
+ *
+ * 用户的原话：*"宝物无法放置在砖块上，似乎只能放置在场景中央的水面附近。"* —— 而**原版
+ * Lode Runner 的金子正是撒在砖面上**（`legacy/README-v0.5-prototype.md` 的"收集全部金子"）。
+ * 我第一版只把"地台上的宝物"接进了通关逻辑，墙上的 `G` 只画出来、**没接** —— 于是
+ * "宝物"这支笔在墙上点了毫无反应，用户只能把它放在水面上。
+ *
+ * 现在两类**等价**：都要取、都算进"集齐才开闸门"。
+ *
+ * ## 判据为什么守面（与 `treasureAt` 同一条理由）
+ *
+ * 甲板宝物的坐标是 `(x, z)`，墙格是 `(col, row)` —— 混着比会静默比错（`col = 3, row = 3`
+ * 与甲板 `(3, 3)` 数值相同）。所以墙上的那一支**只认墙格**。
+ */
+export function wallTreasureAt(level: Level, cell: Cell): Cell | null {
+  if (cell.face === 'I') return null;
+  if (!isConsistentCell(cell, level.fold)) return null;
+  return level.at(cell.col, cell.row) === 'treasure' ? { face: cell.face, col: cell.col, row: cell.row } : null;
+}
+
+/**
+ * 取走墙上那片宝物：那一格**变空**（返回新网格）。
+ *
+ * 与 `applyDig`（`dig → pit`）并列的第二种"改一格网格"的动作 —— 同样返回**新数组**，
+ * 因为 `grid` 是 `SimState` 的一部分（回放要逐字节比对）。
+ */
+export function takeWallTreasure(
+  grid: readonly TileKind[],
+  cell: Cell,
+  cols: number,
+): readonly TileKind[] {
+  const next = grid.slice();
+  next[cell.row * cols + cell.col] = 'empty';
+  return next;
 }

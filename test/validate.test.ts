@@ -179,6 +179,38 @@ describe('validateLevel — 规则⑦：横杆下方不得为实心', () => {
   });
 });
 
+describe('validateLevel —— 规则⑩：宝物的可达性（T21）', () => {
+  /**
+   * 左右两间，中间一堵**到顶**的墙（`r0` 也是砖，所以连墙头都站不住）：
+   *
+   * ```
+   * r0  XXXXXX
+   * r1  X..X.X
+   * r2  XG.X.X     ← 宝物在左间（col 1），出生点在右间（col 4）
+   * r3  XXXXXX
+   * ```
+   *
+   * 用户明确提过"还要测试场景的合理程度，宝物的可达性等" —— 就是这条。取不到就集不齐，
+   * 集不齐就开不了闸门：**赢不了**，所以是错误不是提醒。
+   */
+  const sealed = def(3, ['XXXXXX', 'X..X.X', 'XG.X.X', 'XXXXXX']);
+  const spawnRight: Cell = { face: 'B', col: 4, row: 1 };
+
+  it('宝物被墙封住（站得住但走不到）→ `treasureUnreachable`，并指名是哪一块', () => {
+    const hits = validateLevel(sealed, spawnRight).filter((i) => i.rule === 'treasureUnreachable');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.severity).toBe('error');
+    expect(hits[0]?.detail).toContain('A:1,2');
+    expect(hits[0]?.at).toEqual({ face: 'A', col: 1, row: 2 });
+  });
+
+  it('把墙拆掉一列（同一间了）→ 这条不再报', () => {
+    const open = def(3, ['XXXXXX', 'X...X.', 'XG.X.X', 'XXXXXX']);
+    const hits = validateLevel(open, spawnRight).filter((i) => i.rule === 'treasureUnreachable');
+    expect(hits).toEqual([]);
+  });
+});
+
 /** 类型层面留个记号：`Cell` 在这里被用到（`issues[0]?.at` 的断言依赖它的形状）。 */
 const sample: Cell = { face: 'A', col: 0, row: 1 };
 expect(sample.face).toBe('A');
