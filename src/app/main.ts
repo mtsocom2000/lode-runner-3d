@@ -14,6 +14,7 @@ import {
 } from './levelstore';
 import { canRedo, canUndo, createHistory, push, redo, undo, type History } from './history';
 import { createEditor } from './editor';
+import { createSelector, type SelectorEntry } from './selector';
 import { RULE_TITLES, type LevelIssue } from '../core/level/validate';
 import { validateLevel } from '../core/level/validate';
 import { TICK_HZ, bridgesOf, createSim, tick, type SimEvent, type SimState } from '../core/sim';
@@ -347,6 +348,9 @@ function syncIssueMarks(): void {
  * 编辑期间**把 sim 停住**（见下面 tick 循环里的 `editor.isOpen()`）：不然玩家站在原地，
  * 追兵会把他抓住、屏幕上闪一个 GAME OVER，而用户正在改 JSON。
  */
+/** 选关的键。R/N/Tab/Esc/Ctrl+Z 都占了，L（Level）空着。 */
+const SELECTOR_KEY = 'l';
+
 const editor = createEditor(host, {
   apply(text: string): string | null {
     const decoded = decodeLevel(text);
@@ -427,7 +431,10 @@ const editor = createEditor(host, {
     ];
   },
 });
-hud.log('按 Tab 打开关卡编辑器');
+hud.log('按 Tab 打开关卡编辑器 ｜ 按 L 选关');
+
+/** 选关浮层：条目与动作都在 main（它才持有库与 openLevel），这个模块只管画。 */
+const selector = createSelector(host, { pick: pickLevelFromSelector });
 // 关卡库那一行：开局就把库与当前项灌进去（面板一打开就是对的）。
 editor.setLibrary(libraryEntries(), activeKey, levelDef.next);
 
@@ -692,6 +699,46 @@ function deleteLevel(): void {
   library = removeLevel(library, activeKey);
   saveLibrary(library);
   openLevel(library.active);
+}
+
+/**
+ * **选关浮层的条目**（玩家面向）：序号 + 名字 + 它的"下一关"叫什么。
+ *
+ * 与编辑器面板那个下拉读的是**同一份库**（`libraryEntries` 的名字口径也一样）——
+ * 两处都从 `library.levels` 派生，不各写一套"名字怎么取"。
+ */
+function selectorEntries(): readonly SelectorEntry[] {
+  const labelOf = (key: string): string => {
+    const entry = levelByKey(library, key);
+    return entry === null ? '（已删除）' : entry.def.name !== '' ? entry.def.name : entry.def.id;
+  };
+  return library.levels.map((entry, i) => ({
+    key: entry.key,
+    label: entry.def.name !== '' ? entry.def.name : entry.def.id,
+    index: i + 1,
+    next: entry.def.next === undefined ? '' : labelOf(entry.def.next),
+  }));
+}
+
+/**
+ * **选手选了一关**：直接切过去（用户 2026-10-04 定的：不问"确定换吗"）。
+ *
+ * 复用 `openLevel`（它已经会重置撤销栈、半截手势、重建世界、刷 HUD），再顺手**关掉编辑器**
+ * —— 从选关进来就是来玩的，不该还压着一块面板。
+ */
+function pickLevelFromSelector(key: string): void {
+  selector.close();
+  if (editor.isOpen()) editor.toggle();
+  openLevel(key);
+}
+
+/** 选关浮层打开时：`toggle` 语义（再按一次 `L` 关掉）。 */
+function toggleSelector(): void {
+  if (selector.isOpen()) {
+    selector.close();
+    return;
+  }
+  selector.open(selectorEntries(), activeKey);
 }
 
 /**
@@ -1124,6 +1171,37 @@ window.addEventListener('keydown', (e) => {
 });
 
 /**
+ * **`L` 选关**；`Esc` 先关选关再管编辑器。
+ *
+ * 三条边界：
+ *
+ * 1. **焦点在编辑器里不抢键** —— 那里面有 `<textarea>`，用户可能正在 JSON 里写 `"l"`；
+ * 2. 浮层开着时数字键 `1..9` **直接选**第 n 关（熟手不必用鼠标）；`↑↓`/`Enter` 是浏览器原生的
+ *    焦点行为，不必自己实现；
+ * 3. `Esc` 的优先级：**先关选关**，再关编辑器 —— 两层都开着时不该一次跳两层。
+ */
+window.addEventListener('keydown', (e) => {
+  const insideEditor = editor.el.contains(e.target as Node | null);
+  if (insideEditor) return;
+
+  if (e.key === 'Escape' && selector.isOpen()) {
+    selector.close();
+    return;
+  }
+  if (selector.isOpen() && /^[1-9]$/.test(e.key)) {
+    const entry = selectorEntries()[Number(e.key) - 1];
+    if (entry !== undefined) {
+      e.preventDefault();
+      pickLevelFromSelector(entry.key);
+    }
+    return;
+  }
+  if (e.key.toLowerCase() !== SELECTOR_KEY) return;
+  e.preventDefault();
+  toggleSelector();
+});
+
+/**
  * `Tab` 开关编辑器；`Esc` 关掉。
  *
  * **焦点在编辑器里时不抢 `Tab`** —— 那里面有 `<textarea>`，`Tab` 该是正常的焦点移动。
@@ -1308,7 +1386,9 @@ function loop(now: number): void {
   // "只能看、不能玩"（出生点站不住）→ 没有 sim 可推，只画场景。
   // 编辑器开着 → **sim 停住**（见 `editor` 那段）。`acc` 照样清空：留着它的话，关掉编辑器的
   // 那一帧会一次性补跑几十个 tick（追兵瞬间扑上来），那是"暂停"最经典的坑。
-  if (state === null || editor.isOpen()) acc = 0;
+  // 暂停的三种情形：没有可玩的 sim、编辑器开着、选关浮层开着。cc 都要清 —— 否则关掉它们的
+  // 那一帧会一次性补跑几十个 tick（追兵瞬间扑上来）。
+  if (state === null || editor.isOpen() || selector.isOpen()) acc = 0;
   if (state === null) {
     fx.update(elapsedMs / 1000);
     stage.update(now / 1000);
