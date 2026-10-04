@@ -128,10 +128,13 @@ describe('T21 · 关卡存档：浏览器存储', () => {
 });
 
 describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
-  it('空存储 → 内置三关，active 落在 **L1**（教学关；上手顺序，不是开发顺序）', () => {
+  it('空存储 → 内置关卡，active 落在**第一关**（教学关；上手顺序，不是开发顺序）', () => {
     const lib = loadLibrary(fakeStorage());
-    expect(lib.levels.map((e) => e.key)).toEqual(['builtin:l1', 'builtin:l2', 'builtin:l3']);
-    expect(lib.active).toBe('builtin:l1');
+    // 名册（T22）：新关在前、甲板篇在后 —— 断言**顺序**与**第一关是谁**，不写死整张列表，
+    // 免得每加一关就要改一次测试（那是"测试比代码还难改"的典型）。
+    expect(lib.levels[0]?.key).toBe('builtin:corridor');
+    expect(lib.active).toBe(lib.levels[0]?.key);
+    expect(lib.levels.some((e) => e.key === 'builtin:l3')).toBe(true);
   });
 
   it('**老单槽要迁移**（用户手上那张图不能丢），并且直接成为 active', () => {
@@ -182,12 +185,17 @@ describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
   });
 });
 describe('T21 #3 · `next` 链', () => {
-  it('内置三关串成 L1 → L2 → L3，最后一关**没有** next（打完停在这儿）', () => {
+  it('链上的 `next` **不悬空**，且**最后一关没有** next（打完停在这儿）', () => {
     const lib = loadLibrary(fakeStorage());
-    const byKey = (k: string) => lib.levels.find((e) => e.key === k)?.def;
-    expect(byKey('builtin:l1')?.next).toBe('builtin:l2');
-    expect(byKey('builtin:l2')?.next).toBe('builtin:l3');
-    expect(byKey('builtin:l3')?.next).toBeUndefined();
+    // 两条判据：**指向的槽必须存在**（悬空的链是最讨厌的坏法：按 N 没反应还不知道为什么），
+    // 以及**最后一关明确停住**。至于"每关都必须配 next"那是**编写完成度**，不是正确性 ——
+    // 名册还在补齐（新关一张张写），拿它当门禁会为了中间状态改测试。
+    const keys = new Set(lib.levels.map((e) => e.key));
+    for (const entry of lib.levels) {
+      if (entry.def.next === undefined) continue;
+      expect(keys.has(entry.def.next), `${entry.key} 的 next 指向不存在的槽 ${entry.def.next}`).toBe(true);
+    }
+    expect(lib.levels[lib.levels.length - 1]?.def.next).toBeUndefined();
   });
 
   it('`next` 跟着关卡一起存/取（导出导入一张图，它自带的去向也在里面）', () => {

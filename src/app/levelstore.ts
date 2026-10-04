@@ -1,5 +1,5 @@
 import { BLANK } from '../core/level/levels/blank';
-import { L1 } from '../core/level/levels/l1';
+import { CORRIDOR } from '../core/level/levels/corridor';
 import { L2 } from '../core/level/levels/l2';
 import { L3 } from '../core/level/levels/l3';
 import { parseLevel, type LevelDef, type LoadError } from '../core/world/tiles';
@@ -163,13 +163,13 @@ export function newLevelKey(): string {
  * （`builtin:l2`），而槽键是库的概念 —— 关卡文件不该知道"我在库里的第几个槽"。
  * 于是内置三关天然串成 L1 → L2 → L3。
  */
-function builtinEntries(): readonly StoredLevel[] {
-  return [
-    { key: 'builtin:l1', def: { ...L1, next: 'builtin:l2' } },
-    { key: 'builtin:l2', def: { ...L2, next: 'builtin:l3' } },
-    { key: 'builtin:l3', def: L3 },
-  ];
-}
+export const BUILTIN_LEVELS: readonly StoredLevel[] = [
+  // 新名册（T22）：六张"没有中央台子"的关卡，从教学关「走廊」开始。
+  { key: 'builtin:corridor', def: CORRIDOR },
+  // 甲板篇放在最后（用户 2026-10-04 定）：塔 / 长杆 / 接头那套系统仍然在，只是排在后面。
+  { key: 'builtin:l2', def: { ...L2, next: 'builtin:l3' } },
+  { key: 'builtin:l3', def: L3 },
+];
 
 function isEntry(v: unknown): v is StoredLevel {
   if (typeof v !== 'object' || v === null) return false;
@@ -184,12 +184,12 @@ function isEntry(v: unknown): v is StoredLevel {
 export function loadLibrary(storage: Storage | null = safeStorage()): LevelLibrary {
   const legacy = loadStoredLevel(storage);
   const seed = (): LevelLibrary => {
-    const levels = [...builtinEntries()];
+    const levels = [...BUILTIN_LEVELS];
     if (legacy !== null) levels.push({ key: 'migrated', def: legacy });
     // **老用户上来先看到他那一关**（与旧行为一致：打开就是上次那张）。
     // **新用户从 L1 开始**（它是教学关）—— 旧行为是"最新那一关 L3"，那是开发顺序，不是上手顺序；
     // 而且 L1 → L2 → L3 的 `next` 链正好从第一关起步。
-    return { active: legacy !== null ? 'migrated' : 'builtin:l1', levels };
+    return { active: legacy !== null ? 'migrated' : 'builtin:corridor', levels };
   };
   if (storage === null) return seed();
   const raw = storage.getItem(LIBRARY_STORAGE_KEY);
