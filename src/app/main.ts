@@ -73,6 +73,14 @@ function pickLevel(): { readonly def: LevelDef; readonly level: Level } {
     library = upsertLevel(library, activeKey, BLANK);
     saveLibrary(library);
   }
+  /**
+   * `?level=<槽键>` = 直接开某一关。给**无头截图与探针**用（`tools/shot.mjs <url>`）——
+   * 否则"看某一关长什么样"只能靠手动在选关面板里点，而无头环境点不了。
+   *
+   * 找不到那个槽就照旧读 `active`（不报错：URL 参数写错不该让页面打不开）。
+   */
+  const want = new URLSearchParams(window.location.search).get('level');
+  if (want !== null && levelByKey(library, want) !== null) activeKey = want;
   const entry = levelByKey(library, activeKey) ?? library.levels[0];
   if (entry === undefined) return { def: L3, level: fallback.level };
   const parsed = parseLevel(entry.def);

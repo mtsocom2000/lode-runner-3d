@@ -7,6 +7,7 @@ import {
   clearStoredLevel,
   decodeLevel,
   encodeLevel,
+  BUILTIN_LEVELS,
   loadLibrary,
   loadStoredLevel,
   newLevelKey,
@@ -143,7 +144,8 @@ describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
     const lib = loadLibrary(s);
     expect(lib.active).toBe('migrated');
     expect(lib.levels.some((e) => e.key === 'migrated')).toBe(true);
-    expect(lib.levels).toHaveLength(4);
+    // 内置关 + 迁移进来那一张 = 内置数 + 1（不写死数字：名册在补，写死就要每加一关改一次）。
+    expect(lib.levels).toHaveLength(BUILTIN_LEVELS.length + 1);
   });
 
   it('存进去的库读得回来（含 active）', () => {
@@ -159,7 +161,7 @@ describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
   it('active 指着一个不存在的槽 → 落到第一个；坏 JSON → 退回种子（**不抛**）', () => {
     const s = fakeStorage({ [LIBRARY_STORAGE_KEY]: JSON.stringify({ active: 'gone', levels: [{ key: 'a', def: BLANK }] }) });
     expect(loadLibrary(s).active).toBe('a');
-    expect(loadLibrary(fakeStorage({ [LIBRARY_STORAGE_KEY]: '{坏的' })).levels).toHaveLength(3);
+    expect(loadLibrary(fakeStorage({ [LIBRARY_STORAGE_KEY]: '{坏的' })).levels).toHaveLength(BUILTIN_LEVELS.length);
   });
 
   it('upsert：新槽进库、active 跟着走；同键是**替换**不是新增', () => {
