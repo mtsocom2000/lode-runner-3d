@@ -1176,6 +1176,8 @@ function reportProbe(): void {
   // 一眼就能分出是模拟错了还是渲染错了。这正是探针存在的意义。
   const payload = {
     level: level.id,
+    // 一帧的工作耗时（毫秒，EMA）：probe 拿它当 **60fps 余量**那条门禁的判据。
+    workMs: Number(workMs.toFixed(2)),
     // 场景（砖/梯/杆/芯片/出口/宝物）来自 `stage`，**实体**（玩家/无人机）来自 `syncer` ——
     // 两边都是**渲染层自己的账**，探针据此判断"声明了就该画出来"。
     counts: { ...stage.counts, ...syncer.counts() },
@@ -1281,7 +1283,23 @@ function currentTreasures(): readonly DeckCell[] {
 stage.setGrid(lastGrid);
 stage.setTreasures(lastTreasures);
 
+/**
+ * **一帧里我们自己花了多少毫秒**（T22 的 60fps 余量）：只算**代码的工作**（推 tick、同步、
+ * 特效、渲染），不包括浏览器等 vsync 的时间 —— 后者在无头 Chrome 与开垂直同步的窗口里
+ * 都被掐到 16.7ms，拿它当指标只会得到"永远 60fps"这种假答案。
+ *
+ * 指数滑动平均（α=0.1）：单帧的抖动不该让读数乱跳，而趋势要能立刻看出来。
+ * HUD 上一直显示、`?probe` 里也报出来（probe 会断言它 < 16.7：这就是"60fps 余量"那条门禁）。
+ */
+/** probe 等到第几帧才出图：够 EMA 稳定（15 个样本 ≈ 初值权重 0.2），又不浪费时间。 */
+const PROBE_FRAMES = 20;
+let workMs = 0;
+const WORK_EMA = 0.1;
+/** 前几帧（着色器编译 / 阴影图分配 / 纹理上传）不计入 —— 那是一次性成本。 */
+const WORK_WARMUP_FRAMES = 5;
+
 function loop(now: number): void {
+  const workStart = performance.now();
   if (last === 0) last = now;
   const elapsedMs = Math.min(Math.max(now - last, 0), MAX_CATCHUP_MS);
   last = now;
@@ -1422,9 +1440,19 @@ function loop(now: number): void {
   // 走选择性泛光而不是 `renderer.render` —— 泛光要靠它。两条路只能选一条。
   bloom.render();
 
+  // 这一帧的工作耗时（见 `workMs` 的说明）。放在最后：要含渲染。
+  //
+  // **前几帧不算**：着色器编译、阴影贴图分配、纹理上传都是一次性的，第一帧几十毫秒很正常
+  // （第一版就从第 1 帧起算，probe 读到 97ms 直接判失败 —— 那测的是启动成本，不是每帧成本）。
+  if (frames >= WORK_WARMUP_FRAMES) {
+    const cost = performance.now() - workStart;
+    workMs = workMs === 0 ? cost : workMs * (1 - WORK_EMA) + cost * WORK_EMA;
+  }
+
   frames += 1;
   // 等第 2 帧再读：第 1 帧的阴影贴图可能还没成形。
-  if (probeRequested && frames >= 2) reportProbe();
+  // probe 等到**读数稳定**再报：workMs 是 EMA，前几帧还在热身（见 WORK_WARMUP_FRAMES）。
+  if (probeRequested && frames >= PROBE_FRAMES) reportProbe();
   else if (frames % 30 === 0) refreshHud(); // HUD 只给眼睛看，30 帧刷一次足够
 
   requestAnimationFrame(loop);

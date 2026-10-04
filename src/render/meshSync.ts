@@ -3,7 +3,7 @@ import { bridgesOf, type Entity, type EntityKind, type SimState } from '../core/
 import type { Level } from '../core/world/tiles';
 import { CUBE, PLAYER_SIZE, playerAnchor, stepDelta } from './metrics';
 import { PALETTE } from './palette';
-import { advance, aim, aimAngle, retarget, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
+import { advance, aim, aimAngle, isDone, retarget, sample, snapTo, tweenTo, type Tween, type Vec3 } from './tween';
 
 /**
  * 实体层：把 `SimState.entities` 摆到墙上，并把"格到格"的跳变补成滑动（T6）。
@@ -171,6 +171,9 @@ function holdOneCell(
   return aim(tween, [...next]);
 }
 
+  /** 这一层自己的时钟（秒）—— 待机摆动用它算相位。 */
+  let clock = 0;
+
 export function createSyncer(parent: ObjectParent, level: Level): Syncer {
   const group = new THREE.Group();
   parent.add(group);
@@ -287,6 +290,8 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
     group,
     update(state, dt, opts): void {
       const alive = new Set<number>();
+      // 这一层自己的时钟（秒）：待机摆动要有连续相位，不能每帧从零开始。
+      clock += dt > 0 ? dt : 0;
       const snap = opts?.snapEntities;
       // 这一帧**坠落**的那些实体（ell 事件）：它们的补间时长按距离算（见 	ween.ts）。
       const falling = opts?.falling ?? new Set<number>();
@@ -338,7 +343,22 @@ export function createSyncer(parent: ObjectParent, level: Level): Syncer {
         }
 
         const p = sample(actor.tween);
-        actor.group.position.set(p[0], p[1], p[2]);
+        /**
+         * **敌人待机摆动**（T20 的最后一块）：站着不动的看守轻轻上下浮动一下。
+         *
+         * 两件必须守住的事：
+         *
+         * 1. **身体不许转**（网格对齐是硬要求）—— 所以摆的是**位置**（`y` 上一点）与
+         *    **正面记号**（`face` 的偏航），身体本身一动不转；
+         * 2. 它只在**没在走**的时候出现：走动时位置由补间决定，再叠一层浮动会让"一步一格"
+         *    看起来像在抖。判据就是补间走完（`isDone`）。
+         *
+         * 玩家不摆 —— 原版里晃的是看守，玩家是"你"，晃起来反而像没操作准。
+         */
+        const idle = entity.kind !== 'player' && isDone(actor.tween);
+        const bob = idle ? Math.sin(clock * 5.5 + entity.id * 1.7) * 0.045 : 0;
+        actor.group.position.set(p[0], p[1] + bob, p[2]);
+        if (idle) actor.face.rotation.y += Math.sin(clock * 5.5 + entity.id * 1.7) * 0.12;
       }
 
       // 复活 / 换关之后 state 里没有的实体要收掉 —— 否则会留下一个永远不动的"幽灵"。

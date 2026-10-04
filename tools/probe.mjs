@@ -123,6 +123,16 @@ for (const { feature, counts, meaning } of EXPECTED_FEATURES) {
 }
 if (summary.features?.player !== true) failures.push('画面上没有角色（feature=player）');
 
+// **60fps 余量**（T22）：这里**只打印、不断言**。
+//
+// 为什么不断言：探针跑在 Chrome 的**虚拟时钟**下（`--virtual-time-budget`），
+// `performance.now()` 根本不前进 —— 第一版拿它当门禁，读到的永远是 `0ms`，
+// 那种"通过"比没有更坏。真实的每帧成本只能**在真浏览器里看 HUD**（那一行一直显示）。
+//
+// 能自动测的那一半在 `test/perf.test.ts`：sim 每 tick 的成本（那是 CPU 的大头，
+// 而渲染成本随 GPU/分辨率变，本来就不该由无头环境给出一个普适结论）。
+console.log(`[probe] 一帧工作耗时（诊断，虚拟时钟下无意义）：${summary.workMs}ms`);
+
 // "白块"回归：未著色的实例默认是白的，一旦出现说明实例色没写进去。
 if (typeof summary.whiteRatio !== 'number' || summary.whiteRatio > 0.05) {
   failures.push(`近白像素占比 ${summary.whiteRatio} —— 超过 5%，疑似白块`);
