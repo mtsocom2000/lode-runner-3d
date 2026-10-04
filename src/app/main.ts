@@ -1377,8 +1377,14 @@ stage.setTreasures(lastTreasures);
  * 指数滑动平均（α=0.1）：单帧的抖动不该让读数乱跳，而趋势要能立刻看出来。
  * HUD 上一直显示、`?probe` 里也报出来（probe 会断言它 < 16.7：这就是"60fps 余量"那条门禁）。
  */
-/** probe 等到第几帧才出图：够 EMA 稳定（15 个样本 ≈ 初值权重 0.2），又不浪费时间。 */
-const PROBE_FRAMES = 20;
+/**
+ * probe 等到第几帧才出图。**只等 2 帧**。
+ *
+ * 原来等 20 帧，是为了让 `workMs` 的 EMA 稳定 —— 而工作耗时**只是诊断、不再断言**
+ * （虚拟时钟下它恒为 0），那个理由已经不存在了。等得越久越容易变成"页面里没有探针结果"：
+ * 探针跑在 Chrome 的虚拟时钟下，rAF 什么时候到达并不可靠，这件事真的偶发过一次。
+ */
+const PROBE_FRAMES = 2;
 let workMs = 0;
 const WORK_EMA = 0.1;
 /** 前几帧（着色器编译 / 阴影图分配 / 纹理上传）不计入 —— 那是一次性成本。 */
@@ -1464,9 +1470,15 @@ function loop(now: number): void {
       if (event.kind === 'digBlocked') {
         // **哑火反馈**（用户 2026-09-19）：按了挖、那一铲落在空处。
         // 只做两件事，不做文字弹窗 —— 完全没反应会让玩家怀疑"按键失灵"，而弹字太打扰节奏。
-        // 记号落在**目标格**上（`event.cell`），顺便教会玩家"这一铲是往哪儿去的"。
-        sfx.dryFire();
-        if (event.cell !== null) fx.blockedFlash(event.cell);
+        // 记号打在**目标格**上（`event.cell`）—— 顺手把"该往哪边看"这件事也说清了。
+        //
+        // ⚠ **只给玩家**（2026-10-05）：这一条原来不看是谁挖的 —— 于是**看守挖空**时屏幕上也会
+        // 冒一个深红框，而玩家什么都没按。哑火记号的整个意义是"你的动作被拒绝了"，别人的动作
+        // 不该以玩家的名义报一次。`feedbackFor(event, playerId)` 一直是这么筛的，这里漏了。
+        if (event.entity === playerId) {
+          sfx.dryFire();
+          if (event.cell !== null) fx.blockedFlash(event.cell);
+        }
       }
       if (event.kind === 'respawned' || event.kind === 'returned') {
         // `returned` = 敌人被重置回家（玩家死亡时的追捕重置）。它同样是**瞬移** ——
