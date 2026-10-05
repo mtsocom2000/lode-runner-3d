@@ -1,6 +1,7 @@
 import { BLANK } from '../core/level/levels/blank';
 import { BARS } from '../core/level/levels/bars';
 import { CORRIDOR } from '../core/level/levels/corridor';
+import { RING } from '../core/level/levels/ring';
 import { L2 } from '../core/level/levels/l2';
 import { L3 } from '../core/level/levels/l3';
 import { parseLevel, type LevelDef, type LoadError } from '../core/world/tiles';
@@ -168,7 +169,8 @@ export const BUILTIN_LEVELS: readonly StoredLevel[] = [
   // 新名册（T22）：六张"没有中央台子"的关卡，从教学关「走廊」开始。
   // 链（`next`）按名册顺序接；最后两张是甲板篇（用户 2026-10-04 定：放在做好的关后面）。
   { key: 'builtin:corridor', def: { ...CORRIDOR, next: 'builtin:bars' } },
-  { key: 'builtin:bars', def: { ...BARS, next: 'builtin:l2' } },
+  { key: 'builtin:bars', def: { ...BARS, next: 'builtin:ring' } },
+  { key: 'builtin:ring', def: { ...RING, next: 'builtin:l2' } },
   { key: 'builtin:l2', def: { ...L2, next: 'builtin:l3' } },
   { key: 'builtin:l3', def: L3 },
 ];
