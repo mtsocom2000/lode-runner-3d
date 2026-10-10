@@ -188,12 +188,17 @@ describe('T16 · L2 织网：塔（甲板加层之后的第一件东西）', () 
   });
 });
 
-describe('T16 · L2 织网：攀爬者', () => {
-  it('关卡声明的就是一个 stalker（T15 的敌人首次登场）', () => {
-    expect(L2.enemies).toEqual([{ kind: 'stalker', cell: { face: 'B', col: 26, row: 1 } }]);
+describe('T16 · L2 织网：看守', () => {
+  it('关卡声明两个看守（T15 的攀爬者首次登场；第 4 关起 2 个）', () => {
+    expect(L2.enemies).toEqual([
+      { kind: 'stalker', cell: { face: 'B', col: 26, row: 1 } },
+      { kind: 'drone', cell: { face: 'A', col: 12, row: 1 } },
+    ]);
   });
 
-  it('它站得住（否则 createSim 会当场抛）', () => {
-    expect(stateAt(level, { face: 'B', col: 26, row: 1 })).not.toBeNull();
+  it('两个出生格都站得住（否则 createSim 会当场抛）', () => {
+    for (const enemy of L2.enemies ?? []) {
+      expect(stateAt(level, enemy.cell), `${enemy.kind} @ ${enemy.cell.col},${enemy.cell.row}`).not.toBeNull();
+    }
   });
 });

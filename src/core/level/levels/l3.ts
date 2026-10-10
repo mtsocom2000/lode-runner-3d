@@ -138,8 +138,14 @@ export const L3: LevelDef = {
     { x: -4, z: -7 }, // B 岛正中（杆桥的对岸）
     { x: -8, z: -8, level: 3 }, // **梯子顶**（爬上去就是它，不用再横移）
   ],
-  /** 一个攀爬者（T15）：放在 B 面最远端 —— 它**会吊杆**（甲板横杆进它的通行图），别在杆上磨蹭。 */
-  enemies: [{ kind: 'stalker', cell: { face: 'B', col: 26, row: 1 } }],
+  /**
+   * 两个看守（用户定的分配：第 4 关起 2 个）：一个**攀爬者**在 B 面最远端
+   * （它**会吊杆**，甲板横杆进它的通行图，别在杆上磨蹭），一个**无人机**在 A 面中段。
+   */
+  enemies: [
+    { kind: 'stalker', cell: { face: 'B', col: 26, row: 1 } },
+    { kind: 'drone', cell: { face: 'A', col: 9, row: 1 } },
+  ],
   /** 出生点也收进关卡数据（T21）：编辑器保存的 JSON 要能自包含。 */
   spawn: SPAWN,
   hints: [
