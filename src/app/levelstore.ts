@@ -145,6 +145,18 @@ function safeStorage(): Storage | null {
  */
 export const LIBRARY_STORAGE_KEY = 'loderunner.library';
 
+/**
+ * **内置关名册的版本号**（T22）。每往 `BUILTIN_LEVELS` 里加/改关卡就 +1。
+ *
+ * 为什么：关卡库一旦存进浏览器，**老用户的那份库里没有新关卡** —— 名册更新了，他却永远
+ * 看不到（除非清缓存）。所以在库里记一个 `seedVersion`：加载时若它落后于当前版本，
+ * 就把**新版内置关合并进去**（保留用户自建的那些），再把版本号升上来。迁移只发生一次。
+ *
+ * - **1**：库刚诞生时的六关（corridor/bars/ring/zigzag/l2/l3）；
+ * - **2**：加入「梯城」「杆林」（T22 名册补齐）。
+ */
+export const SEED_VERSION = 2;
+
 export interface StoredLevel {
   /** 槽键。**与关卡 `id` 无关**：两张图可以同名，槽不能。 */
   readonly key: string;
@@ -154,6 +166,11 @@ export interface StoredLevel {
 export interface LevelLibrary {
   readonly active: string;
   readonly levels: readonly StoredLevel[];
+  /**
+   * 这份库写盘时对应的内置关名册版本（见 `SEED_VERSION`）。缺省 = 老库（当作 `0`/`1`），
+   * 加载时会被迁移。`loadLibrary` 返回的这份**一定**是当前版本。
+   */
+  readonly seedVersion?: number;
 }
 
 /** 新槽的键。用时间戳 + 随机尾巴：可读、又不至于撞车。 */
@@ -197,32 +214,56 @@ export function loadLibrary(storage: Storage | null = safeStorage()): LevelLibra
   const seed = (): LevelLibrary => {
     const levels = [...BUILTIN_LEVELS];
     if (legacy !== null) levels.push({ key: 'migrated', def: legacy });
-    // **老用户上来先看到他那一关**（与旧行为一致：打开就是上次那张）。
-    // **新用户从 L1 开始**（它是教学关）—— 旧行为是"最新那一关 L3"，那是开发顺序，不是上手顺序；
-    // 而且 L1 → L2 → L3 的 `next` 链正好从第一关起步。
-    return { active: legacy !== null ? 'migrated' : 'builtin:corridor', levels };
+    // **老单槽用户上来先看到他那一关**（与旧行为一致：打开就是上次那张）。
+    // **新用户从第一关开始**（它是教学关）—— 旧行为是"最新那一关"，那是开发顺序，不是上手顺序。
+    return { active: legacy !== null ? 'migrated' : 'builtin:corridor', levels, seedVersion: SEED_VERSION };
   };
   if (storage === null) return seed();
   const raw = storage.getItem(LIBRARY_STORAGE_KEY);
   if (raw === null) return seed();
   try {
-    const parsed = JSON.parse(raw) as { active?: unknown; levels?: unknown };
+    const parsed = JSON.parse(raw) as { active?: unknown; levels?: unknown; seedVersion?: unknown };
     if (!Array.isArray(parsed.levels)) return seed();
-    const levels = parsed.levels.filter(isEntry);
-    if (levels.length === 0) return seed();
-    const active = typeof parsed.active === 'string' && levels.some((e) => e.key === parsed.active)
-      ? parsed.active
-      : (levels[0]?.key ?? 'builtin:l3');
-    return { active, levels };
+    const stored = parsed.levels.filter(isEntry);
+    if (stored.length === 0) return seed();
+
+    // **名册迁移**（`SEED_VERSION`）：落后就把新版内置关并进库，用户自建的那几张原样留着。
+    const version = typeof parsed.seedVersion === 'number' ? parsed.seedVersion : 0;
+    const levels = version < SEED_VERSION ? mergeSeed(stored) : stored;
+    const active =
+      typeof parsed.active === 'string' && levels.some((e) => e.key === parsed.active)
+        ? parsed.active
+        : (levels[0]?.key ?? 'builtin:corridor');
+    const lib: LevelLibrary = { active, levels, seedVersion: SEED_VERSION };
+    // 迁移**写回**，否则每次加载都重来一遍（版本号也就失去意义了）。
+    if (version < SEED_VERSION) saveLibrary(lib, storage);
+    return lib;
   } catch {
     return seed();
   }
 }
 
+/**
+ * 把新版内置关**合并**进一份老库（见 `SEED_VERSION`）。
+ *
+ * 规则：**内置关整块按当前名册重排在前**（这样 `next` 链、选关序号都是新的），
+ * **非内置的条目**（用户自建、以及老单槽迁移来的 `migrated`）保持原来的相对顺序接在后面。
+ *
+ * 代价说清楚：**内置关本身会被刷新** —— 用户若直接改过某张内置关，那次改动会在这里被当前版本覆盖。
+ * 这是刻意的（内置关是随版本走的交付内容）；想留住自己那版，就在编辑器里**复制一份**再改。
+ */
+function mergeSeed(stored: readonly StoredLevel[]): readonly StoredLevel[] {
+  const builtinKeys = new Set(BUILTIN_LEVELS.map((e) => e.key));
+  const mine = stored.filter((e) => !builtinKeys.has(e.key));
+  return [...BUILTIN_LEVELS, ...mine];
+}
+
 export function saveLibrary(lib: LevelLibrary, storage: Storage | null = safeStorage()): boolean {
   if (storage === null) return false;
   try {
-    storage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(lib));
+    // 落盘就代表"这份库是当前版本的" —— 统一补上 `seedVersion`，免得某个构造点漏了它、
+    // 下次加载又被当成老库迁移一遍。
+    storage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify({ ...lib, seedVersion: SEED_VERSION }));
     return true;
   } catch {
     return false;

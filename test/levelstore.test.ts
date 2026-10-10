@@ -4,6 +4,7 @@ import { L3 } from '../src/core/level/levels/l3';
 import {
   LIBRARY_STORAGE_KEY,
   LEVEL_STORAGE_KEY,
+  SEED_VERSION,
   clearStoredLevel,
   decodeLevel,
   encodeLevel,
@@ -159,7 +160,14 @@ describe('关卡库（T21 #3）：命名槽 + 迁移 + 删不得空', () => {
   });
 
   it('active 指着一个不存在的槽 → 落到第一个；坏 JSON → 退回种子（**不抛**）', () => {
-    const s = fakeStorage({ [LIBRARY_STORAGE_KEY]: JSON.stringify({ active: 'gone', levels: [{ key: 'a', def: BLANK }] }) });
+    // `seedVersion` 给当前值，这样这条只测"active 回退"，不掺进名册迁移那档事（下面单独测）。
+    const s = fakeStorage({
+      [LIBRARY_STORAGE_KEY]: JSON.stringify({
+        active: 'gone',
+        levels: [{ key: 'a', def: BLANK }],
+        seedVersion: SEED_VERSION,
+      }),
+    });
     expect(loadLibrary(s).active).toBe('a');
     expect(loadLibrary(fakeStorage({ [LIBRARY_STORAGE_KEY]: '{坏的' })).levels).toHaveLength(BUILTIN_LEVELS.length);
   });
@@ -206,5 +214,56 @@ describe('T21 #3 · `next` 链', () => {
     expect(saveLibrary(one, s)).toBe(true);
     const back = loadLibrary(s);
     expect(back.levels.find((e) => e.key === 'mine')?.def.next).toBe('builtin:l1');
+  });
+});
+
+/**
+ * **名册迁移**（T22 · `SEED_VERSION`）。
+ *
+ * 用户的原话是"我浏览器里看不到新关"。成因不是 bug 而是**存储**：关卡库一旦落盘，
+ * 老用户那份里就永远停在他生成时的名册。所以版本号一旦落后，加载时把当前内置关**并进去** ——
+ * 但**只并内置的**，用户自己画的那些原样留着（"保留自建关"），而且 `active` 不被打断。
+ */
+describe('T22 · 名册迁移（seedVersion）', () => {
+  /** 一份"旧库"：只有老内置关（这里用 corridor 代表）+ 一张自建关，没有 seedVersion。 */
+  function oldLibrary(): string {
+    return JSON.stringify({
+      active: 'mine',
+      levels: [
+        { key: 'builtin:corridor', def: BLANK },
+        { key: 'builtin:l3', def: BLANK },
+        { key: 'mine', def: BLANK },
+      ],
+    });
+  }
+
+  it('老库（没有 seedVersion）加载后能看到新内置关，**自建关还在**，active 不变', () => {
+    const lib = loadLibrary(fakeStorage({ [LIBRARY_STORAGE_KEY]: oldLibrary() }));
+    expect(lib.seedVersion).toBe(SEED_VERSION);
+    expect(lib.levels.some((e) => e.key === 'builtin:laddercity')).toBe(true);
+    expect(lib.levels.some((e) => e.key === 'builtin:poleforest')).toBe(true);
+    expect(lib.levels.some((e) => e.key === 'mine')).toBe(true);
+    expect(lib.active).toBe('mine');
+    // 内置关整块 + 自建关一张。**不写死数字**：名册在补，写死就要每加一关改一次（与上面同一条）。
+    expect(lib.levels).toHaveLength(BUILTIN_LEVELS.length + 1);
+  });
+
+  it('迁移会**写回**，所以只发生一次：再加载一次不会翻倍', () => {
+    const s = fakeStorage({ [LIBRARY_STORAGE_KEY]: oldLibrary() });
+    loadLibrary(s); // 第一次：迁移并写回
+    const again = loadLibrary(s);
+    expect(again.levels.filter((e) => e.key === 'builtin:laddercity')).toHaveLength(1);
+    expect(again.levels).toHaveLength(BUILTIN_LEVELS.length + 1);
+  });
+
+  it('当前版本的库**不被动**：删掉的内置关不会被重新塞回来', () => {
+    // 用户在库里删了一张内置关 —— 版本已是最新，加载不该"帮他恢复"。
+    const kept = BUILTIN_LEVELS.filter((e) => e.key !== 'builtin:bars');
+    const s = fakeStorage({
+      [LIBRARY_STORAGE_KEY]: JSON.stringify({ active: 'builtin:corridor', levels: kept, seedVersion: SEED_VERSION }),
+    });
+    const lib = loadLibrary(s);
+    expect(lib.levels.some((e) => e.key === 'builtin:bars')).toBe(false);
+    expect(lib.levels).toHaveLength(kept.length);
   });
 });
