@@ -9,6 +9,7 @@ import {
   newLevelKey,
   removeLevel,
   saveLibrary,
+  storeLevel,
   upsertLevel,
   type LevelLibrary,
 } from './levelstore';
@@ -672,7 +673,7 @@ function libraryEntries(): readonly { readonly key: string; readonly label: stri
  */
 function persist(def: LevelDef): boolean {
   library = upsertLevel(library, activeKey, def);
-  return saveLibrary(library) && persist(def);
+  return saveLibrary(library) && storeLevel(def);
 }
 
 /**
