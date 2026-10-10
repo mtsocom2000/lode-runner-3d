@@ -4,6 +4,7 @@ import { CORRIDOR } from '../core/level/levels/corridor';
 import { RING } from '../core/level/levels/ring';
 import { ZIGZAG } from '../core/level/levels/zigzag';
 import { LADDER_CITY } from '../core/level/levels/ladderCity';
+import { POLE_FOREST } from '../core/level/levels/poleForest';
 import { L2 } from '../core/level/levels/l2';
 import { L3 } from '../core/level/levels/l3';
 import { parseLevel, type LevelDef, type LoadError } from '../core/world/tiles';
@@ -175,7 +176,8 @@ export const BUILTIN_LEVELS: readonly StoredLevel[] = [
   { key: 'builtin:bars', def: { ...BARS, next: 'builtin:ring' } },
   { key: 'builtin:ring', def: { ...RING, next: 'builtin:zigzag' } },
   { key: 'builtin:zigzag', def: { ...ZIGZAG, next: 'builtin:laddercity' } },
-  { key: 'builtin:laddercity', def: { ...LADDER_CITY, next: 'builtin:l2' } },
+  { key: 'builtin:laddercity', def: { ...LADDER_CITY, next: 'builtin:poleforest' } },
+  { key: 'builtin:poleforest', def: { ...POLE_FOREST, next: 'builtin:l2' } },
   { key: 'builtin:l2', def: { ...L2, next: 'builtin:l3' } },
   { key: 'builtin:l3', def: L3 },
 ];
